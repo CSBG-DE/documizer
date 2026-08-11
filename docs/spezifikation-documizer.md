@@ -66,8 +66,17 @@ Selektionsbild
 
 Reports: `ZDOCU_IMG` und `ZDOCU_PACKAGE`, beide dünn — nur Selektion und Aufruf.
 
-Paketvorschlag: `ZCONS_DOCUMIZER` mit Unterpaketen `..._CORE`, `..._IMG`, `..._DEV`.
-Im System existiert bereits `ZCONS_DOC_EXTRACTION` — vor Anlage prüfen, ob dort angedockt wird.
+Pakete sind im System S4H angelegt (Auftrag `S4HK901757`, Aufgabe `S4HK901758`):
+
+| Paket | Inhalt |
+|---|---|
+| `ZCONS_DOCUMIZER` | Wurzelpaket, Transportschicht `SAP`, Softwarekomponente `HOME` |
+| `ZCONS_DOCUMIZER_CORE` | Rahmenwerk, Kapitelmodell, Export |
+| `ZCONS_DOCUMIZER_IMG` | IMG- und Customizing-Collector |
+| `ZCONS_DOCUMIZER_DEV` | Paket- und Entwicklungs-Collector |
+
+Das vorhandene `ZCONS_DOC_EXTRACTION` bleibt unberührt — es wurde bewusst nicht als Oberpaket
+verwendet, weil der Documizer eigenständig transportiert werden soll.
 
 ### 2.3 Grundsätze
 
@@ -379,5 +388,4 @@ Collector-Logik daraufhin gebaut wird.
    Namensraum, Verfahren im Protokoll und im Dokument ausweisen.
 3. **Mandantenabhängiges Customizing** — Vollexport bezieht sich auf den Anmeldemandanten.
    Mandantenübergreifendes Customizing ist gesondert zu kennzeichnen.
-4. **Bestehendes Paket `ZCONS_DOC_EXTRACTION`** — Überschneidung prüfen, bevor ein neues Paket
-   angelegt wird.
+4. ~~Bestehendes Paket `ZCONS_DOC_EXTRACTION`~~ — erledigt, eigene Paketstruktur angelegt (2.2).

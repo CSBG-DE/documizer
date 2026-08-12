@@ -898,6 +898,10 @@ SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE gv_blk3.
     SELECTION-SCREEN COMMENT 1(30) gv_tpath FOR FIELD p_path.
     PARAMETERS p_path TYPE char128 LOWER CASE DEFAULT 'C:\temp'.
   SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tsrv FOR FIELD p_srv.
+    PARAMETERS p_srv TYPE char128 LOWER CASE.
+  SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b3.
 
 INITIALIZATION.
@@ -922,7 +926,8 @@ INITIALIZATION.
   gv_thtml  = 'HTML erzeugen/anzeigen'.
   gv_trt    = 'Roundtrip prüfen'.
   gv_tdown  = 'Download auf PC'.
-  gv_tpath  = 'Zielverzeichnis'.
+  gv_tpath  = 'Zielverzeichnis PC'.
+  gv_tsrv   = 'Verzeichnis Appl.-Server'.
 
 AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_path.
   PERFORM f4_verzeichnis.
@@ -1387,6 +1392,32 @@ CLASS lcl_collector_img IMPLEMENTATION.
 
     load_project( ).
 
+    " Im Projektmodus mit "nur Projektknoten" waere es verschwenderisch, den
+    " gesamten Einfuehrungsleitfaden zu durchlaufen, um am Ende eine Handvoll
+    " Knoten zu behalten. Welche Strukturen betroffen sind, steht vorher fest:
+    " es sind genau die, in denen die Projektknoten liegen. Der Einstieg wird
+    " daher aus den Projektdaten abgeleitet statt aus dem Selektionsbild.
+    DATA lt_trees TYPE STANDARD TABLE OF ttree-id.
+
+    IF mv_onlypr = abap_true AND mv_proj IS NOT INITIAL AND mt_pmap IS NOT INITIAL.
+      SELECT DISTINCT tree_id FROM tnodeimg
+        FOR ALL ENTRIES IN @mt_pmap
+        WHERE node_id = @mt_pmap-node_id
+        INTO TABLE @lt_trees.
+    ENDIF.
+
+    IF lt_trees IS INITIAL.
+      APPEND mv_tree_id TO lt_trees.
+    ENDIF.
+
+    DATA lt_ref_idx TYPE HASHED TABLE OF hier_ref
+                    WITH UNIQUE KEY node_id ref_type.
+    DATA lv_level TYPE i.
+
+    LOOP AT lt_trees INTO DATA(lv_tree).
+
+    CLEAR: lt_nodes, lt_texts, lt_refs, lt_ref_idx, lt_stack.
+
     " Struktur, Texte und Knotenverweise lesen.
     "
     " Wichtig: STREE_HIERARCHY_READ liefert nur die eigene Struktur. Im IMG
@@ -1397,7 +1428,7 @@ CLASS lcl_collector_img IMPLEMENTATION.
     IF mv_subs = abap_true.
       CALL FUNCTION 'STREE_HIERARCHY_READ_ALL_SUBS'
         EXPORTING
-          struct_id  = mv_tree_id
+          struct_id  = lv_tree
           spras      = mv_langu
           no_dialog  = abap_true
         IMPORTING
@@ -1409,7 +1440,7 @@ CLASS lcl_collector_img IMPLEMENTATION.
     ELSE.
       CALL FUNCTION 'STREE_HIERARCHY_READ'
         EXPORTING
-          structure_id       = mv_tree_id
+          structure_id       = lv_tree
           language           = mv_langu
           read_also_texts    = abap_true
         IMPORTING
@@ -1421,8 +1452,6 @@ CLASS lcl_collector_img IMPLEMENTATION.
     ENDIF.
 
     " Verweise und Texte fuer den Direktzugriff aufbereiten.
-    DATA lt_ref_idx TYPE HASHED TABLE OF hier_ref
-                    WITH UNIQUE KEY node_id ref_type.
     LOOP AT lt_refs INTO DATA(ls_ref_line).
       IF ls_ref_line-ref_type = gc_reftype AND ls_ref_line-del_flag IS INITIAL.
         INSERT ls_ref_line INTO TABLE lt_ref_idx.
@@ -1430,8 +1459,6 @@ CLASS lcl_collector_img IMPLEMENTATION.
     ENDLOOP.
 
     SORT lt_texts BY node_id.
-
-    DATA lv_level TYPE i.
 
     LOOP AT lt_nodes INTO DATA(ls_node).
 
@@ -1534,6 +1561,8 @@ CLASS lcl_collector_img IMPLEMENTATION.
       ENDIF.
 
     ENDLOOP.
+
+    ENDLOOP. " naechste Struktur
 
     " Bei "nur Projektknoten" bleiben Gliederungskapitel erhalten, solange
     " unter ihnen noch ein Projektknoten haengt - sonst zerfaellt der Baum.
@@ -2255,7 +2284,8 @@ FORM download USING iv_content TYPE string
   DATA lv_dir  TYPE string.
 
   IF sy-batch = abap_true.
-    WRITE: / 'Download im Hintergrund nicht möglich:', iv_ext.
+    WRITE: / 'Download auf den PC im Hintergrund nicht möglich:', iv_ext.
+    WRITE: / 'Bitte Verzeichnis auf dem Applikationsserver angeben.'.
     RETURN.
   ENDIF.
 
@@ -2296,6 +2326,49 @@ FORM download USING iv_content TYPE string
   ELSE.
     WRITE: / 'Download fehlgeschlagen         :', lv_file.
   ENDIF.
+
+ENDFORM.
+
+*----------------------------------------------------------------------*
+* Datei auf dem Applikationsserver ablegen
+*
+* Der Weg fuer Hintergrundverarbeitung: Frontend-Dienste stehen dort nicht
+* zur Verfuegung. Geschrieben wird wie beim PC-Download binaer in UTF-8,
+* damit beide Ablagen dieselbe Datei erzeugen.
+*----------------------------------------------------------------------*
+FORM download_srv USING iv_content TYPE string
+                        iv_ext     TYPE string.
+
+  DATA lv_x    TYPE xstring.
+  DATA lv_file TYPE string.
+  DATA lv_dir  TYPE string.
+  DATA lv_msg  TYPE string.
+
+  lv_dir = p_srv.
+  CONDENSE lv_dir.
+  IF lv_dir IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  IF substring( val = lv_dir off = strlen( lv_dir ) - 1 len = 1 ) <> '/'.
+    lv_dir = |{ lv_dir }/|.
+  ENDIF.
+
+  lv_file = |{ lv_dir }documizer_{ sy-sysid }_{ sy-datum }_{ sy-uzeit }.{ iv_ext }|.
+  lv_x    = cl_abap_codepage=>convert_to( iv_content ).
+
+  TRY.
+      OPEN DATASET lv_file FOR OUTPUT IN BINARY MODE MESSAGE lv_msg.
+      IF sy-subrc <> 0.
+        WRITE: / 'Serverdatei nicht anlegbar      :', lv_file, lv_msg.
+        RETURN.
+      ENDIF.
+      TRANSFER lv_x TO lv_file.
+      CLOSE DATASET lv_file.
+      WRITE: / 'Serverdatei geschrieben         :', lv_file.
+    CATCH cx_root.
+      WRITE: / 'Serverdatei fehlgeschlagen      :', lv_file.
+  ENDTRY.
 
 ENDFORM.
 
@@ -2418,8 +2491,13 @@ START-OF-SELECTION.
     ENDIF.
   ENDIF.
 
-  IF p_down = abap_true AND p_xml = abap_true.
-    PERFORM download USING lv_xml 'xml'.
+  IF p_xml = abap_true.
+    IF p_down = abap_true.
+      PERFORM download USING lv_xml 'xml'.
+    ENDIF.
+    IF p_srv IS NOT INITIAL.
+      PERFORM download_srv USING lv_xml 'xml'.
+    ENDIF.
   ENDIF.
 
   IF p_html = abap_true.
@@ -2430,6 +2508,9 @@ START-OF-SELECTION.
 
     IF p_down = abap_true.
       PERFORM download USING lv_html 'html'.
+    ENDIF.
+    IF p_srv IS NOT INITIAL.
+      PERFORM download_srv USING lv_html 'html'.
     ENDIF.
 
     IF sy-batch = abap_false.

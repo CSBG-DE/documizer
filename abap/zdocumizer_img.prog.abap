@@ -891,16 +891,17 @@ SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE gv_blk3.
     PARAMETERS p_rtest AS CHECKBOX DEFAULT 'X'.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
-    SELECTION-SCREEN COMMENT 1(30) gv_tdown FOR FIELD p_down.
+    SELECTION-SCREEN COMMENT 1(24) gv_tdown FOR FIELD p_down.
     PARAMETERS p_down AS CHECKBOX.
+    SELECTION-SCREEN COMMENT 29(18) gv_tpath FOR FIELD p_path.
+    PARAMETERS p_path TYPE char128 LOWER CASE DEFAULT 'C:\temp'
+                      VISIBLE LENGTH 30.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
-    SELECTION-SCREEN COMMENT 1(30) gv_tpath FOR FIELD p_path.
-    PARAMETERS p_path TYPE char128 LOWER CASE DEFAULT 'C:\temp'.
-  SELECTION-SCREEN END OF LINE.
-  SELECTION-SCREEN BEGIN OF LINE.
-    SELECTION-SCREEN COMMENT 1(30) gv_tsrv FOR FIELD p_srv.
-    PARAMETERS p_srv TYPE char128 LOWER CASE.
+    SELECTION-SCREEN COMMENT 1(24) gv_tdsrv FOR FIELD p_dsrv.
+    PARAMETERS p_dsrv AS CHECKBOX.
+    SELECTION-SCREEN COMMENT 29(18) gv_tsrv FOR FIELD p_srv.
+    PARAMETERS p_srv TYPE char128 LOWER CASE VISIBLE LENGTH 30.
   SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b3.
 
@@ -926,8 +927,9 @@ INITIALIZATION.
   gv_thtml  = 'HTML erzeugen/anzeigen'.
   gv_trt    = 'Roundtrip prüfen'.
   gv_tdown  = 'Download auf PC'.
-  gv_tpath  = 'Zielverzeichnis PC'.
-  gv_tsrv   = 'Verzeichnis Appl.-Server'.
+  gv_tpath  = 'Verzeichnis'.
+  gv_tdsrv  = 'Ablage Appl.-Server'.
+  gv_tsrv   = 'Verzeichnis'.
 
 AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_path.
   PERFORM f4_verzeichnis.
@@ -1398,12 +1400,22 @@ CLASS lcl_collector_img IMPLEMENTATION.
     " es sind genau die, in denen die Projektknoten liegen. Der Einstieg wird
     " daher aus den Projektdaten abgeleitet statt aus dem Selektionsbild.
     DATA lt_trees TYPE STANDARD TABLE OF ttree-id.
+    DATA lv_subs  TYPE abap_bool.
+
+    lv_subs = mv_subs.
 
     IF mv_onlypr = abap_true AND mv_proj IS NOT INITIAL AND mt_pmap IS NOT INITIAL.
       SELECT DISTINCT tree_id FROM tnodeimg
         FOR ALL ENTRIES IN @mt_pmap
         WHERE node_id = @mt_pmap-node_id
         INTO TABLE @lt_trees.
+
+      " Unterstrukturen duerfen hier nicht aufgeloest werden. Unter den
+      " Projektknoten ist auch der Wurzelknoten des Projekts, und dessen
+      " Struktur ist der komplette Einfuehrungsleitfaden - mit Aufloesung
+      " liefe der Lauf wieder ueber den ganzen IMG. Die Projektknoten liegen
+      " jeweils direkt in ihrer eigenen Struktur.
+      lv_subs = abap_false.
     ENDIF.
 
     IF lt_trees IS INITIAL.
@@ -1425,7 +1437,7 @@ CLASS lcl_collector_img IMPLEMENTATION.
     " ein Lauf ohne Aufloesung endet daher nach der ersten Ebene und findet
     " keine einzige Aktivitaet. STREE_HIERARCHY_READ_ALL_SUBS loest die
     " Verweise auf und liefert den durchgaengigen Baum.
-    IF mv_subs = abap_true.
+    IF lv_subs = abap_true.
       CALL FUNCTION 'STREE_HIERARCHY_READ_ALL_SUBS'
         EXPORTING
           struct_id  = lv_tree
@@ -2495,7 +2507,7 @@ START-OF-SELECTION.
     IF p_down = abap_true.
       PERFORM download USING lv_xml 'xml'.
     ENDIF.
-    IF p_srv IS NOT INITIAL.
+    IF p_dsrv = abap_true AND p_srv IS NOT INITIAL.
       PERFORM download_srv USING lv_xml 'xml'.
     ENDIF.
   ENDIF.
@@ -2509,7 +2521,7 @@ START-OF-SELECTION.
     IF p_down = abap_true.
       PERFORM download USING lv_html 'html'.
     ENDIF.
-    IF p_srv IS NOT INITIAL.
+    IF p_dsrv = abap_true AND p_srv IS NOT INITIAL.
       PERFORM download_srv USING lv_html 'html'.
     ENDIF.
 

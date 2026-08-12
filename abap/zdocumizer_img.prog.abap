@@ -666,24 +666,79 @@ ENDCLASS.
 *----------------------------------------------------------------------*
 * Selektionsbild
 *----------------------------------------------------------------------*
-SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE TEXT-b01.
-PARAMETERS p_tree  TYPE ttree-id.
-PARAMETERS p_srch  TYPE tnodeimgt-text.
+* Die Beschriftungen stehen bewusst im Quelltext und nicht im Textpool.
+* Textelemente sind ein eigener Programmbestandteil, der beim Kopieren des
+* Quelltextes in ein anderes System nicht mitkommt - dort stuenden sonst
+* nur die technischen Feldnamen. Ueber COMMENT-Felder, die in
+* INITIALIZATION gefuellt werden, ist der Report ohne Nacharbeit lesbar.
+
+* Die Felder gv_* werden von SELECTION-SCREEN COMMENT bzw. FRAME TITLE
+* implizit angelegt und duerfen nicht zusaetzlich per DATA deklariert
+* werden - sonst meldet der Compiler eine Doppeldeklaration.
+
+SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE gv_blk1.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_ttree FOR FIELD p_tree.
+    PARAMETERS p_tree TYPE ttree-id.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tsrch FOR FIELD p_srch.
+    PARAMETERS p_srch TYPE tnodeimgt-text.
+  SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b1.
 
-SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE TEXT-b02.
-PARAMETERS p_langu TYPE sy-langu DEFAULT sy-langu.
-PARAMETERS p_depth TYPE i DEFAULT 0.
-PARAMETERS p_maxnod TYPE i DEFAULT 300.
-PARAMETERS p_subs  AS CHECKBOX DEFAULT 'X'.
-PARAMETERS p_doku  AS CHECKBOX DEFAULT 'X'.
-PARAMETERS p_obj   AS CHECKBOX DEFAULT 'X'.
+SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE gv_blk2.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tlang FOR FIELD p_langu.
+    PARAMETERS p_langu TYPE sy-langu DEFAULT sy-langu.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tdep FOR FIELD p_depth.
+    PARAMETERS p_depth TYPE i DEFAULT 0.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tmaxn FOR FIELD p_maxnod.
+    PARAMETERS p_maxnod TYPE i DEFAULT 300.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tsubs FOR FIELD p_subs.
+    PARAMETERS p_subs AS CHECKBOX DEFAULT 'X'.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tdoku FOR FIELD p_doku.
+    PARAMETERS p_doku AS CHECKBOX DEFAULT 'X'.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tobj FOR FIELD p_obj.
+    PARAMETERS p_obj AS CHECKBOX DEFAULT 'X'.
+  SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b2.
 
-SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE TEXT-b03.
-PARAMETERS p_xml   AS CHECKBOX DEFAULT 'X'.
-PARAMETERS p_rtest AS CHECKBOX DEFAULT 'X'.
+SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE gv_blk3.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_txml FOR FIELD p_xml.
+    PARAMETERS p_xml AS CHECKBOX DEFAULT 'X'.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_trt FOR FIELD p_rtest.
+    PARAMETERS p_rtest AS CHECKBOX DEFAULT 'X'.
+  SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b3.
+
+INITIALIZATION.
+  gv_blk1   = 'Auswahl der Struktur'.
+  gv_blk2   = 'Umfang'.
+  gv_blk3   = 'Ausgabe'.
+  gv_ttree  = 'Struktur-ID (GUID)'.
+  gv_tsrch  = 'oder Suchbegriff Wurzel'.
+  gv_tlang = 'Sprache'.
+  gv_tdep = 'Max. Tiefe (0 = alle)'.
+  gv_tmaxn  = 'Max. Kapitel (0 = alle)'.
+  gv_tsubs  = 'Unterstrukturen aufloesen'.
+  gv_tdoku  = 'Standarddokumentation'.
+  gv_tobj   = 'Objektzuordnung'.
+  gv_txml   = 'XML ausgeben'.
+  gv_trt = 'Roundtrip pruefen'.
 
 *----------------------------------------------------------------------*
 * lcl_collector_img - der eigentliche Gegenstand von Schritt 3

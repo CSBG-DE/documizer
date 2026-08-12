@@ -755,7 +755,7 @@ INITIALIZATION.
   gv_tsubs  = 'Unterstrukturen auflösen'.
   gv_tdoku  = 'Standarddokumentation'.
   gv_tobj   = 'Objektzuordnung'.
-  gv_txml   = 'XML in Liste ausgeben'.
+  gv_txml   = 'XML erzeugen/ausgeben'.
   gv_thtml  = 'HTML erzeugen/anzeigen'.
   gv_trt    = 'Roundtrip prüfen'.
   gv_tdown  = 'Download auf PC'.
@@ -1171,12 +1171,14 @@ CLASS lcl_renderer_html IMPLEMENTATION.
       ENDIF.
 
       " Abschnittsmarke &NAME& - wird zur Überschrift, die Kaufmanns-Und
-      " verschwinden dabei
+      " verschwinden dabei.
+      "
+      " Die Pruefung laeuft ueber einen regulaeren Ausdruck und nicht ueber
+      " CS: der Vergleichsoperator ignoriert nachgestellte Leerzeichen im
+      " Suchbegriff, weshalb "zeile CS space" immer wahr ist.
       lv_len = strlen( lv_line ).
-      IF lv_len > 2
-        AND substring( val = lv_line off = 0 len = 1 ) = '&'
-        AND substring( val = lv_line off = lv_len - 1 len = 1 ) = '&'
-        AND NOT lv_line CS ' '.
+      FIND PCRE '^&[A-Z0-9_]+&$' IN lv_line.
+      IF sy-subrc = 0.
         rv_html = |{ rv_html }<p class="sec">{ esc(
                     itf_section( substring( val = lv_line off = 1 len = lv_len - 2 ) ) ) }</p>|.
         CONTINUE.
@@ -1573,7 +1575,13 @@ START-OF-SELECTION.
   DATA lo_renderer TYPE REF TO lif_docu_renderer.
   lo_renderer = NEW lcl_renderer_xml( ).
 
-  DATA(lv_xml) = lo_renderer->render( lo_doc ).
+* XML wird nur erzeugt, wenn es auch gebraucht wird: fuer die Ausgabe,
+* fuer den Download oder fuer den Roundtrip-Selbsttest.
+  DATA lv_xml TYPE string.
+  IF p_xml = abap_true OR p_rtest = abap_true
+     OR ( p_down = abap_true AND p_xml = abap_true ).
+    lv_xml = lo_renderer->render( lo_doc ).
+  ENDIF.
 
   WRITE: / 'Documizer - IMG-Collector (ohne Dateninhalte)'.
   ULINE.
@@ -1590,7 +1598,9 @@ START-OF-SELECTION.
   WRITE: / 'davon Aktivitäten                :', lo_collector->get_stat_activities( ).
   WRITE: / 'mit Standarddokumentation        :', lo_collector->get_stat_docu( ).
   WRITE: / 'zugeordnete Objekte              :', lo_collector->get_stat_objects( ).
-  WRITE: / 'XML-Zeichen                      :', strlen( lv_xml ).
+  IF lv_xml IS NOT INITIAL.
+    WRITE: / 'XML-Zeichen                      :', strlen( lv_xml ).
+  ENDIF.
 
   IF ls_docmeta-truncated = abap_true.
     WRITE: / 'ACHTUNG: Limit erreicht, Dokument unvollständig.'.
@@ -1607,7 +1617,7 @@ START-OF-SELECTION.
     ENDIF.
   ENDIF.
 
-  IF p_down = abap_true.
+  IF p_down = abap_true AND p_xml = abap_true.
     PERFORM download USING lv_xml 'xml'.
   ENDIF.
 

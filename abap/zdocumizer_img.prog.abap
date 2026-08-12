@@ -927,6 +927,9 @@ INITIALIZATION.
 AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_path.
   PERFORM f4_verzeichnis.
 
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_proj.
+  PERFORM f4_projekt.
+
 * Wertehilfe fuer die Struktur-ID. Die DDIC-Suchhilfe auf TTREE-ID liefert
 * nur nackte GUIDs ohne Bezeichnung und ist damit unbrauchbar. Hier werden
 * stattdessen die Wurzelknoten mit ihrem Text angeboten, optional gefiltert
@@ -1443,7 +1446,12 @@ CLASS lcl_collector_img IMPLEMENTATION.
       " vollstaendig es ist.
       mv_n_total = mv_n_total + 1.
 
-      IF mv_maxnod > 0 AND mv_n_nodes >= mv_maxnod.
+      " Im Projektmodus mit "nur Projektknoten" darf die Kapitelgrenze nicht
+      " waehrend der Traversierung greifen: die Projektknoten liegen oft
+      " tief im Baum, und was vorher abgeschnitten wird, kann das
+      " Beschneiden hinterher nicht mehr finden.
+      IF mv_maxnod > 0 AND mv_n_nodes >= mv_maxnod
+         AND NOT ( mv_onlypr = abap_true AND mv_proj IS NOT INITIAL ).
         lv_trunc = abap_true.
         CONTINUE.
       ENDIF.
@@ -2166,6 +2174,50 @@ FORM f4_struktur.
 ENDFORM.
 
 *----------------------------------------------------------------------*
+* Wertehilfe fuer das Projekt
+*----------------------------------------------------------------------*
+FORM f4_projekt.
+
+  TYPES: BEGIN OF ty_p,
+           project_id TYPE tproject-project_id,
+           title      TYPE tprojectt-title,
+           responsibl TYPE tproject-responsibl,
+           class      TYPE tproject-class,
+           ldate      TYPE tproject-ldate,
+         END OF ty_p.
+
+  DATA lt_p   TYPE STANDARD TABLE OF ty_p.
+  DATA lt_ret TYPE STANDARD TABLE OF ddshretval.
+
+  SELECT p~project_id AS project_id, t~title AS title,
+         p~responsibl AS responsibl, p~class AS class, p~ldate AS ldate
+    FROM tproject AS p
+    LEFT OUTER JOIN tprojectt AS t
+      ON t~project_id = p~project_id AND t~langu = @p_langu
+    INTO CORRESPONDING FIELDS OF TABLE @lt_p
+    UP TO 500 ROWS.
+
+  SORT lt_p BY project_id.
+  DELETE ADJACENT DUPLICATES FROM lt_p COMPARING project_id.
+
+  CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
+    EXPORTING
+      retfield        = 'PROJECT_ID'
+      dynpprog        = sy-repid
+      dynpnr          = sy-dynnr
+      dynprofield     = 'P_PROJ'
+      value_org       = 'S'
+    TABLES
+      value_tab       = lt_p
+      return_tab      = lt_ret
+    EXCEPTIONS
+      parameter_error = 1
+      no_values_found = 2
+      OTHERS          = 3.
+
+ENDFORM.
+
+*----------------------------------------------------------------------*
 * Wertehilfe fuer das Zielverzeichnis
 *----------------------------------------------------------------------*
 FORM f4_verzeichnis.
@@ -2342,6 +2394,10 @@ START-OF-SELECTION.
   WRITE: / 'zugeordnete Objekte              :', lo_collector->get_stat_objects( ).
   IF p_proj IS NOT INITIAL.
     WRITE: / 'Kapitel mit Projektdaten         :', lo_collector->get_stat_project( ).
+    IF p_onlypr = abap_true AND p_maxnod > 0.
+      WRITE: / 'Hinweis: Kapitelgrenze im Projektmodus ausgesetzt,',
+               'sonst wuerden tiefe Projektknoten nicht gefunden.'.
+    ENDIF.
   ENDIF.
   IF lv_xml IS NOT INITIAL.
     WRITE: / 'XML-Zeichen                      :', strlen( lv_xml ).

@@ -720,6 +720,10 @@ SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE gv_blk3.
     PARAMETERS p_xml AS CHECKBOX DEFAULT 'X'.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_thtml FOR FIELD p_html.
+    PARAMETERS p_html AS CHECKBOX.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_trt FOR FIELD p_rtest.
     PARAMETERS p_rtest AS CHECKBOX DEFAULT 'X'.
   SELECTION-SCREEN END OF LINE.
@@ -738,7 +742,15 @@ INITIALIZATION.
   gv_tdoku  = 'Standarddokumentation'.
   gv_tobj   = 'Objektzuordnung'.
   gv_txml   = 'XML ausgeben'.
-  gv_trt = 'Roundtrip pruefen'.
+  gv_thtml  = 'HTML anzeigen'.
+  gv_trt    = 'Roundtrip pruefen'.
+
+* Wertehilfe fuer die Struktur-ID. Die DDIC-Suchhilfe auf TTREE-ID liefert
+* nur nackte GUIDs ohne Bezeichnung und ist damit unbrauchbar. Hier werden
+* stattdessen die Wurzelknoten mit ihrem Text angeboten, optional gefiltert
+* ueber den Suchbegriff im zweiten Feld.
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_tree.
+  PERFORM f4_struktur.
 
 *----------------------------------------------------------------------*
 * lcl_collector_img - der eigentliche Gegenstand von Schritt 3
@@ -1053,6 +1065,211 @@ CLASS lcl_collector_img IMPLEMENTATION.
 ENDCLASS.
 
 *----------------------------------------------------------------------*
+* lcl_renderer_html - lesbare Ausgabe aus demselben Kapitelmodell
+*
+* Bewusst eine in sich geschlossene Datei ohne externe Abhaengigkeiten:
+* CSS eingebettet, kein JavaScript. Die Datei soll auch in Jahren noch
+* ohne Nacharbeit zu oeffnen sein.
+*
+* Die ITF-Formatkennzeichen der Dokumentation werden noch nicht
+* ausgewertet, der Text erscheint als vorformatierter Block. Die
+* Umsetzung nach Absaetzen und Listen gehoert zu Schritt 6.
+*----------------------------------------------------------------------*
+CLASS lcl_renderer_html DEFINITION.
+  PUBLIC SECTION.
+    INTERFACES lif_docu_renderer.
+  PRIVATE SECTION.
+    DATA mv_html TYPE string.
+    METHODS add IMPORTING iv_text TYPE string.
+    METHODS esc IMPORTING iv_text TYPE string RETURNING VALUE(rv_text) TYPE string.
+    METHODS write_chapter IMPORTING io_chapter TYPE REF TO lcl_chapter.
+    METHODS write_toc     IMPORTING io_chapter TYPE REF TO lcl_chapter.
+ENDCLASS.
+
+CLASS lcl_renderer_html IMPLEMENTATION.
+
+  METHOD add.
+    mv_html = |{ mv_html }{ iv_text }{ cl_abap_char_utilities=>newline }|.
+  ENDMETHOD.
+
+  METHOD esc.
+    rv_text = iv_text.
+    REPLACE ALL OCCURRENCES OF '&' IN rv_text WITH '&amp;'.
+    REPLACE ALL OCCURRENCES OF '<' IN rv_text WITH '&lt;'.
+    REPLACE ALL OCCURRENCES OF '>' IN rv_text WITH '&gt;'.
+  ENDMETHOD.
+
+  METHOD lif_docu_renderer~render.
+
+    CLEAR mv_html.
+    DATA(ls_meta) = io_document->get_meta( ).
+
+    add( '<html><head><meta http-equiv="content-type"' &&
+         ' content="text/html; charset=utf-8"><style>' ).
+    add( 'body{font-family:Arial,Helvetica,sans-serif;font-size:12px;' &&
+         'margin:20px;color:#222}' ).
+    add( 'h1{font-size:20px;border-bottom:2px solid #888;padding-bottom:4px}' ).
+    add( 'h2{font-size:16px;margin-top:22px}' ).
+    add( 'h3,h4,h5,h6{font-size:13px;margin-top:16px}' ).
+    add( 'table{border-collapse:collapse;margin:6px 0}' ).
+    add( 'th,td{border:1px solid #bbb;padding:3px 7px;text-align:left;' &&
+         'font-size:11px}' ).
+    add( 'th{background:#eee}' ).
+    add( 'pre.doc{background:#f7f7f7;border-left:3px solid #bbb;padding:8px;' &&
+         'white-space:pre-wrap;font-family:Consolas,monospace;font-size:11px}' ).
+    add( '.ref{color:#666;font-size:11px;margin:2px 0}' ).
+    add( '.warn{color:#a00;font-weight:bold}' ).
+    add( 'ul.toc{line-height:1.6}' ).
+    add( '</style></head><body>' ).
+
+    add( |<h1>Documizer - { esc( ls_meta-doc_type ) }-Dokumentation</h1>| ).
+
+    add( '<table>' ).
+    add( |<tr><th>System</th><td>{ esc( ls_meta-system ) }| &&
+         | / Mandant { esc( ls_meta-client ) }</td></tr>| ).
+    add( |<tr><th>Erzeugt</th><td>{ esc( ls_meta-created_at ) }| &&
+         | von { esc( ls_meta-created_by ) }</td></tr>| ).
+    add( |<tr><th>Sprache</th><td>{ esc( ls_meta-language ) }</td></tr>| ).
+    add( |<tr><th>Format</th><td>Version { esc( ls_meta-version ) }</td></tr>| ).
+    add( '</table>' ).
+
+    IF ls_meta-truncated = abap_true.
+      add( '<p class="warn">Achtung: Der Baum wurde durch die ' &&
+           'Mengenbegrenzung abgeschnitten und ist unvollstaendig.</p>' ).
+    ENDIF.
+
+    add( '<h2>Inhalt</h2><ul class="toc">' ).
+    LOOP AT io_document->get_chapters( ) INTO DATA(lo_top).
+      write_toc( lo_top ).
+    ENDLOOP.
+    add( '</ul>' ).
+
+    LOOP AT io_document->get_chapters( ) INTO DATA(lo_chapter).
+      write_chapter( lo_chapter ).
+    ENDLOOP.
+
+    add( '</body></html>' ).
+
+    rv_content = mv_html.
+
+  ENDMETHOD.
+
+  METHOD write_toc.
+    " Nur die obersten beiden Ebenen, sonst wird das Verzeichnis laenger
+    " als das Dokument.
+    IF io_chapter->get_level( ) > 2.
+      RETURN.
+    ENDIF.
+    add( |<li><a href="#c{ esc( io_chapter->get_id( ) ) }">| &&
+         |{ esc( io_chapter->get_id( ) ) } { esc( io_chapter->get_title( ) ) }</a></li>| ).
+    LOOP AT io_chapter->get_children( ) INTO DATA(lo_child).
+      write_toc( lo_child ).
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD write_chapter.
+
+    DATA lv_h TYPE i.
+
+    lv_h = io_chapter->get_level( ).
+    IF lv_h > 6.
+      lv_h = 6.
+    ENDIF.
+    IF lv_h < 2.
+      lv_h = 2.
+    ENDIF.
+
+    add( |<h{ lv_h } id="c{ esc( io_chapter->get_id( ) ) }">| &&
+         |{ esc( io_chapter->get_id( ) ) } { esc( io_chapter->get_title( ) ) }</h{ lv_h }>| ).
+
+    IF io_chapter->has_reference( ) = abap_true.
+      DATA(ls_ref) = io_chapter->get_reference( ).
+      add( |<p class="ref">IMG-Aktivitaet { esc( ls_ref-activity ) }| &&
+           |, Transaktion { esc( ls_ref-tcode ) }| &&
+           |, Dokuobjekt { esc( ls_ref-docu_id ) }</p>| ).
+    ENDIF.
+
+    IF io_chapter->get_documentation( ) IS NOT INITIAL.
+      add( |<pre class="doc">{ esc( io_chapter->get_documentation( ) ) }</pre>| ).
+    ENDIF.
+
+    IF lines( io_chapter->get_objects( ) ) > 0.
+      add( '<table><tr><th>Objekttyp</th><th>Objekt</th>' &&
+           '<th>Transaktion</th><th>Zeilen</th></tr>' ).
+      LOOP AT io_chapter->get_objects( ) INTO DATA(lo_obj).
+        DATA lv_rows TYPE string.
+        IF lo_obj->get_truncated( ) = abap_true.
+          lv_rows = |{ lo_obj->get_row_count( ) } (gekuerzt)|.
+        ELSE.
+          lv_rows = |{ lo_obj->get_row_count( ) }|.
+        ENDIF.
+        add( |<tr><td>{ esc( lo_obj->get_type( ) ) }</td>| &&
+             |<td>{ esc( lo_obj->get_name( ) ) }</td>| &&
+             |<td>{ esc( lo_obj->get_tcode( ) ) }</td>| &&
+             |<td>{ lv_rows }</td></tr>| ).
+      ENDLOOP.
+      add( '</table>' ).
+    ENDIF.
+
+    LOOP AT io_chapter->get_children( ) INTO DATA(lo_child).
+      write_chapter( lo_child ).
+    ENDLOOP.
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+*----------------------------------------------------------------------*
+* Wertehilfe fuer die Struktur-ID
+*----------------------------------------------------------------------*
+FORM f4_struktur.
+
+  TYPES: BEGIN OF ty_f4,
+           tree_id TYPE ttree-id,
+           text    TYPE tnodeimgt-text,
+         END OF ty_f4.
+
+  DATA lt_f4      TYPE STANDARD TABLE OF ty_f4.
+  DATA lt_ret     TYPE STANDARD TABLE OF ddshretval.
+  DATA lv_pattern TYPE string.
+
+  IF p_srch IS INITIAL.
+    lv_pattern = '%'.
+  ELSE.
+    lv_pattern = |%{ p_srch }%|.
+  ENDIF.
+
+  SELECT n~tree_id, t~text
+    FROM tnodeimg AS n
+    INNER JOIN tnodeimgt AS t
+      ON t~tree_id = n~tree_id AND t~node_id = n~node_id
+    WHERE n~parent_id = @space
+      AND t~spras     = @p_langu
+      AND t~text      LIKE @lv_pattern
+    INTO TABLE @lt_f4
+    UP TO 500 ROWS.
+
+  SORT lt_f4 BY text tree_id.
+  DELETE ADJACENT DUPLICATES FROM lt_f4 COMPARING tree_id.
+
+  CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
+    EXPORTING
+      retfield        = 'TREE_ID'
+      dynpprog        = sy-repid
+      dynpnr          = sy-dynnr
+      dynprofield     = 'P_TREE'
+      value_org       = 'S'
+    TABLES
+      value_tab       = lt_f4
+      return_tab      = lt_ret
+    EXCEPTIONS
+      parameter_error = 1
+      no_values_found = 2
+      OTHERS          = 3.
+
+ENDFORM.
+
+*----------------------------------------------------------------------*
 * Hilfsroutine: Strukturen suchen, wenn keine GUID bekannt ist
 *----------------------------------------------------------------------*
 FORM search_structures.
@@ -1138,6 +1355,19 @@ START-OF-SELECTION.
       WRITE: / 'Roundtrip                        : IDENTISCH - bestanden'.
     ELSE.
       WRITE: / 'Roundtrip                        : ABWEICHUNG', strlen( lv_xml2 ).
+    ENDIF.
+  ENDIF.
+
+  IF p_html = abap_true.
+    DATA lo_html TYPE REF TO lif_docu_renderer.
+    lo_html = NEW lcl_renderer_html( ).
+    DATA(lv_html) = lo_html->render( lo_doc ).
+    WRITE: / 'HTML-Zeichen                     :', strlen( lv_html ).
+    IF sy-batch = abap_false.
+      cl_abap_browser=>show_html( html_string = lv_html
+                                  title       = 'Documizer' ).
+    ELSE.
+      WRITE: / 'HTML-Anzeige im Hintergrund nicht moeglich.'.
     ENDIF.
   ENDIF.
 

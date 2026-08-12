@@ -52,6 +52,14 @@ TYPES: BEGIN OF ty_row,
        END OF ty_row.
 TYPES ty_rows TYPE STANDARD TABLE OF ty_row WITH EMPTY KEY.
 
+TYPES: BEGIN OF ty_transport,
+         trkorr TYPE string,
+         user   TYPE string,
+         date   TYPE string,
+         text   TYPE string,
+       END OF ty_transport.
+TYPES ty_transports TYPE STANDARD TABLE OF ty_transport WITH EMPTY KEY.
+
 TYPES: BEGIN OF ty_reference,
          activity TYPE string,
          docu_id  TYPE string,
@@ -98,6 +106,12 @@ CLASS lcl_object DEFINITION.
     METHODS get_rows      RETURNING VALUE(rt_rows)      TYPE ty_rows.
     METHODS get_row_count RETURNING VALUE(rv_row_count) TYPE i.
     METHODS get_truncated RETURNING VALUE(rv_truncated) TYPE abap_bool.
+    METHODS set_note      IMPORTING iv_note   TYPE string.
+    METHODS get_note      RETURNING VALUE(rv_note)   TYPE string.
+    METHODS set_filter    IMPORTING iv_filter TYPE string.
+    METHODS get_filter    RETURNING VALUE(rv_filter) TYPE string.
+    METHODS add_transport IMPORTING is_transport TYPE ty_transport.
+    METHODS get_transports RETURNING VALUE(rt_transports) TYPE ty_transports.
   PRIVATE SECTION.
     DATA mv_type      TYPE string.
     DATA mv_name      TYPE string.
@@ -106,6 +120,9 @@ CLASS lcl_object DEFINITION.
     DATA mt_rows      TYPE ty_rows.
     DATA mv_row_count TYPE i.
     DATA mv_truncated TYPE abap_bool.
+    DATA mv_note      TYPE string.
+    DATA mv_filter    TYPE string.
+    DATA mt_trans     TYPE ty_transports.
 ENDCLASS.
 
 CLASS lcl_object IMPLEMENTATION.
@@ -146,6 +163,24 @@ CLASS lcl_object IMPLEMENTATION.
   ENDMETHOD.
   METHOD get_truncated.
     rv_truncated = mv_truncated.
+  ENDMETHOD.
+  METHOD set_note.
+    mv_note = iv_note.
+  ENDMETHOD.
+  METHOD get_note.
+    rv_note = mv_note.
+  ENDMETHOD.
+  METHOD set_filter.
+    mv_filter = iv_filter.
+  ENDMETHOD.
+  METHOD get_filter.
+    rv_filter = mv_filter.
+  ENDMETHOD.
+  METHOD add_transport.
+    APPEND is_transport TO mt_trans.
+  ENDMETHOD.
+  METHOD get_transports.
+    rt_transports = mt_trans.
   ENDMETHOD.
 ENDCLASS.
 
@@ -396,7 +431,9 @@ CLASS lcl_renderer_xml IMPLEMENTATION.
     mo_writer->open_element( name = 'object' ).
     mo_writer->write_attribute( name = 'type'  value = io_object->get_type( ) ).
     mo_writer->write_attribute( name = 'name'  value = io_object->get_name( ) ).
-    mo_writer->write_attribute( name = 'tcode' value = io_object->get_tcode( ) ).
+    mo_writer->write_attribute( name = 'tcode'  value = io_object->get_tcode( ) ).
+    mo_writer->write_attribute( name = 'filter' value = io_object->get_filter( ) ).
+    mo_writer->write_attribute( name = 'note'   value = io_object->get_note( ) ).
 
     mo_writer->open_element( name = 'structure' ).
     LOOP AT io_object->get_fields( ) INTO DATA(ls_field).
@@ -429,6 +466,17 @@ CLASS lcl_renderer_xml IMPLEMENTATION.
         ENDIF.
         mo_writer->close_element( ).
       ENDLOOP.
+      mo_writer->close_element( ).
+    ENDLOOP.
+    mo_writer->close_element( ).
+
+    mo_writer->open_element( name = 'transports' ).
+    LOOP AT io_object->get_transports( ) INTO DATA(ls_tr).
+      mo_writer->open_element( name = 'transport' ).
+      mo_writer->write_attribute( name = 'trkorr' value = ls_tr-trkorr ).
+      mo_writer->write_attribute( name = 'user'   value = ls_tr-user ).
+      mo_writer->write_attribute( name = 'date'   value = ls_tr-date ).
+      mo_writer->write_attribute( name = 'text'   value = ls_tr-text ).
       mo_writer->close_element( ).
     ENDLOOP.
     mo_writer->close_element( ).
@@ -549,13 +597,33 @@ CLASS lcl_parser_xml IMPLEMENTATION.
                   WHEN 'type'.  lv_otype = lo_attr->get_value( ).
                   WHEN 'name'.  lv_oname = lo_attr->get_value( ).
                   WHEN 'tcode'. lv_otcod = lo_attr->get_value( ).
+                  WHEN 'filter'. DATA(lv_ofilt) = lo_attr->get_value( ).
+                  WHEN 'note'.   DATA(lv_onote) = lo_attr->get_value( ).
                 ENDCASE.
               ENDLOOP.
               lo_object = NEW lcl_object( iv_type  = lv_otype
                                           iv_name  = lv_oname
                                           iv_tcode = lv_otcod ).
+              lo_object->set_filter( lv_ofilt ).
+              lo_object->set_note( lv_onote ).
+              CLEAR: lv_ofilt, lv_onote.
               IF lo_current IS BOUND.
                 lo_current->add_object( lo_object ).
+              ENDIF.
+
+            WHEN 'transport'.
+              DATA ls_tr TYPE ty_transport.
+              CLEAR ls_tr.
+              LOOP AT lt_attr INTO lo_attr.
+                CASE lo_attr->qname-name.
+                  WHEN 'trkorr'. ls_tr-trkorr = lo_attr->get_value( ).
+                  WHEN 'user'.   ls_tr-user   = lo_attr->get_value( ).
+                  WHEN 'date'.   ls_tr-date   = lo_attr->get_value( ).
+                  WHEN 'text'.   ls_tr-text   = lo_attr->get_value( ).
+                ENDCASE.
+              ENDLOOP.
+              IF lo_object IS BOUND.
+                lo_object->add_transport( ls_tr ).
               ENDIF.
 
             WHEN 'field'.
@@ -718,6 +786,22 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE gv_blk2.
     SELECTION-SCREEN COMMENT 1(30) gv_tobj FOR FIELD p_obj.
     PARAMETERS p_obj AS CHECKBOX DEFAULT 'X'.
   SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tdata FOR FIELD p_data.
+    PARAMETERS p_data AS CHECKBOX DEFAULT 'X'.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tcust FOR FIELD p_cust.
+    PARAMETERS p_cust AS CHECKBOX DEFAULT 'X'.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tmaxr FOR FIELD p_maxrow.
+    PARAMETERS p_maxrow TYPE i DEFAULT 500.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_thist FOR FIELD p_hist.
+    PARAMETERS p_hist AS CHECKBOX.
+  SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b2.
 
 SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE gv_blk3.
@@ -755,6 +839,10 @@ INITIALIZATION.
   gv_tsubs  = 'Unterstrukturen auflösen'.
   gv_tdoku  = 'Standarddokumentation'.
   gv_tobj   = 'Objektzuordnung'.
+  gv_tdata  = 'Customizing-Inhalte lesen'.
+  gv_tcust  = 'nur kundeneigene Einträge'.
+  gv_tmaxr  = 'Max. Zeilen (0 = alle)'.
+  gv_thist  = 'Transport-Historie'.
   gv_txml   = 'XML erzeugen/ausgeben'.
   gv_thtml  = 'HTML erzeugen/anzeigen'.
   gv_trt    = 'Roundtrip prüfen'.
@@ -772,6 +860,368 @@ AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_tree.
   PERFORM f4_struktur.
 
 *----------------------------------------------------------------------*
+* lcl_cust - Auflösung und Lesen des Customizings (Schritt 4)
+*
+* Views und View-Cluster werden immer auf ihre Basistabellen aufgelöst.
+* Ein Pflegeview lässt sich nicht per SELECT lesen, ein Datenbankview
+* schon - die Unterscheidung entfällt, wenn grundsätzlich aus den
+* transparenten Tabellen gelesen wird.
+*
+* "Kundeneigen" wird über zwei Verfahren zugleich bestimmt:
+*   Namensraum   erstes Schlüsselfeld beginnt mit Y, Z oder /
+*   Transport    Schlüssel taucht in E071K zu dieser Tabelle auf
+* Beides greift per ODER. Der Namensraum findet auch nie transportiertes
+* Customizing, der Transportweg auch Schlüssel ausserhalb des
+* Kundennamensraums. Welches Verfahren gegriffen hat, steht am Objekt.
+*----------------------------------------------------------------------*
+CLASS lcl_cust DEFINITION.
+  PUBLIC SECTION.
+    METHODS constructor
+      IMPORTING iv_custom TYPE abap_bool
+                iv_maxrow TYPE i
+                iv_hist   TYPE abap_bool.
+    METHODS build
+      IMPORTING iv_type           TYPE string
+                iv_name           TYPE string
+                iv_tcode          TYPE string
+      RETURNING VALUE(rt_objects) TYPE ty_objects.
+  PRIVATE SECTION.
+    TYPES: BEGIN OF ty_fld,
+             fieldname TYPE dd03l-fieldname,
+             rollname  TYPE dd03l-rollname,
+             keyflag   TYPE dd03l-keyflag,
+             position  TYPE dd03l-position,
+             inttype   TYPE dd03l-inttype,
+             intlen    TYPE dd03l-intlen,
+           END OF ty_fld.
+    TYPES ty_flds TYPE STANDARD TABLE OF ty_fld WITH EMPTY KEY.
+
+    DATA mv_custom TYPE abap_bool.
+    DATA mv_maxrow TYPE i.
+    DATA mv_hist   TYPE abap_bool.
+
+    METHODS resolve
+      IMPORTING iv_type         TYPE string
+                iv_name         TYPE string
+      RETURNING VALUE(rt_names) TYPE string_table.
+    METHODS read_ddic
+      IMPORTING iv_tab         TYPE string
+      RETURNING VALUE(rt_flds) TYPE ty_flds.
+    METHODS read_transports
+      IMPORTING iv_tab   TYPE string
+                it_flds  TYPE ty_flds
+      EXPORTING et_trans TYPE ty_transports
+                et_keys  TYPE string_table.
+    METHODS fill_data
+      IMPORTING iv_tab  TYPE string
+                it_flds TYPE ty_flds
+                it_keys TYPE string_table
+                io_obj  TYPE REF TO lcl_object.
+ENDCLASS.
+
+CLASS lcl_cust IMPLEMENTATION.
+
+  METHOD constructor.
+    mv_custom = iv_custom.
+    mv_maxrow = iv_maxrow.
+    mv_hist   = iv_hist.
+  ENDMETHOD.
+
+  METHOD resolve.
+
+    DATA lv_view TYPE dd25l-viewname.
+    DATA lv_vcl  TYPE vclstruc-vclname.
+
+    CASE iv_type.
+
+      WHEN 'T'.
+        APPEND iv_name TO rt_names.
+
+      WHEN 'V' OR 'S'.
+        lv_view = iv_name.
+        SELECT tabname, tabpos FROM dd26s
+          WHERE viewname = @lv_view AND as4local = 'A'
+          ORDER BY tabpos
+          INTO TABLE @DATA(lt_base).
+        IF lt_base IS INITIAL.
+          SELECT SINGLE roottab FROM dd25l
+            WHERE viewname = @lv_view AND as4local = 'A'
+            INTO @DATA(lv_root).
+          IF sy-subrc = 0 AND lv_root IS NOT INITIAL.
+            APPEND CONV string( lv_root ) TO rt_names.
+          ENDIF.
+        ELSE.
+          LOOP AT lt_base INTO DATA(ls_base).
+            APPEND CONV string( ls_base-tabname ) TO rt_names.
+          ENDLOOP.
+        ENDIF.
+
+      WHEN 'C'.
+        lv_vcl = iv_name.
+        SELECT object, objpos FROM vclstruc
+          WHERE vclname = @lv_vcl
+          ORDER BY objpos
+          INTO TABLE @DATA(lt_v).
+        LOOP AT lt_v INTO DATA(ls_v).
+          APPEND LINES OF resolve( iv_type = 'V'
+                                   iv_name = CONV string( ls_v-object ) ) TO rt_names.
+        ENDLOOP.
+
+    ENDCASE.
+
+    SORT rt_names.
+    DELETE ADJACENT DUPLICATES FROM rt_names.
+
+  ENDMETHOD.
+
+  METHOD read_ddic.
+    DATA lv_tab TYPE dd03l-tabname.
+    lv_tab = iv_tab.
+    SELECT fieldname, rollname, keyflag, position, inttype, intlen
+      FROM dd03l
+      WHERE tabname = @lv_tab AND as4local = 'A' AND fieldname NOT LIKE '.%'
+      ORDER BY position
+      INTO CORRESPONDING FIELDS OF TABLE @rt_flds.
+  ENDMETHOD.
+
+  METHOD read_transports.
+
+    DATA lv_tab TYPE e071k-objname.
+    DATA lv_off TYPE i.
+    DATA lv_len TYPE i.
+
+    CLEAR: et_trans, et_keys.
+    lv_tab = iv_tab.
+
+    SELECT k~trkorr AS trkorr, k~tabkey AS tabkey,
+           e~as4user AS as4user, e~as4date AS as4date
+      FROM e071k AS k
+      INNER JOIN e070 AS e ON e~trkorr = k~trkorr
+      WHERE k~pgmid = 'R3TR' AND k~object = 'TABU' AND k~objname = @lv_tab
+      INTO TABLE @DATA(lt_k)
+      UP TO 500 ROWS.
+
+    IF lt_k IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    " Lage des ersten fachlichen Schlüsselfeldes im TABKEY bestimmen
+    LOOP AT it_flds INTO DATA(ls_f) WHERE keyflag = 'X'.
+      IF ls_f-fieldname = 'MANDT' OR ls_f-fieldname = 'MANDANT'.
+        lv_off = ls_f-intlen.
+        CONTINUE.
+      ENDIF.
+      lv_len = ls_f-intlen.
+      EXIT.
+    ENDLOOP.
+
+    LOOP AT lt_k INTO DATA(ls_k).
+      IF lv_len > 0 AND strlen( ls_k-tabkey ) >= lv_off + lv_len.
+        DATA(lv_key) = substring( val = CONV string( ls_k-tabkey )
+                                  off = lv_off
+                                  len = lv_len ).
+        CONDENSE lv_key.
+        IF lv_key IS NOT INITIAL.
+          APPEND lv_key TO et_keys.
+        ENDIF.
+      ENDIF.
+      APPEND VALUE ty_transport( trkorr = ls_k-trkorr
+                                 user   = ls_k-as4user
+                                 date   = |{ ls_k-as4date DATE = ISO }| ) TO et_trans.
+    ENDLOOP.
+
+    SORT et_keys.
+    DELETE ADJACENT DUPLICATES FROM et_keys.
+    SORT et_trans BY trkorr.
+    DELETE ADJACENT DUPLICATES FROM et_trans COMPARING trkorr.
+
+    LOOP AT et_trans ASSIGNING FIELD-SYMBOL(<ls_t>).
+      SELECT SINGLE as4text FROM e07t
+        WHERE trkorr = @<ls_t>-trkorr AND langu = @sy-langu
+        INTO @DATA(lv_txt).
+      IF sy-subrc = 0.
+        <ls_t>-text = lv_txt.
+      ENDIF.
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD fill_data.
+
+    DATA lt_where   TYPE TABLE OF string.
+    DATA lr_tab     TYPE REF TO data.
+    DATA lv_cnt     TYPE i.
+    DATA lv_max     TYPE i.
+    DATA lv_kf      TYPE string.
+    DATA lv_in      TYPE string.
+    DATA lv_tabname TYPE tabname.
+    FIELD-SYMBOLS <lt_data> TYPE STANDARD TABLE.
+    FIELD-SYMBOLS <ls_data> TYPE any.
+    FIELD-SYMBOLS <lv_val>  TYPE any.
+
+    lv_tabname = iv_tab.
+    AUTHORITY-CHECK OBJECT 'S_TABU_NAM'
+      ID 'ACTVT' FIELD '03'
+      ID 'TABLE' FIELD lv_tabname.
+    IF sy-subrc <> 0.
+      io_obj->set_note( |{ io_obj->get_note( ) } Keine Leseberechtigung (S_TABU_NAM).| ).
+      io_obj->set_filter( 'GESPERRT' ).
+      RETURN.
+    ENDIF.
+
+    IF mv_custom = abap_true.
+
+      LOOP AT it_flds INTO DATA(ls_k) WHERE keyflag = 'X'.
+        IF ls_k-fieldname = 'MANDT' OR ls_k-fieldname = 'MANDANT'
+          OR ls_k-fieldname = 'SPRAS' OR ls_k-fieldname = 'LANGU'.
+          CONTINUE.
+        ENDIF.
+        IF ls_k-inttype = 'C' OR ls_k-inttype = 'N'.
+          lv_kf = ls_k-fieldname.
+        ENDIF.
+        EXIT.
+      ENDLOOP.
+
+      IF lv_kf IS INITIAL.
+        io_obj->set_filter( 'ALLE' ).
+        io_obj->set_note( |{ io_obj->get_note( ) } Kundenfilter nicht anwendbar.| ).
+      ELSE.
+        APPEND |{ lv_kf } LIKE 'Y%' OR { lv_kf } LIKE 'Z%' OR { lv_kf } LIKE '/%'|
+               TO lt_where.
+        IF it_keys IS NOT INITIAL.
+          LOOP AT it_keys INTO DATA(lv_key).
+            IF sy-tabix > 300.
+              EXIT.
+            ENDIF.
+            REPLACE ALL OCCURRENCES OF |'| IN lv_key WITH |''|.
+            IF lv_in IS INITIAL.
+              lv_in = |'{ lv_key }'|.
+            ELSE.
+              lv_in = |{ lv_in }, '{ lv_key }'|.
+            ENDIF.
+          ENDLOOP.
+          IF lv_in IS NOT INITIAL.
+            APPEND |OR { lv_kf } IN ( { lv_in } )| TO lt_where.
+            io_obj->set_filter( 'NAMENSRAUM+TRANSPORT' ).
+          ELSE.
+            io_obj->set_filter( 'NAMENSRAUM' ).
+          ENDIF.
+        ELSE.
+          io_obj->set_filter( 'NAMENSRAUM' ).
+        ENDIF.
+      ENDIF.
+
+    ELSE.
+      io_obj->set_filter( 'ALLE' ).
+    ENDIF.
+
+    TRY.
+        SELECT COUNT(*) FROM (iv_tab) WHERE (lt_where) INTO @lv_cnt.
+      CATCH cx_root.
+        io_obj->set_note( |{ io_obj->get_note( ) } Tabelle nicht lesbar.| ).
+        RETURN.
+    ENDTRY.
+
+    io_obj->set_row_count( lv_cnt ).
+
+    lv_max = mv_maxrow.
+    CREATE DATA lr_tab TYPE STANDARD TABLE OF (iv_tab).
+    ASSIGN lr_tab->* TO <lt_data>.
+
+    TRY.
+        IF lv_max > 0.
+          SELECT * FROM (iv_tab) INTO TABLE @<lt_data> UP TO @lv_max ROWS
+            WHERE (lt_where).
+        ELSE.
+          SELECT * FROM (iv_tab) INTO TABLE @<lt_data>
+            WHERE (lt_where).
+        ENDIF.
+      CATCH cx_root.
+        io_obj->set_note( |{ io_obj->get_note( ) } Daten nicht lesbar.| ).
+        RETURN.
+    ENDTRY.
+
+    IF lv_max > 0 AND lv_cnt > lv_max.
+      io_obj->set_truncated( abap_true ).
+    ENDIF.
+
+    LOOP AT <lt_data> ASSIGNING <ls_data>.
+      DATA ls_row TYPE ty_row.
+      CLEAR ls_row.
+      LOOP AT it_flds INTO DATA(ls_fd).
+        ASSIGN COMPONENT ls_fd-fieldname OF STRUCTURE <ls_data> TO <lv_val>.
+        IF sy-subrc = 0.
+          DATA lv_val TYPE string.
+          lv_val = <lv_val>.
+          APPEND VALUE ty_cell( name = ls_fd-fieldname value = lv_val ) TO ls_row-cells.
+        ENDIF.
+      ENDLOOP.
+      io_obj->add_row( ls_row ).
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD build.
+
+    DATA(lt_names) = resolve( iv_type = iv_type iv_name = iv_name ).
+
+    IF lt_names IS INITIAL.
+      DATA(lo_none) = NEW lcl_object( iv_type  = iv_type
+                                      iv_name  = iv_name
+                                      iv_tcode = iv_tcode ).
+      lo_none->set_note( 'Kein lesbares Datenobjekt hinterlegt.' ).
+      APPEND lo_none TO rt_objects.
+      RETURN.
+    ENDIF.
+
+    LOOP AT lt_names INTO DATA(lv_tab).
+
+      DATA(lo_obj) = NEW lcl_object( iv_type  = iv_type
+                                     iv_name  = lv_tab
+                                     iv_tcode = iv_tcode ).
+
+      IF lv_tab <> iv_name.
+        lo_obj->set_note( |Basistabelle aus { iv_name }.| ).
+      ENDIF.
+
+      DATA(lt_flds) = read_ddic( lv_tab ).
+      LOOP AT lt_flds INTO DATA(ls_f).
+        lo_obj->add_field( VALUE ty_field(
+          name     = ls_f-fieldname
+          rollname = ls_f-rollname
+          keyflag  = COND #( WHEN ls_f-keyflag = 'X' THEN abap_true ELSE abap_false ) ) ).
+      ENDLOOP.
+
+      DATA lt_keys  TYPE string_table.
+      DATA lt_trans TYPE ty_transports.
+      CLEAR: lt_keys, lt_trans.
+
+      IF mv_custom = abap_true OR mv_hist = abap_true.
+        read_transports( EXPORTING iv_tab   = lv_tab
+                                   it_flds  = lt_flds
+                         IMPORTING et_trans = lt_trans
+                                   et_keys  = lt_keys ).
+        IF mv_hist = abap_true.
+          LOOP AT lt_trans INTO DATA(ls_t).
+            lo_obj->add_transport( ls_t ).
+          ENDLOOP.
+        ENDIF.
+      ENDIF.
+
+      fill_data( iv_tab  = lv_tab
+                 it_flds = lt_flds
+                 it_keys = lt_keys
+                 io_obj  = lo_obj ).
+
+      APPEND lo_obj TO rt_objects.
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+*----------------------------------------------------------------------*
 * lcl_collector_img - der eigentliche Gegenstand von Schritt 3
 *----------------------------------------------------------------------*
 CLASS lcl_collector_img DEFINITION.
@@ -784,7 +1234,8 @@ CLASS lcl_collector_img DEFINITION.
                 iv_maxnod  TYPE i
                 iv_subs    TYPE abap_bool
                 iv_doku    TYPE abap_bool
-                iv_obj     TYPE abap_bool.
+                iv_obj     TYPE abap_bool
+                io_cust    TYPE REF TO lcl_cust OPTIONAL.
     METHODS get_stat_nodes      RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_activities RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_docu       RETURNING VALUE(rv) TYPE i.
@@ -797,6 +1248,7 @@ CLASS lcl_collector_img DEFINITION.
     DATA mv_subs    TYPE abap_bool.
     DATA mv_doku    TYPE abap_bool.
     DATA mv_obj     TYPE abap_bool.
+    DATA mo_cust    TYPE REF TO lcl_cust.
     DATA mv_n_nodes TYPE i.
     DATA mv_n_total TYPE i.
     DATA mv_n_act   TYPE i.
@@ -818,6 +1270,7 @@ CLASS lcl_collector_img IMPLEMENTATION.
     mv_depth   = iv_depth.
     mv_maxnod  = iv_maxnod.
     mv_subs    = iv_subs.
+    mo_cust    = io_cust.
     mv_doku    = iv_doku.
     mv_obj     = iv_obj.
   ENDMETHOD.
@@ -1027,11 +1480,21 @@ CLASS lcl_collector_img IMPLEMENTATION.
         WHERE act_id = @lv_actid
         INTO TABLE @DATA(lt_obj).
       LOOP AT lt_obj INTO DATA(ls_obj).
-        io_chapter->add_object( NEW lcl_object(
-          iv_type  = CONV string( ls_obj-objecttype )
-          iv_name  = CONV string( ls_obj-objectname )
-          iv_tcode = CONV string( ls_obj-tcode ) ) ).
-        mv_n_obj = mv_n_obj + 1.
+        IF mo_cust IS BOUND.
+          " Schritt 4: Objekt auflösen und Inhalte lesen
+          LOOP AT mo_cust->build( iv_type  = CONV string( ls_obj-objecttype )
+                                  iv_name  = CONV string( ls_obj-objectname )
+                                  iv_tcode = CONV string( ls_obj-tcode ) ) INTO DATA(lo_built).
+            io_chapter->add_object( lo_built ).
+            mv_n_obj = mv_n_obj + 1.
+          ENDLOOP.
+        ELSE.
+          io_chapter->add_object( NEW lcl_object(
+            iv_type  = CONV string( ls_obj-objecttype )
+            iv_name  = CONV string( ls_obj-objectname )
+            iv_tcode = CONV string( ls_obj-tcode ) ) ).
+          mv_n_obj = mv_n_obj + 1.
+        ENDIF.
       ENDLOOP.
     ENDIF.
 
@@ -1310,23 +1773,70 @@ CLASS lcl_renderer_html IMPLEMENTATION.
       add( itf_to_html( io_chapter->get_documentation( ) ) ).
     ENDIF.
 
-    IF lines( io_chapter->get_objects( ) ) > 0.
-      add( '<table><tr><th>Objekttyp</th><th>Objekt</th>' &&
-           '<th>Transaktion</th><th>Zeilen</th></tr>' ).
-      LOOP AT io_chapter->get_objects( ) INTO DATA(lo_obj).
-        DATA lv_rows TYPE string.
-        IF lo_obj->get_truncated( ) = abap_true.
-          lv_rows = |{ lo_obj->get_row_count( ) } (gekürzt)|.
-        ELSE.
-          lv_rows = |{ lo_obj->get_row_count( ) }|.
-        ENDIF.
-        add( |<tr><td>{ esc( lo_obj->get_type( ) ) }</td>| &&
-             |<td>{ esc( lo_obj->get_name( ) ) }</td>| &&
-             |<td>{ esc( lo_obj->get_tcode( ) ) }</td>| &&
-             |<td>{ lv_rows }</td></tr>| ).
-      ENDLOOP.
-      add( '</table>' ).
-    ENDIF.
+    LOOP AT io_chapter->get_objects( ) INTO DATA(lo_obj).
+
+      DATA lv_rows TYPE string.
+      IF lo_obj->get_truncated( ) = abap_true.
+        lv_rows = |{ lines( lo_obj->get_rows( ) ) } von { lo_obj->get_row_count( ) } (gekürzt)|.
+      ELSE.
+        lv_rows = |{ lo_obj->get_row_count( ) }|.
+      ENDIF.
+
+      add( |<p class="obj"><b>{ esc( lo_obj->get_name( ) ) }</b>| &&
+           | &nbsp; Typ { esc( lo_obj->get_type( ) ) }| &&
+           | &nbsp; Transaktion { esc( lo_obj->get_tcode( ) ) }| &&
+           | &nbsp; Zeilen { lv_rows }| &&
+           | &nbsp; Auswahl { esc( lo_obj->get_filter( ) ) }</p>| ).
+
+      IF lo_obj->get_note( ) IS NOT INITIAL.
+        add( |<p class="warn">{ esc( lo_obj->get_note( ) ) }</p>| ).
+      ENDIF.
+
+      " Dateninhalte
+      IF lines( lo_obj->get_rows( ) ) > 0.
+        add( '<table><tr>' ).
+        LOOP AT lo_obj->get_fields( ) INTO DATA(ls_fh).
+          IF ls_fh-keyflag = abap_true.
+            add( |<th>{ esc( ls_fh-name ) } *</th>| ).
+          ELSE.
+            add( |<th>{ esc( ls_fh-name ) }</th>| ).
+          ENDIF.
+        ENDLOOP.
+        add( '</tr>' ).
+        LOOP AT lo_obj->get_rows( ) INTO DATA(ls_dr).
+          add( '<tr>' ).
+          LOOP AT ls_dr-cells INTO DATA(ls_dc).
+            add( |<td>{ esc( ls_dc-value ) }</td>| ).
+          ENDLOOP.
+          add( '</tr>' ).
+        ENDLOOP.
+        add( '</table>' ).
+      ELSEIF lines( lo_obj->get_fields( ) ) > 0.
+        " keine Daten, aber Struktur bekannt
+        add( '<table><tr><th>Feld</th><th>Datenelement</th><th>Schlüssel</th></tr>' ).
+        LOOP AT lo_obj->get_fields( ) INTO DATA(ls_fs).
+          add( |<tr><td>{ esc( ls_fs-name ) }</td>| &&
+               |<td>{ esc( ls_fs-rollname ) }</td>| &&
+               |<td>{ COND string( WHEN ls_fs-keyflag = abap_true THEN 'X' ELSE '' ) }</td></tr>| ).
+        ENDLOOP.
+        add( '</table>' ).
+      ENDIF.
+
+      " Transport-Historie
+      IF lines( lo_obj->get_transports( ) ) > 0.
+        add( '<p class="ref">Transport-Historie</p>' ).
+        add( '<table><tr><th>Auftrag</th><th>Benutzer</th>' &&
+             '<th>Datum</th><th>Kurztext</th></tr>' ).
+        LOOP AT lo_obj->get_transports( ) INTO DATA(ls_th).
+          add( |<tr><td>{ esc( ls_th-trkorr ) }</td>| &&
+               |<td>{ esc( ls_th-user ) }</td>| &&
+               |<td>{ esc( ls_th-date ) }</td>| &&
+               |<td>{ esc( ls_th-text ) }</td></tr>| ).
+        ENDLOOP.
+        add( '</table>' ).
+      ENDIF.
+
+    ENDLOOP.
 
     LOOP AT io_chapter->get_children( ) INTO DATA(lo_child).
       write_chapter( lo_child ).
@@ -1565,7 +2075,12 @@ START-OF-SELECTION.
                                               iv_maxnod  = p_maxnod
                                               iv_subs    = p_subs
                                               iv_doku    = p_doku
-                                              iv_obj     = p_obj ).
+                                              iv_obj     = p_obj
+                                              io_cust    = COND #(
+                                                WHEN p_data = abap_true
+                                                THEN NEW lcl_cust( iv_custom = p_cust
+                                                                   iv_maxrow = p_maxrow
+                                                                   iv_hist   = p_hist ) ) ).
 
   DATA lo_coll TYPE REF TO lif_docu_collector.
   lo_coll = lo_collector.

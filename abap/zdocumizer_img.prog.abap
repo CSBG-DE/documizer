@@ -1237,14 +1237,24 @@ ENDCLASS.
 *----------------------------------------------------------------------*
 FORM f4_struktur.
 
+* Die Spalten tragen bewusst DDIC-Typen: die Wertehilfe leitet ihre
+* Ueberschriften daraus ab. Die Knotenzahl haengt am Text, weil es dafuer
+* kein Datenelement mit brauchbarer Bezeichnung gibt - und sie ist der
+* wichtigste Unterscheider, wenn mehrere Strukturen gleich heissen.
+
   TYPES: BEGIN OF ty_f4,
            tree_id TYPE ttree-id,
            text    TYPE tnodeimgt-text,
+           type    TYPE ttree-type,
+           comp    TYPE tnodeimg-component,
+           ldate   TYPE ttree-ldate,
          END OF ty_f4.
 
   DATA lt_f4      TYPE STANDARD TABLE OF ty_f4.
+  DATA ls_f4      TYPE ty_f4.
   DATA lt_ret     TYPE STANDARD TABLE OF ddshretval.
   DATA lv_pattern TYPE string.
+  DATA lr_tree    TYPE RANGE OF ttree-id.
 
   IF p_srch IS INITIAL.
     lv_pattern = '%'.
@@ -1252,18 +1262,52 @@ FORM f4_struktur.
     lv_pattern = |%{ p_srch }%|.
   ENDIF.
 
-  SELECT n~tree_id, t~text
+  SELECT n~tree_id AS tree_id, t~text AS text, n~component AS comp
     FROM tnodeimg AS n
     INNER JOIN tnodeimgt AS t
       ON t~tree_id = n~tree_id AND t~node_id = n~node_id
     WHERE n~parent_id = @space
       AND t~spras     = @p_langu
       AND t~text      LIKE @lv_pattern
-    INTO TABLE @lt_f4
+    INTO CORRESPONDING FIELDS OF TABLE @lt_f4
     UP TO 500 ROWS.
 
   SORT lt_f4 BY text tree_id.
   DELETE ADJACENT DUPLICATES FROM lt_f4 COMPARING tree_id.
+
+  IF lt_f4 IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  LOOP AT lt_f4 INTO ls_f4.
+    APPEND VALUE #( sign = 'I' option = 'EQ' low = ls_f4-tree_id ) TO lr_tree.
+  ENDLOOP.
+
+  " Strukturtyp und Aenderungsdatum
+  SELECT id, type, ldate FROM ttree
+    WHERE id IN @lr_tree
+    INTO TABLE @DATA(lt_tree).
+
+  " Knotenzahl je Struktur - ohne FOR ALL ENTRIES, weil Aggregate damit
+  " nicht zulaessig sind
+  SELECT tree_id, COUNT(*) AS cnt FROM tnodeimg
+    WHERE tree_id IN @lr_tree
+    GROUP BY tree_id
+    INTO TABLE @DATA(lt_cnt).
+
+  LOOP AT lt_f4 INTO ls_f4.
+    DATA(lv_idx) = sy-tabix.
+    READ TABLE lt_tree INTO DATA(ls_tree) WITH KEY id = ls_f4-tree_id.
+    IF sy-subrc = 0.
+      ls_f4-type  = ls_tree-type.
+      ls_f4-ldate = ls_tree-ldate.
+    ENDIF.
+    READ TABLE lt_cnt INTO DATA(ls_cnt) WITH KEY tree_id = ls_f4-tree_id.
+    IF sy-subrc = 0.
+      ls_f4-text = |{ ls_f4-text } ({ ls_cnt-cnt } Knoten)|.
+    ENDIF.
+    MODIFY lt_f4 FROM ls_f4 INDEX lv_idx.
+  ENDLOOP.
 
   CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
     EXPORTING

@@ -162,6 +162,8 @@ CLASS lcl_chapter DEFINITION.
     METHODS add_object        IMPORTING io_object    TYPE REF TO lcl_object.
     METHODS set_reference     IMPORTING is_reference TYPE ty_reference.
     METHODS set_documentation IMPORTING iv_text      TYPE string.
+    METHODS set_source        IMPORTING iv_source    TYPE string.
+    METHODS get_source        RETURNING VALUE(rv_source) TYPE string.
     METHODS set_title         IMPORTING iv_title     TYPE string.
     METHODS get_id            RETURNING VALUE(rv_id)        TYPE string.
     METHODS get_level         RETURNING VALUE(rv_level)     TYPE i.
@@ -179,6 +181,7 @@ CLASS lcl_chapter DEFINITION.
     DATA mv_title         TYPE string.
     DATA ms_reference     TYPE ty_reference.
     DATA mv_documentation TYPE string.
+    DATA mv_source        TYPE string.
     DATA mt_children      TYPE ty_chapters.
     DATA mt_objects       TYPE ty_objects.
 ENDCLASS.
@@ -201,6 +204,12 @@ CLASS lcl_chapter IMPLEMENTATION.
   ENDMETHOD.
   METHOD set_documentation.
     mv_documentation = iv_text.
+  ENDMETHOD.
+  METHOD set_source.
+    mv_source = iv_source.
+  ENDMETHOD.
+  METHOD get_source.
+    rv_source = mv_source.
   ENDMETHOD.
   METHOD set_title.
     mv_title = iv_title.
@@ -374,6 +383,12 @@ CLASS lcl_renderer_xml IMPLEMENTATION.
       mo_writer->close_element( ).
     ENDIF.
 
+    IF io_chapter->get_source( ) IS NOT INITIAL.
+      mo_writer->open_element( name = 'source' ).
+      mo_writer->write_value( io_chapter->get_source( ) ).
+      mo_writer->close_element( ).
+    ENDIF.
+
     LOOP AT io_chapter->get_objects( ) INTO DATA(lo_object).
       write_object( lo_object ).
     ENDLOOP.
@@ -497,6 +512,9 @@ CLASS lcl_parser_xml IMPLEMENTATION.
             WHEN 'documentation'.
               lv_target = 'documentation'.
 
+            WHEN 'source'.
+              lv_target = 'source'.
+
             WHEN 'reference'.
               DATA ls_ref TYPE ty_reference.
               CLEAR ls_ref.
@@ -571,6 +589,10 @@ CLASS lcl_parser_xml IMPLEMENTATION.
               WHEN 'documentation'.
                 IF lo_current IS BOUND.
                   lo_current->set_documentation( lv_value ).
+                ENDIF.
+              WHEN 'source'.
+                IF lo_current IS BOUND.
+                  lo_current->set_source( lv_value ).
                 ENDIF.
             ENDCASE.
           ENDIF.
@@ -654,6 +676,14 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE gv_blk2.
     SELECTION-SCREEN COMMENT 1(30) gv_tdet FOR FIELD p_detail.
     PARAMETERS p_detail AS CHECKBOX DEFAULT 'X'.
   SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tsrc FOR FIELD p_src.
+    PARAMETERS p_src AS CHECKBOX.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tmaxs FOR FIELD p_maxsrc.
+    PARAMETERS p_maxsrc TYPE i DEFAULT 300.
+  SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b2.
 
 SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE gv_blk3.
@@ -695,6 +725,8 @@ INITIALIZATION.
   gv_tmaxo = 'Max. Objekte (0 = alle)'.
   gv_tdoku = 'Objektdokumentation'.
   gv_tdet  = 'Details (Felder, Methoden)'.
+  gv_tsrc  = 'Quelltext ausgeben'.
+  gv_tmaxs = 'Max. Zeilen je Objekt'.
   gv_txml  = 'XML erzeugen/ausgeben'.
   gv_thtml = 'HTML erzeugen/anzeigen'.
   gv_trt   = 'Roundtrip prüfen'.
@@ -754,6 +786,9 @@ CLASS lcl_renderer_html IMPLEMENTATION.
     add( '.ref{color:#666;font-size:11px;margin:2px 0}' ).
     add( '.warn{color:#a00;font-weight:bold}' ).
     add( 'ul.toc{line-height:1.6}' ).
+    add( 'pre.src{background:#fbfbf5;border:1px solid #ddd;padding:8px;' &&
+         'font-family:Consolas,monospace;font-size:11px;overflow-x:auto;' &&
+         'white-space:pre}' ).
     add( '</style></head><body>' ).
 
     add( |<h1>Documizer - Entwicklerdokumentation</h1>| ).
@@ -826,6 +861,10 @@ CLASS lcl_renderer_html IMPLEMENTATION.
       add( |<div class="doc">{ esc( io_chapter->get_documentation( ) ) }</div>| ).
     ENDIF.
 
+    IF io_chapter->get_source( ) IS NOT INITIAL.
+      add( |<pre class="src">{ esc( io_chapter->get_source( ) ) }</pre>| ).
+    ENDIF.
+
     LOOP AT io_chapter->get_objects( ) INTO DATA(lo_obj).
       IF lo_obj->get_note( ) IS NOT INITIAL.
         add( |<p class="ref">{ esc( lo_obj->get_note( ) ) }</p>| ).
@@ -863,11 +902,14 @@ CLASS lcl_collector_dev DEFINITION.
                 iv_langu  TYPE sy-langu
                 iv_maxobj TYPE i
                 iv_doku   TYPE abap_bool
-                iv_detail TYPE abap_bool.
+                iv_detail TYPE abap_bool
+                iv_src    TYPE abap_bool
+                iv_maxsrc TYPE i.
     METHODS get_stat_packages RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_objects  RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_total    RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_docu     RETURNING VALUE(rv) TYPE i.
+    METHODS get_stat_source   RETURNING VALUE(rv) TYPE i.
   PRIVATE SECTION.
     DATA mv_pack   TYPE devclass.
     DATA mv_recur  TYPE abap_bool.
@@ -876,6 +918,9 @@ CLASS lcl_collector_dev DEFINITION.
     DATA mv_maxobj TYPE i.
     DATA mv_doku   TYPE abap_bool.
     DATA mv_detail TYPE abap_bool.
+    DATA mv_src    TYPE abap_bool.
+    DATA mv_maxsrc TYPE i.
+    DATA mv_n_src  TYPE i.
     DATA mv_n_pack TYPE i.
     DATA mv_n_obj  TYPE i.
     DATA mv_n_tot  TYPE i.
@@ -900,6 +945,13 @@ CLASS lcl_collector_dev DEFINITION.
       IMPORTING iv_name         TYPE string
                 iv_text         TYPE string
       RETURNING VALUE(rv_title) TYPE string.
+    METHODS read_source
+      IMPORTING iv_type          TYPE trobjtype
+                iv_name          TYPE sobj_name
+      RETURNING VALUE(rv_source) TYPE string.
+    METHODS append_report
+      IMPORTING iv_prog   TYPE syrepid
+      CHANGING  ct_source TYPE string_table.
 ENDCLASS.
 
 CLASS lcl_collector_dev IMPLEMENTATION.
@@ -912,6 +964,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     mv_maxobj = iv_maxobj.
     mv_doku   = iv_doku.
     mv_detail = iv_detail.
+    mv_src    = iv_src.
+    mv_maxsrc = iv_maxsrc.
   ENDMETHOD.
 
   METHOD build_title.
@@ -1040,6 +1094,119 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
   ENDMETHOD.
 
+  METHOD append_report.
+
+    DATA lt_rep TYPE STANDARD TABLE OF string.
+
+    READ REPORT iv_prog INTO lt_rep.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    IF lines( ct_source ) > 0.
+      APPEND |* ---------- { iv_prog } ----------| TO ct_source.
+    ENDIF.
+    APPEND LINES OF lt_rep TO ct_source.
+
+  ENDMETHOD.
+
+  METHOD read_source.
+
+    DATA lt_src  TYPE string_table.
+    DATA lt_incl TYPE STANDARD TABLE OF progname.
+    DATA lv_prog TYPE syrepid.
+    DATA lv_i    TYPE i.
+
+    CASE iv_type.
+
+      WHEN 'PROG'.
+        lv_prog = iv_name.
+        append_report( EXPORTING iv_prog = lv_prog CHANGING ct_source = lt_src ).
+
+      WHEN 'FUGR'.
+        " Rahmenprogramm der Funktionsgruppe und alle Includes
+        lv_prog = |SAPL{ iv_name }|.
+        CALL FUNCTION 'RS_GET_ALL_INCLUDES'
+          EXPORTING
+            program      = lv_prog
+          TABLES
+            includetab   = lt_incl
+          EXCEPTIONS
+            not_existent = 1
+            no_program   = 2
+            OTHERS       = 3.
+        append_report( EXPORTING iv_prog = lv_prog CHANGING ct_source = lt_src ).
+        LOOP AT lt_incl INTO DATA(ls_i1).
+          append_report( EXPORTING iv_prog = ls_i1
+                         CHANGING  ct_source = lt_src ).
+        ENDLOOP.
+
+      WHEN 'CLAS' OR 'INTF'.
+        " Der Name des Klassenpools ist der auf 30 Stellen mit
+        " Gleichheitszeichen aufgefuellte Objektname plus CP.
+        lv_prog = iv_name.
+        lv_i = strlen( iv_name ).
+        WHILE lv_i < 30.
+          lv_prog = |{ lv_prog }=|.
+          lv_i = lv_i + 1.
+        ENDWHILE.
+        lv_prog = |{ lv_prog }CP|.
+        CALL FUNCTION 'RS_GET_ALL_INCLUDES'
+          EXPORTING
+            program             = lv_prog
+            with_class_includes = abap_true
+          TABLES
+            includetab          = lt_incl
+          EXCEPTIONS
+            not_existent        = 1
+            no_program          = 2
+            OTHERS              = 3.
+        LOOP AT lt_incl INTO DATA(ls_i2).
+          append_report( EXPORTING iv_prog = ls_i2
+                         CHANGING  ct_source = lt_src ).
+        ENDLOOP.
+
+      WHEN 'DDLS'.
+        DATA lv_ddl TYPE ddddlsrc-ddlname.
+        lv_ddl = iv_name.
+        SELECT SINGLE source FROM ddddlsrc
+          WHERE ddlname = @lv_ddl AND as4local = 'A'
+          INTO @DATA(lv_cds).
+        IF sy-subrc = 0 AND lv_cds IS NOT INITIAL.
+          " Der CDS-Quelltext ist mit CRLF abgelegt; ohne Entfernen des
+          " Wagenruecklaufs bleibt er am Zeilenende stehen.
+          REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf
+                  IN lv_cds WITH cl_abap_char_utilities=>newline.
+          SPLIT lv_cds AT cl_abap_char_utilities=>newline INTO TABLE lt_src.
+        ENDIF.
+
+      WHEN OTHERS.
+        RETURN.
+
+    ENDCASE.
+
+    IF lt_src IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    DATA lv_n TYPE i.
+    LOOP AT lt_src INTO DATA(lv_line).
+      lv_n = lv_n + 1.
+      IF mv_maxsrc > 0 AND lv_n > mv_maxsrc.
+        rv_source = |{ rv_source }{ cl_abap_char_utilities=>newline }| &&
+                    |* ... gekürzt bei { mv_maxsrc } Zeilen, | &&
+                    |insgesamt { lines( lt_src ) } Zeilen|.
+        EXIT.
+      ENDIF.
+      IF rv_source IS INITIAL.
+        rv_source = lv_line.
+      ELSE.
+        rv_source = |{ rv_source }{ cl_abap_char_utilities=>newline }{ lv_line }|.
+      ENDIF.
+    ENDLOOP.
+
+  ENDMETHOD.
+
   METHOD add_details.
 
     DATA lv_tab TYPE dd03l-tabname.
@@ -1079,6 +1246,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         DATA(lo_o2) = NEW lcl_object( iv_type = CONV string( iv_type )
                                       iv_name = CONV string( iv_name ) ).
         lo_o2->set_note( 'Komponenten' ).
+        " Fortsetzung siehe unten
         LOOP AT lt_c INTO DATA(ls_c).
           DATA lv_kind TYPE string.
           CASE ls_c-cmptype.
@@ -1092,6 +1260,28 @@ CLASS lcl_collector_dev IMPLEMENTATION.
                                             rollname = lv_kind ) ).
         ENDLOOP.
         io_chapter->add_object( lo_o2 ).
+
+      WHEN 'DDLS'.
+        " Abhängigkeiten des CDS View - welche Objekte er verwendet
+        DATA lv_ddl TYPE ddldependency-ddlname.
+        lv_ddl = iv_name.
+        " Der View selbst steht ebenfalls in der Abhaengigkeitstabelle und
+        " wird ausgeblendet - er ist keine Verwendung.
+        SELECT objectname, objecttype, state FROM ddldependency
+          WHERE ddlname = @lv_ddl AND state = 'A' AND objectname <> @lv_ddl
+          ORDER BY objecttype, objectname
+          INTO TABLE @DATA(lt_d).
+        IF lt_d IS INITIAL.
+          RETURN.
+        ENDIF.
+        DATA(lo_o3) = NEW lcl_object( iv_type = CONV string( iv_type )
+                                      iv_name = CONV string( iv_name ) ).
+        lo_o3->set_note( 'Verwendete Objekte' ).
+        LOOP AT lt_d INTO DATA(ls_d).
+          lo_o3->add_field( VALUE ty_field( name     = ls_d-objectname
+                                            rollname = ls_d-objecttype ) ).
+        ENDLOOP.
+        io_chapter->add_object( lo_o3 ).
 
     ENDCASE.
 
@@ -1227,6 +1417,15 @@ CLASS lcl_collector_dev IMPLEMENTATION.
                        io_chapter = lo_ochap ).
         ENDIF.
 
+        IF mv_src = abap_true.
+          DATA(lv_source) = read_source( iv_type = ls_tadir-object_type
+                                         iv_name = ls_tadir-object_name ).
+          IF lv_source IS NOT INITIAL.
+            lo_ochap->set_source( lv_source ).
+            mv_n_src = mv_n_src + 1.
+          ENDIF.
+        ENDIF.
+
       ENDLOOP.
 
     ENDLOOP.
@@ -1256,6 +1455,9 @@ CLASS lcl_collector_dev IMPLEMENTATION.
   ENDMETHOD.
   METHOD get_stat_docu.
     rv = mv_n_docu.
+  ENDMETHOD.
+  METHOD get_stat_source.
+    rv = mv_n_src.
   ENDMETHOD.
 
 ENDCLASS.
@@ -1379,7 +1581,9 @@ START-OF-SELECTION.
                                               iv_langu  = p_langu
                                               iv_maxobj = p_maxobj
                                               iv_doku   = p_doku
-                                              iv_detail = p_detail ).
+                                              iv_detail = p_detail
+                                              iv_src    = p_src
+                                              iv_maxsrc = p_maxsrc ).
 
   DATA lo_coll TYPE REF TO lif_docu_collector.
   lo_coll = lo_collector.
@@ -1403,6 +1607,9 @@ START-OF-SELECTION.
   WRITE: / 'Objekte aufgenommen              :', lo_collector->get_stat_objects( ).
   WRITE: / 'Objekte gefunden                 :', lo_collector->get_stat_total( ).
   WRITE: / 'mit Objektdokumentation          :', lo_collector->get_stat_docu( ).
+  IF p_src = abap_true.
+    WRITE: / 'mit Quelltext                    :', lo_collector->get_stat_source( ).
+  ENDIF.
   IF lv_xml IS NOT INITIAL.
     WRITE: / 'XML-Zeichen                      :', strlen( lv_xml ).
   ENDIF.

@@ -52,6 +52,13 @@ TYPES: BEGIN OF ty_row,
        END OF ty_row.
 TYPES ty_rows TYPE STANDARD TABLE OF ty_row WITH EMPTY KEY.
 
+TYPES: BEGIN OF ty_project,
+         project TYPE string,
+         status  TYPE string,
+         done    TYPE string,
+         memo    TYPE string,
+       END OF ty_project.
+
 TYPES: BEGIN OF ty_transport,
          trkorr TYPE string,
          user   TYPE string,
@@ -209,7 +216,12 @@ CLASS lcl_chapter DEFINITION.
     METHODS get_reference     RETURNING VALUE(rs_reference) TYPE ty_reference.
     METHODS get_documentation RETURNING VALUE(rv_text)      TYPE string.
     METHODS has_reference     RETURNING VALUE(rv_flag)      TYPE abap_bool.
+    METHODS set_project       IMPORTING is_project TYPE ty_project.
+    METHODS get_project       RETURNING VALUE(rs_project) TYPE ty_project.
+    METHODS has_project       RETURNING VALUE(rv_flag)    TYPE abap_bool.
+    METHODS set_children      IMPORTING it_children TYPE ty_chapters.
   PRIVATE SECTION.
+    DATA ms_project       TYPE ty_project.
     DATA mv_id            TYPE string.
     DATA mv_level         TYPE i.
     DATA mv_type          TYPE string.
@@ -276,6 +288,22 @@ CLASS lcl_chapter IMPLEMENTATION.
       rv_flag = abap_true.
     ENDIF.
   ENDMETHOD.
+  METHOD set_project.
+    ms_project = is_project.
+  ENDMETHOD.
+  METHOD get_project.
+    rs_project = ms_project.
+  ENDMETHOD.
+  METHOD has_project.
+    IF ms_project IS INITIAL.
+      rv_flag = abap_false.
+    ELSE.
+      rv_flag = abap_true.
+    ENDIF.
+  ENDMETHOD.
+  METHOD set_children.
+    mt_children = it_children.
+  ENDMETHOD.
 ENDCLASS.
 
 *----------------------------------------------------------------------*
@@ -287,6 +315,7 @@ CLASS lcl_document DEFINITION.
     METHODS add_chapter  IMPORTING io_chapter TYPE REF TO lcl_chapter.
     METHODS get_meta     RETURNING VALUE(rs_meta)     TYPE ty_meta.
     METHODS get_chapters RETURNING VALUE(rt_chapters) TYPE ty_chapters.
+    METHODS set_chapters IMPORTING it_chapters TYPE ty_chapters.
   PRIVATE SECTION.
     DATA ms_meta     TYPE ty_meta.
     DATA mt_chapters TYPE ty_chapters.
@@ -304,6 +333,9 @@ CLASS lcl_document IMPLEMENTATION.
   ENDMETHOD.
   METHOD get_chapters.
     rt_chapters = mt_chapters.
+  ENDMETHOD.
+  METHOD set_chapters.
+    mt_chapters = it_chapters.
   ENDMETHOD.
 ENDCLASS.
 
@@ -411,6 +443,18 @@ CLASS lcl_renderer_xml IMPLEMENTATION.
       mo_writer->open_element( name = 'documentation' ).
       mo_writer->write_attribute( name = 'format' value = 'ITF' ).
       mo_writer->write_value( io_chapter->get_documentation( ) ).
+      mo_writer->close_element( ).
+    ENDIF.
+
+    IF io_chapter->has_project( ) = abap_true.
+      DATA(ls_pr) = io_chapter->get_project( ).
+      mo_writer->open_element( name = 'project' ).
+      mo_writer->write_attribute( name = 'name'   value = ls_pr-project ).
+      mo_writer->write_attribute( name = 'status' value = ls_pr-status ).
+      mo_writer->write_attribute( name = 'done'   value = ls_pr-done ).
+      IF ls_pr-memo IS NOT INITIAL.
+        mo_writer->write_value( ls_pr-memo ).
+      ENDIF.
       mo_writer->close_element( ).
     ENDIF.
 
@@ -573,6 +617,21 @@ CLASS lcl_parser_xml IMPLEMENTATION.
             WHEN 'documentation'.
               lv_target = 'documentation'.
 
+            WHEN 'project'.
+              DATA ls_pr TYPE ty_project.
+              CLEAR ls_pr.
+              LOOP AT lt_attr INTO lo_attr.
+                CASE lo_attr->qname-name.
+                  WHEN 'name'.   ls_pr-project = lo_attr->get_value( ).
+                  WHEN 'status'. ls_pr-status  = lo_attr->get_value( ).
+                  WHEN 'done'.   ls_pr-done    = lo_attr->get_value( ).
+                ENDCASE.
+              ENDLOOP.
+              IF lo_current IS BOUND.
+                lo_current->set_project( ls_pr ).
+              ENDIF.
+              lv_target = 'projectmemo'.
+
             WHEN 'reference'.
               DATA ls_ref TYPE ty_reference.
               CLEAR ls_ref.
@@ -696,6 +755,12 @@ CLASS lcl_parser_xml IMPLEMENTATION.
                 IF lo_current IS BOUND.
                   lo_current->set_documentation( lv_value ).
                 ENDIF.
+              WHEN 'projectmemo'.
+                IF lo_current IS BOUND.
+                  DATA(ls_prm) = lo_current->get_project( ).
+                  ls_prm-memo = lv_value.
+                  lo_current->set_project( ls_prm ).
+                ENDIF.
             ENDCASE.
           ENDIF.
 
@@ -758,6 +823,14 @@ SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE gv_blk1.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tsrch FOR FIELD p_srch.
     PARAMETERS p_srch TYPE tnodeimgt-text.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tproj FOR FIELD p_proj.
+    PARAMETERS p_proj TYPE cusstat-project_id.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tonly FOR FIELD p_onlypr.
+    PARAMETERS p_onlypr AS CHECKBOX.
   SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b1.
 
@@ -833,6 +906,8 @@ INITIALIZATION.
   gv_blk3   = 'Ausgabe'.
   gv_ttree  = 'Struktur-ID (GUID)'.
   gv_tsrch  = 'oder Suchbegriff Wurzel'.
+  gv_tproj  = 'Projekt (Status/Memo)'.
+  gv_tonly  = 'nur Projektknoten'.
   gv_tlang = 'Sprache'.
   gv_tdep = 'Max. Tiefe (0 = alle)'.
   gv_tmaxn  = 'Max. Kapitel (0 = alle)'.
@@ -1235,11 +1310,14 @@ CLASS lcl_collector_img DEFINITION.
                 iv_subs    TYPE abap_bool
                 iv_doku    TYPE abap_bool
                 iv_obj     TYPE abap_bool
+                iv_proj    TYPE cusstat-project_id OPTIONAL
+                iv_onlypr  TYPE abap_bool OPTIONAL
                 io_cust    TYPE REF TO lcl_cust OPTIONAL.
     METHODS get_stat_nodes      RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_activities RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_docu       RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_objects    RETURNING VALUE(rv) TYPE i.
+    METHODS get_stat_project    RETURNING VALUE(rv) TYPE i.
   PRIVATE SECTION.
     DATA mv_tree_id TYPE ttree-id.
     DATA mv_langu   TYPE sy-langu.
@@ -1248,7 +1326,18 @@ CLASS lcl_collector_img DEFINITION.
     DATA mv_subs    TYPE abap_bool.
     DATA mv_doku    TYPE abap_bool.
     DATA mv_obj     TYPE abap_bool.
+    TYPES: BEGIN OF ty_pmap,
+             node_id TYPE cusstat-node_id,
+             status  TYPE string,
+             done    TYPE string,
+             memo    TYPE string,
+           END OF ty_pmap.
+
     DATA mo_cust    TYPE REF TO lcl_cust.
+    DATA mv_proj    TYPE cusstat-project_id.
+    DATA mv_onlypr  TYPE abap_bool.
+    DATA mt_pmap    TYPE HASHED TABLE OF ty_pmap WITH UNIQUE KEY node_id.
+    DATA mv_n_proj  TYPE i.
     DATA mv_n_nodes TYPE i.
     DATA mv_n_total TYPE i.
     DATA mv_n_act   TYPE i.
@@ -1260,6 +1349,10 @@ CLASS lcl_collector_img DEFINITION.
     METHODS read_documentation
       IMPORTING iv_docu_id     TYPE string
       RETURNING VALUE(rv_text) TYPE string.
+    METHODS load_project.
+    METHODS prune
+      IMPORTING io_chapter     TYPE REF TO lcl_chapter
+      RETURNING VALUE(rv_keep) TYPE abap_bool.
 ENDCLASS.
 
 CLASS lcl_collector_img IMPLEMENTATION.
@@ -1271,6 +1364,8 @@ CLASS lcl_collector_img IMPLEMENTATION.
     mv_maxnod  = iv_maxnod.
     mv_subs    = iv_subs.
     mo_cust    = io_cust.
+    mv_proj    = iv_proj.
+    mv_onlypr  = iv_onlypr.
     mv_doku    = iv_doku.
     mv_obj     = iv_obj.
   ENDMETHOD.
@@ -1286,6 +1381,8 @@ CLASS lcl_collector_img IMPLEMENTATION.
     DATA lv_trunc TYPE abap_bool.
 
     ro_document = NEW lcl_document( ).
+
+    load_project( ).
 
     " Struktur, Texte und Knotenverweise lesen.
     "
@@ -1410,6 +1507,17 @@ CLASS lcl_collector_img IMPLEMENTATION.
       ENDIF.
       APPEND lo_chapter TO lt_stack.
 
+      " Projektdaten des Knotens ueberlagern
+      READ TABLE mt_pmap INTO DATA(ls_pm)
+           WITH TABLE KEY node_id = ls_node-node_id.
+      IF sy-subrc = 0.
+        lo_chapter->set_project( VALUE ty_project( project = mv_proj
+                                                   status  = ls_pm-status
+                                                   done    = ls_pm-done
+                                                   memo    = ls_pm-memo ) ).
+        mv_n_proj = mv_n_proj + 1.
+      ENDIF.
+
       mv_n_nodes = mv_n_nodes + 1.
 
       IF lv_act IS NOT INITIAL.
@@ -1418,6 +1526,18 @@ CLASS lcl_collector_img IMPLEMENTATION.
       ENDIF.
 
     ENDLOOP.
+
+    " Bei "nur Projektknoten" bleiben Gliederungskapitel erhalten, solange
+    " unter ihnen noch ein Projektknoten haengt - sonst zerfaellt der Baum.
+    IF mv_onlypr = abap_true AND mv_proj IS NOT INITIAL.
+      DATA lt_roots TYPE ty_chapters.
+      LOOP AT ro_document->get_chapters( ) INTO DATA(lo_root).
+        IF prune( lo_root ) = abap_true.
+          APPEND lo_root TO lt_roots.
+        ENDIF.
+      ENDLOOP.
+      ro_document->set_chapters( lt_roots ).
+    ENDIF.
 
     ro_document->set_meta( VALUE ty_meta(
       version    = gc_version
@@ -1537,6 +1657,80 @@ CLASS lcl_collector_img IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
+  ENDMETHOD.
+
+  METHOD load_project.
+
+    IF mv_proj IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    " CUSSTAT verbindet Projekt und IMG-Knoten mit der Status-GUID,
+    " TSTAHTPR haelt darunter das Memo in fuenf Kommentarfeldern.
+    SELECT node_id, status, done, id FROM cusstat
+      WHERE project_id = @mv_proj
+      INTO TABLE @DATA(lt_st).
+
+    LOOP AT lt_st INTO DATA(ls_st).
+
+      DATA ls_map TYPE ty_pmap.
+      CLEAR ls_map.
+      ls_map-node_id = ls_st-node_id.
+      ls_map-status  = ls_st-status.
+      ls_map-done    = |{ ls_st-done }|.
+
+      SELECT SINGLE comm1, comm2, comm3, comm4, comm5 FROM tstahtpr
+        WHERE id = @ls_st-id AND langu = @mv_langu
+        INTO @DATA(ls_c).
+      IF sy-subrc = 0.
+        DATA lt_comm TYPE STANDARD TABLE OF string.
+        CLEAR lt_comm.
+        APPEND ls_c-comm1 TO lt_comm.
+        APPEND ls_c-comm2 TO lt_comm.
+        APPEND ls_c-comm3 TO lt_comm.
+        APPEND ls_c-comm4 TO lt_comm.
+        APPEND ls_c-comm5 TO lt_comm.
+        LOOP AT lt_comm INTO DATA(lv_comm).
+          CONDENSE lv_comm.
+          IF lv_comm IS INITIAL.
+            CONTINUE.
+          ENDIF.
+          IF ls_map-memo IS INITIAL.
+            ls_map-memo = lv_comm.
+          ELSE.
+            ls_map-memo = |{ ls_map-memo } { lv_comm }|.
+          ENDIF.
+        ENDLOOP.
+      ENDIF.
+
+      INSERT ls_map INTO TABLE mt_pmap.
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD prune.
+
+    DATA lt_keep TYPE ty_chapters.
+
+    LOOP AT io_chapter->get_children( ) INTO DATA(lo_child).
+      IF prune( lo_child ) = abap_true.
+        APPEND lo_child TO lt_keep.
+      ENDIF.
+    ENDLOOP.
+
+    io_chapter->set_children( lt_keep ).
+
+    IF io_chapter->has_project( ) = abap_true OR lines( lt_keep ) > 0.
+      rv_keep = abap_true.
+    ELSE.
+      rv_keep = abap_false.
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD get_stat_project.
+    rv = mv_n_proj.
   ENDMETHOD.
 
   METHOD get_stat_nodes.
@@ -1703,6 +1897,9 @@ CLASS lcl_renderer_html IMPLEMENTATION.
     add( 'div.doc{background:#f7f7f7;border-left:3px solid #bbb;padding:8px;' &&
          'margin:6px 0;line-height:1.45}' ).
     add( 'p.sec{font-weight:bold;margin:10px 0 4px 0;color:#444}' ).
+    add( 'div.proj{background:#eef4ea;border-left:3px solid #6a9a4b;' &&
+         'padding:8px;margin:6px 0;font-size:11px}' ).
+    add( 'p.memo{margin:4px 0 0 0;white-space:pre-wrap}' ).
     add( 'div.doc p{margin:0 0 6px 0}' ).
     add( '.ref{color:#666;font-size:11px;margin:2px 0}' ).
     add( '.warn{color:#a00;font-weight:bold}' ).
@@ -1784,6 +1981,17 @@ CLASS lcl_renderer_html IMPLEMENTATION.
       add( |<p class="ref">IMG-Aktivität { esc( ls_ref-activity ) }| &&
            |, Transaktion { esc( ls_ref-tcode ) }| &&
            |, Dokuobjekt { esc( ls_ref-docu_id ) }</p>| ).
+    ENDIF.
+
+    IF io_chapter->has_project( ) = abap_true.
+      DATA(ls_pr) = io_chapter->get_project( ).
+      add( |<div class="proj"><b>Projekt { esc( ls_pr-project ) }</b>| &&
+           | &nbsp; Status { esc( ls_pr-status ) }| &&
+           | &nbsp; Fortschritt { esc( ls_pr-done ) } %| ).
+      IF ls_pr-memo IS NOT INITIAL.
+        add( |<p class="memo">{ esc( ls_pr-memo ) }</p>| ).
+      ENDIF.
+      add( '</div>' ).
     ENDIF.
 
     IF io_chapter->get_documentation( ) IS NOT INITIAL.
@@ -2093,6 +2301,8 @@ START-OF-SELECTION.
                                               iv_subs    = p_subs
                                               iv_doku    = p_doku
                                               iv_obj     = p_obj
+                                              iv_proj    = p_proj
+                                              iv_onlypr  = p_onlypr
                                               io_cust    = COND #(
                                                 WHEN p_data = abap_true
                                                 THEN NEW lcl_cust( iv_custom = p_cust
@@ -2130,6 +2340,9 @@ START-OF-SELECTION.
   WRITE: / 'davon Aktivitäten                :', lo_collector->get_stat_activities( ).
   WRITE: / 'mit Standarddokumentation        :', lo_collector->get_stat_docu( ).
   WRITE: / 'zugeordnete Objekte              :', lo_collector->get_stat_objects( ).
+  IF p_proj IS NOT INITIAL.
+    WRITE: / 'Kapitel mit Projektdaten         :', lo_collector->get_stat_project( ).
+  ENDIF.
   IF lv_xml IS NOT INITIAL.
     WRITE: / 'XML-Zeichen                      :', strlen( lv_xml ).
   ENDIF.

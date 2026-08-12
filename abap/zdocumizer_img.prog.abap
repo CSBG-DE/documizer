@@ -727,6 +727,14 @@ SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE gv_blk3.
     SELECTION-SCREEN COMMENT 1(30) gv_trt FOR FIELD p_rtest.
     PARAMETERS p_rtest AS CHECKBOX DEFAULT 'X'.
   SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tdown FOR FIELD p_down.
+    PARAMETERS p_down AS CHECKBOX.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tpath FOR FIELD p_path.
+    PARAMETERS p_path TYPE char128 LOWER CASE DEFAULT 'C:\temp'.
+  SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b3.
 
 INITIALIZATION.
@@ -741,9 +749,14 @@ INITIALIZATION.
   gv_tsubs  = 'Unterstrukturen aufloesen'.
   gv_tdoku  = 'Standarddokumentation'.
   gv_tobj   = 'Objektzuordnung'.
-  gv_txml   = 'XML ausgeben'.
-  gv_thtml  = 'HTML anzeigen'.
+  gv_txml   = 'XML in Liste ausgeben'.
+  gv_thtml  = 'HTML erzeugen/anzeigen'.
   gv_trt    = 'Roundtrip pruefen'.
+  gv_tdown  = 'Download auf PC'.
+  gv_tpath  = 'Zielverzeichnis'.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_path.
+  PERFORM f4_verzeichnis.
 
 * Wertehilfe fuer die Struktur-ID. Die DDIC-Suchhilfe auf TTREE-ID liefert
 * nur nackte GUIDs ohne Bezeichnung und ist damit unbrauchbar. Hier werden
@@ -1270,6 +1283,88 @@ FORM f4_struktur.
 ENDFORM.
 
 *----------------------------------------------------------------------*
+* Wertehilfe fuer das Zielverzeichnis
+*----------------------------------------------------------------------*
+FORM f4_verzeichnis.
+
+  DATA lv_dir TYPE string.
+
+  cl_gui_frontend_services=>directory_browse(
+    EXPORTING
+      initial_folder  = CONV string( p_path )
+    CHANGING
+      selected_folder = lv_dir
+    EXCEPTIONS
+      OTHERS          = 1 ).
+
+  IF lv_dir IS NOT INITIAL.
+    p_path = lv_dir.
+  ENDIF.
+
+ENDFORM.
+
+*----------------------------------------------------------------------*
+* Datei auf den PC schreiben
+*
+* Der Inhalt wird zuerst nach UTF-8 gewandelt und binaer geschrieben.
+* Ein Textdownload wuerde die Zeichen in die Frontend-Codepage umsetzen,
+* und genau dort gehen Umlaute und Sonderzeichen verloren.
+*----------------------------------------------------------------------*
+FORM download USING iv_content TYPE string
+                    iv_ext     TYPE string.
+
+  DATA lv_x    TYPE xstring.
+  DATA lv_len  TYPE i.
+  DATA lt_bin  TYPE solix_tab.
+  DATA lv_file TYPE string.
+  DATA lv_dir  TYPE string.
+
+  IF sy-batch = abap_true.
+    WRITE: / 'Download im Hintergrund nicht moeglich:', iv_ext.
+    RETURN.
+  ENDIF.
+
+  lv_dir = p_path.
+  SHIFT lv_dir RIGHT DELETING TRAILING space.
+  SHIFT lv_dir LEFT  DELETING LEADING space.
+  IF lv_dir CA '\'.
+    " Verzeichnis ohne abschliessenden Trenner ergaenzen
+    IF substring( val = lv_dir off = strlen( lv_dir ) - 1 len = 1 ) <> '\'.
+      lv_dir = |{ lv_dir }\\|.
+    ENDIF.
+  ENDIF.
+
+  lv_file = |{ lv_dir }documizer_{ sy-sysid }_{ sy-datum }_{ sy-uzeit }.{ iv_ext }|.
+
+  lv_x = cl_abap_codepage=>convert_to( iv_content ).
+
+  CALL FUNCTION 'SCMS_XSTRING_TO_BINARY'
+    EXPORTING
+      buffer        = lv_x
+    IMPORTING
+      output_length = lv_len
+    TABLES
+      binary_tab    = lt_bin.
+
+  cl_gui_frontend_services=>gui_download(
+    EXPORTING
+      bin_filesize = lv_len
+      filename     = lv_file
+      filetype     = 'BIN'
+    CHANGING
+      data_tab     = lt_bin
+    EXCEPTIONS
+      OTHERS       = 1 ).
+
+  IF sy-subrc = 0.
+    WRITE: / 'Datei geschrieben               :', lv_file.
+  ELSE.
+    WRITE: / 'Download fehlgeschlagen         :', lv_file.
+  ENDIF.
+
+ENDFORM.
+
+*----------------------------------------------------------------------*
 * Hilfsroutine: Strukturen suchen, wenn keine GUID bekannt ist
 *----------------------------------------------------------------------*
 FORM search_structures.
@@ -1358,11 +1453,20 @@ START-OF-SELECTION.
     ENDIF.
   ENDIF.
 
+  IF p_down = abap_true.
+    PERFORM download USING lv_xml 'xml'.
+  ENDIF.
+
   IF p_html = abap_true.
     DATA lo_html TYPE REF TO lif_docu_renderer.
     lo_html = NEW lcl_renderer_html( ).
     DATA(lv_html) = lo_html->render( lo_doc ).
     WRITE: / 'HTML-Zeichen                     :', strlen( lv_html ).
+
+    IF p_down = abap_true.
+      PERFORM download USING lv_html 'html'.
+    ENDIF.
+
     IF sy-batch = abap_false.
       cl_abap_browser=>show_html( html_string = lv_html
                                   title       = 'Documizer' ).

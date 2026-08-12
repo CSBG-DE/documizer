@@ -1649,12 +1649,29 @@ CLASS lcl_renderer_html IMPLEMENTATION.
 
       lv_line = esc( lv_line ).
 
-      " ITF-Auszeichnungen: Verweise und Hervorhebungen werden fett
-      " dargestellt, die schliessende Marke gilt fuer alle drei.
+      " ITF-Auszeichnungen. Es gibt davon mehr als die gaengigen drei -
+      " ZH, LS, ZK, PF, US und weitere. Statt sie einzeln zu pflegen,
+      " werden alle zwei- bis dreistelligen Marken generisch behandelt;
+      " Querverweise <DS:...> kommen hinzu. Alle werden fett dargestellt,
+      " die schliessende Marke </> gilt fuer jede von ihnen.
       REPLACE ALL OCCURRENCES OF PCRE '&lt;DS:[^&]+&gt;' IN lv_line WITH '<b>'.
-      REPLACE ALL OCCURRENCES OF '&lt;ZH&gt;' IN lv_line WITH '<b>'.
-      REPLACE ALL OCCURRENCES OF '&lt;LS&gt;' IN lv_line WITH '<b>'.
-      REPLACE ALL OCCURRENCES OF '&lt;/&gt;'  IN lv_line WITH '</b>'.
+      REPLACE ALL OCCURRENCES OF '&lt;/&gt;' IN lv_line WITH '</b>'.
+      REPLACE ALL OCCURRENCES OF PCRE '&lt;[A-Z0-9]{2,3}&gt;' IN lv_line WITH '<b>'.
+
+      " Auszeichnung je Zeile ausgleichen. Im ITF laufen Marken auch ueber
+      " Zeilengrenzen; ohne Ausgleich faerbt eine offene Marke den Rest des
+      " Dokuments ein.
+      DATA(lv_open)  = count( val = lv_line sub = '<b>' ).
+      DATA(lv_close) = count( val = lv_line sub = '</b>' ).
+      IF lv_open > lv_close.
+        DO lv_open - lv_close TIMES.
+          lv_line = |{ lv_line }</b>|.
+        ENDDO.
+      ELSEIF lv_close > lv_open.
+        DO lv_close - lv_open TIMES.
+          REPLACE FIRST OCCURRENCE OF '</b>' IN lv_line WITH ''.
+        ENDDO.
+      ENDIF.
 
       " Tabulatoren der ITF-Ablage
       REPLACE ALL OCCURRENCES OF ',,' IN lv_line WITH ' '.

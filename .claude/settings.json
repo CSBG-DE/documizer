@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__sap-data-s4h__sap_table_query",
+      "mcp__sap-data-s4h__sap_about",
+      "mcp__sap-gui__get_element",
+      "mcp__vsp-adt-s4h__GetSystemInfo",
+      "mcp__odoo__search_records",
+      "mcp__fhem__fhem_get_state",
+      "mcp__cv-manager-debug__read_log",
+      "mcp__Claude_Browser__read_page",
+      "mcp__Claude_Browser__get_page_text",
+      "mcp__Claude_Browser__read_console_messages",
+      "mcp__Claude_Browser__find",
+      "mcp__claude-in-chrome__read_page",
+      "mcp__claude-in-chrome__get_page_text",
+      "mcp__claude-in-chrome__read_console_messages",
+      "mcp__claude-in-chrome__find",
+      "mcp__claude-in-chrome__tabs_context_mcp",
+      "mcp__Claude_Preview__preview_screenshot",
+      "mcp__Claude_Preview__preview_console_logs",
+      "Bash(docker compose logs *)",
+      "Bash(docker compose ps *)",
+      "Bash(docker compose config *)"
+    ]
+  }
+}

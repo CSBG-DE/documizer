@@ -684,6 +684,14 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE gv_blk2.
     SELECTION-SCREEN COMMENT 1(30) gv_tmaxs FOR FIELD p_maxsrc.
     PARAMETERS p_maxsrc TYPE i DEFAULT 300.
   SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tuse FOR FIELD p_used.
+    PARAMETERS p_used AS CHECKBOX.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tmaxu FOR FIELD p_maxuse.
+    PARAMETERS p_maxuse TYPE i DEFAULT 50.
+  SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b2.
 
 SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE gv_blk3.
@@ -727,6 +735,8 @@ INITIALIZATION.
   gv_tdet  = 'Details (Felder, Methoden)'.
   gv_tsrc  = 'Quelltext ausgeben'.
   gv_tmaxs = 'Max. Zeilen je Objekt'.
+  gv_tuse  = 'Verwendungsnachweis'.
+  gv_tmaxu = 'Max. Verwendungen je Objekt'.
   gv_txml  = 'XML erzeugen/ausgeben'.
   gv_thtml = 'HTML erzeugen/anzeigen'.
   gv_trt   = 'Roundtrip prüfen'.
@@ -904,12 +914,15 @@ CLASS lcl_collector_dev DEFINITION.
                 iv_doku   TYPE abap_bool
                 iv_detail TYPE abap_bool
                 iv_src    TYPE abap_bool
-                iv_maxsrc TYPE i.
+                iv_maxsrc TYPE i
+                iv_used   TYPE abap_bool
+                iv_maxuse TYPE i.
     METHODS get_stat_packages RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_objects  RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_total    RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_docu     RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_source   RETURNING VALUE(rv) TYPE i.
+    METHODS get_stat_usage    RETURNING VALUE(rv) TYPE i.
   PRIVATE SECTION.
     DATA mv_pack   TYPE devclass.
     DATA mv_recur  TYPE abap_bool.
@@ -920,6 +933,9 @@ CLASS lcl_collector_dev DEFINITION.
     DATA mv_detail TYPE abap_bool.
     DATA mv_src    TYPE abap_bool.
     DATA mv_maxsrc TYPE i.
+    DATA mv_used   TYPE abap_bool.
+    DATA mv_maxuse TYPE i.
+    DATA mv_n_use  TYPE i.
     DATA mv_n_src  TYPE i.
     DATA mv_n_pack TYPE i.
     DATA mv_n_obj  TYPE i.
@@ -952,6 +968,9 @@ CLASS lcl_collector_dev DEFINITION.
     METHODS append_report
       IMPORTING iv_prog   TYPE syrepid
       CHANGING  ct_source TYPE string_table.
+    METHODS add_usages
+      IMPORTING iv_name    TYPE sobj_name
+                io_chapter TYPE REF TO lcl_chapter.
 ENDCLASS.
 
 CLASS lcl_collector_dev IMPLEMENTATION.
@@ -966,6 +985,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     mv_detail = iv_detail.
     mv_src    = iv_src.
     mv_maxsrc = iv_maxsrc.
+    mv_used   = iv_used.
+    mv_maxuse = iv_maxuse.
   ENDMETHOD.
 
   METHOD build_title.
@@ -1207,6 +1228,88 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
   ENDMETHOD.
 
+  METHOD add_usages.
+
+    " Der Verwendungsnachweis kommt aus den Querverweistabellen der
+    " Workbench. WBCROSSGT fuehrt die Verwendung globaler Typen - dazu
+    " zaehlen Klassen, Interfaces und DDIC-Typen -, CROSS die uebrigen
+    " Verweise auf Programmebene. Beides wird zusammengefuehrt.
+    "
+    " Der Nachweis kann sehr gross werden: eine viel benutzte Tabelle hat
+    " leicht Tausende Verwender. Deshalb die eigene Mengengrenze, und der
+    " Hinweis steht im Dokument, wenn sie greift.
+
+    TYPES: BEGIN OF ty_use,
+             where TYPE string,
+             kind  TYPE string,
+           END OF ty_use.
+    DATA lt_use TYPE STANDARD TABLE OF ty_use.
+    DATA ls_use TYPE ty_use.
+    DATA lv_max TYPE i.
+
+    lv_max = mv_maxuse.
+    IF lv_max <= 0.
+      lv_max = 100000.
+    ENDIF.
+
+    DATA lv_name120 TYPE wbcrossgt-name.
+    lv_name120 = iv_name.
+
+    SELECT include FROM wbcrossgt
+      WHERE otype = 'TY' AND name = @lv_name120
+      INTO TABLE @DATA(lt_gt)
+      UP TO @lv_max ROWS.
+
+    LOOP AT lt_gt INTO DATA(ls_gt).
+      CLEAR ls_use.
+      ls_use-where = ls_gt-include.
+      ls_use-kind  = 'Typverwendung'.
+      APPEND ls_use TO lt_use.
+    ENDLOOP.
+
+    DATA lv_name_cr TYPE cross-name.
+    lv_name_cr = iv_name.
+
+    SELECT prog FROM cross
+      WHERE name = @lv_name_cr
+      INTO TABLE @DATA(lt_cr)
+      UP TO @lv_max ROWS.
+
+    LOOP AT lt_cr INTO DATA(ls_cr).
+      CLEAR ls_use.
+      ls_use-where = ls_cr-prog.
+      ls_use-kind  = 'Programmverwendung'.
+      APPEND ls_use TO lt_use.
+    ENDLOOP.
+
+    IF lt_use IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    SORT lt_use BY where kind.
+    DELETE ADJACENT DUPLICATES FROM lt_use COMPARING where.
+
+    DATA(lo_u) = NEW lcl_object( iv_type = 'USAGE'
+                                 iv_name = CONV string( iv_name ) ).
+
+    IF mv_maxuse > 0 AND lines( lt_use ) >= mv_maxuse.
+      lo_u->set_note( |Verwendungsnachweis (bei { mv_maxuse } Eintraegen gekürzt)| ).
+      lo_u->set_truncated( abap_true ).
+    ELSE.
+      lo_u->set_note( 'Verwendungsnachweis' ).
+    ENDIF.
+    lo_u->set_row_count( lines( lt_use ) ).
+
+    LOOP AT lt_use INTO ls_use.
+      lo_u->add_field( VALUE ty_field( name     = ls_use-where
+                                       rollname = ls_use-kind ) ).
+    ENDLOOP.
+
+    io_chapter->add_object( lo_u ).
+    mv_n_use = mv_n_use + 1.
+
+  ENDMETHOD.
+
   METHOD add_details.
 
     DATA lv_tab TYPE dd03l-tabname.
@@ -1417,6 +1520,11 @@ CLASS lcl_collector_dev IMPLEMENTATION.
                        io_chapter = lo_ochap ).
         ENDIF.
 
+        IF mv_used = abap_true.
+          add_usages( iv_name    = ls_tadir-object_name
+                      io_chapter = lo_ochap ).
+        ENDIF.
+
         IF mv_src = abap_true.
           DATA(lv_source) = read_source( iv_type = ls_tadir-object_type
                                          iv_name = ls_tadir-object_name ).
@@ -1458,6 +1566,9 @@ CLASS lcl_collector_dev IMPLEMENTATION.
   ENDMETHOD.
   METHOD get_stat_source.
     rv = mv_n_src.
+  ENDMETHOD.
+  METHOD get_stat_usage.
+    rv = mv_n_use.
   ENDMETHOD.
 
 ENDCLASS.
@@ -1583,7 +1694,9 @@ START-OF-SELECTION.
                                               iv_doku   = p_doku
                                               iv_detail = p_detail
                                               iv_src    = p_src
-                                              iv_maxsrc = p_maxsrc ).
+                                              iv_maxsrc = p_maxsrc
+                                              iv_used   = p_used
+                                              iv_maxuse = p_maxuse ).
 
   DATA lo_coll TYPE REF TO lif_docu_collector.
   lo_coll = lo_collector.
@@ -1609,6 +1722,9 @@ START-OF-SELECTION.
   WRITE: / 'mit Objektdokumentation          :', lo_collector->get_stat_docu( ).
   IF p_src = abap_true.
     WRITE: / 'mit Quelltext                    :', lo_collector->get_stat_source( ).
+  ENDIF.
+  IF p_used = abap_true.
+    WRITE: / 'mit Verwendungsnachweis          :', lo_collector->get_stat_usage( ).
   ENDIF.
   IF lv_xml IS NOT INITIAL.
     WRITE: / 'XML-Zeichen                      :', strlen( lv_xml ).

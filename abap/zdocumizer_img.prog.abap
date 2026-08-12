@@ -879,6 +879,14 @@ SELECTION-SCREEN END OF BLOCK b2.
 
 SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE gv_blk3.
   SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tpst FOR FIELD p_pstat.
+    PARAMETERS p_pstat AS CHECKBOX DEFAULT 'X'.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tpmem FOR FIELD p_pmemo.
+    PARAMETERS p_pmemo AS CHECKBOX DEFAULT 'X'.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_txml FOR FIELD p_xml.
     PARAMETERS p_xml AS CHECKBOX DEFAULT 'X'.
   SELECTION-SCREEN END OF LINE.
@@ -923,6 +931,8 @@ INITIALIZATION.
   gv_tcust  = 'nur kundeneigene Einträge'.
   gv_tmaxr  = 'Max. Zeilen (0 = alle)'.
   gv_thist  = 'Transport-Historie'.
+  gv_tpst   = 'Projektstatus ausgeben'.
+  gv_tpmem  = 'Projekt-Memo ausgeben'.
   gv_txml   = 'XML erzeugen/ausgeben'.
   gv_thtml  = 'HTML erzeugen/anzeigen'.
   gv_trt    = 'Roundtrip prüfen'.
@@ -1322,6 +1332,8 @@ CLASS lcl_collector_img DEFINITION.
                 iv_obj     TYPE abap_bool
                 iv_proj    TYPE cusstat-project_id OPTIONAL
                 iv_onlypr  TYPE abap_bool OPTIONAL
+                iv_pstat   TYPE abap_bool DEFAULT abap_true
+                iv_pmemo   TYPE abap_bool DEFAULT abap_true
                 io_cust    TYPE REF TO lcl_cust OPTIONAL.
     METHODS get_stat_nodes      RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_activities RETURNING VALUE(rv) TYPE i.
@@ -1346,6 +1358,8 @@ CLASS lcl_collector_img DEFINITION.
     DATA mo_cust    TYPE REF TO lcl_cust.
     DATA mv_proj    TYPE cusstat-project_id.
     DATA mv_onlypr  TYPE abap_bool.
+    DATA mv_pstat   TYPE abap_bool.
+    DATA mv_pmemo   TYPE abap_bool.
     DATA mt_pmap    TYPE HASHED TABLE OF ty_pmap WITH UNIQUE KEY node_id.
     DATA mv_n_proj  TYPE i.
     DATA mv_n_nodes TYPE i.
@@ -1376,6 +1390,8 @@ CLASS lcl_collector_img IMPLEMENTATION.
     mo_cust    = io_cust.
     mv_proj    = iv_proj.
     mv_onlypr  = iv_onlypr.
+    mv_pstat   = iv_pstat.
+    mv_pmemo   = iv_pmemo.
     mv_doku    = iv_doku.
     mv_obj     = iv_obj.
   ENDMETHOD.
@@ -1558,10 +1574,14 @@ CLASS lcl_collector_img IMPLEMENTATION.
       READ TABLE mt_pmap INTO DATA(ls_pm)
            WITH TABLE KEY node_id = ls_node-node_id.
       IF sy-subrc = 0.
-        lo_chapter->set_project( VALUE ty_project( project = mv_proj
-                                                   status  = ls_pm-status
-                                                   done    = ls_pm-done
-                                                   memo    = ls_pm-memo ) ).
+        " Status und Memo sind einzeln abschaltbar. Die Projektzuordnung
+        " selbst bleibt gesetzt, sonst wuerde "nur Projektknoten" nichts
+        " mehr finden.
+        lo_chapter->set_project( VALUE ty_project(
+          project = mv_proj
+          status  = COND #( WHEN mv_pstat = abap_true THEN ls_pm-status )
+          done    = COND #( WHEN mv_pstat = abap_true THEN ls_pm-done )
+          memo    = COND #( WHEN mv_pmemo = abap_true THEN ls_pm-memo ) ) ).
         mv_n_proj = mv_n_proj + 1.
       ENDIF.
 
@@ -2034,9 +2054,11 @@ CLASS lcl_renderer_html IMPLEMENTATION.
 
     IF io_chapter->has_project( ) = abap_true.
       DATA(ls_pr) = io_chapter->get_project( ).
-      add( |<div class="proj"><b>Projekt { esc( ls_pr-project ) }</b>| &&
-           | &nbsp; Status { esc( ls_pr-status ) }| &&
-           | &nbsp; Fortschritt { esc( ls_pr-done ) } %| ).
+      add( |<div class="proj"><b>Projekt { esc( ls_pr-project ) }</b>| ).
+      IF ls_pr-status IS NOT INITIAL.
+        add( | &nbsp; Status { esc( ls_pr-status ) }| &&
+             | &nbsp; Fortschritt { esc( ls_pr-done ) } %| ).
+      ENDIF.
       IF ls_pr-memo IS NOT INITIAL.
         add( |<p class="memo">{ esc( ls_pr-memo ) }</p>| ).
       ENDIF.
@@ -2440,6 +2462,8 @@ START-OF-SELECTION.
                                               iv_obj     = p_obj
                                               iv_proj    = p_proj
                                               iv_onlypr  = p_onlypr
+                                              iv_pstat   = p_pstat
+                                              iv_pmemo   = p_pmemo
                                               io_cust    = COND #(
                                                 WHEN p_data = abap_true
                                                 THEN NEW lcl_cust( iv_custom = p_cust

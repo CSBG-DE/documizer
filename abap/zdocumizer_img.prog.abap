@@ -67,6 +67,8 @@ TYPES: BEGIN OF ty_meta,
          created_at TYPE string,
          language   TYPE string,
          truncated  TYPE abap_bool,
+         node_limit TYPE i,
+         node_total TYPE i,
        END OF ty_meta.
 
 TYPES ty_chapters TYPE STANDARD TABLE OF REF TO lcl_chapter WITH EMPTY KEY.
@@ -328,6 +330,8 @@ CLASS lcl_renderer_xml IMPLEMENTATION.
     ELSE.
       write_text_element( iv_name = 'truncated' iv_value = 'false' ).
     ENDIF.
+    write_text_element( iv_name = 'node_limit' iv_value = |{ ls_meta-node_limit }| ).
+    write_text_element( iv_name = 'node_total' iv_value = |{ ls_meta-node_total }| ).
     mo_writer->close_element( ).
 
     mo_writer->open_element( name = 'chapters' ).
@@ -488,7 +492,7 @@ CLASS lcl_parser_xml IMPLEMENTATION.
               ENDLOOP.
 
             WHEN 'system' OR 'client' OR 'created_by' OR 'created_at'
-              OR 'language' OR 'truncated'.
+              OR 'language' OR 'truncated' OR 'node_limit' OR 'node_total'.
               lv_target = lv_name.
 
             WHEN 'chapter'.
@@ -610,6 +614,8 @@ CLASS lcl_parser_xml IMPLEMENTATION.
               WHEN 'created_at'. ls_meta-created_at = lv_value.
               WHEN 'language'.   ls_meta-language   = lv_value.
               WHEN 'cell'.       ls_cell-value      = lv_value.
+              WHEN 'node_limit'. ls_meta-node_limit = CONV i( lv_value ).
+              WHEN 'node_total'. ls_meta-node_total = CONV i( lv_value ).
               WHEN 'truncated'.
                 IF lv_value = 'true'.
                   ls_meta-truncated = abap_true.
@@ -746,12 +752,12 @@ INITIALIZATION.
   gv_tlang = 'Sprache'.
   gv_tdep = 'Max. Tiefe (0 = alle)'.
   gv_tmaxn  = 'Max. Kapitel (0 = alle)'.
-  gv_tsubs  = 'Unterstrukturen aufloesen'.
+  gv_tsubs  = 'Unterstrukturen auflösen'.
   gv_tdoku  = 'Standarddokumentation'.
   gv_tobj   = 'Objektzuordnung'.
   gv_txml   = 'XML in Liste ausgeben'.
   gv_thtml  = 'HTML erzeugen/anzeigen'.
-  gv_trt    = 'Roundtrip pruefen'.
+  gv_trt    = 'Roundtrip prüfen'.
   gv_tdown  = 'Download auf PC'.
   gv_tpath  = 'Zielverzeichnis'.
 
@@ -792,6 +798,7 @@ CLASS lcl_collector_img DEFINITION.
     DATA mv_doku    TYPE abap_bool.
     DATA mv_obj     TYPE abap_bool.
     DATA mv_n_nodes TYPE i.
+    DATA mv_n_total TYPE i.
     DATA mv_n_act   TYPE i.
     DATA mv_n_docu  TYPE i.
     DATA mv_n_obj   TYPE i.
@@ -881,9 +888,14 @@ CLASS lcl_collector_img IMPLEMENTATION.
         CONTINUE.
       ENDIF.
 
+      " Alle Knoten zaehlen, die in den Umfang fielen - auch die, die das
+      " Limit abschneidet. Nur so laesst sich im Dokument angeben, wie
+      " vollstaendig es ist.
+      mv_n_total = mv_n_total + 1.
+
       IF mv_maxnod > 0 AND mv_n_nodes >= mv_maxnod.
         lv_trunc = abap_true.
-        EXIT.
+        CONTINUE.
       ENDIF.
 
       " Stapel auf die Elternebene zurueckschneiden
@@ -962,7 +974,9 @@ CLASS lcl_collector_img IMPLEMENTATION.
       created_by = sy-uname
       created_at = |{ sy-datum DATE = ISO } { sy-uzeit TIME = ISO }|
       language   = mv_langu
-      truncated  = lv_trunc ) ).
+      truncated  = lv_trunc
+      node_limit = mv_maxnod
+      node_total = mv_n_total ) ).
 
   ENDMETHOD.
 
@@ -1097,6 +1111,10 @@ CLASS lcl_renderer_html DEFINITION.
     METHODS esc IMPORTING iv_text TYPE string RETURNING VALUE(rv_text) TYPE string.
     METHODS write_chapter IMPORTING io_chapter TYPE REF TO lcl_chapter.
     METHODS write_toc     IMPORTING io_chapter TYPE REF TO lcl_chapter.
+    METHODS itf_to_html   IMPORTING iv_text TYPE string
+                          RETURNING VALUE(rv_html) TYPE string.
+    METHODS itf_section   IMPORTING iv_marker TYPE string
+                          RETURNING VALUE(rv_label) TYPE string.
 ENDCLASS.
 
 CLASS lcl_renderer_html IMPLEMENTATION.
@@ -1110,6 +1128,78 @@ CLASS lcl_renderer_html IMPLEMENTATION.
     REPLACE ALL OCCURRENCES OF '&' IN rv_text WITH '&amp;'.
     REPLACE ALL OCCURRENCES OF '<' IN rv_text WITH '&lt;'.
     REPLACE ALL OCCURRENCES OF '>' IN rv_text WITH '&gt;'.
+  ENDMETHOD.
+
+  METHOD itf_section.
+    " Die IMG-Dokumentation ist in feste Abschnitte gegliedert, die im
+    " ITF-Text als &NAME& stehen. Sie werden zu Zwischenüberschriften.
+    CASE iv_marker.
+      WHEN 'SHORTTEXT'.      rv_label = 'Kurztext'.
+      WHEN 'USE'.            rv_label = 'Verwendung'.
+      WHEN 'PRECONDITIONS'.  rv_label = 'Voraussetzungen'.
+      WHEN 'STANDARD_SETUP'. rv_label = 'Standardeinstellungen'.
+      WHEN 'ACTIVITY'.       rv_label = 'Vorgehen'.
+      WHEN 'EXAMPLE'.        rv_label = 'Beispiel'.
+      WHEN 'RECOMMENDATION'. rv_label = 'Empfehlung'.
+      WHEN 'CAUTION'.        rv_label = 'Achtung'.
+      WHEN OTHERS.           rv_label = iv_marker.
+    ENDCASE.
+  ENDMETHOD.
+
+  METHOD itf_to_html.
+
+    DATA lt_lines TYPE STANDARD TABLE OF string.
+    DATA lv_line  TYPE string.
+    DATA lv_len   TYPE i.
+
+    SPLIT iv_text AT cl_abap_char_utilities=>newline INTO TABLE lt_lines.
+
+    rv_html = '<div class="doc">'.
+
+    LOOP AT lt_lines INTO lv_line.
+
+      CONDENSE lv_line.
+
+      " SAPscript-Steueranweisung, kein Inhalt
+      IF lv_line = 'RESET N1'.
+        CONTINUE.
+      ENDIF.
+
+      IF lv_line IS INITIAL.
+        rv_html = |{ rv_html }<p></p>|.
+        CONTINUE.
+      ENDIF.
+
+      " Abschnittsmarke &NAME& - wird zur Überschrift, die Kaufmanns-Und
+      " verschwinden dabei
+      lv_len = strlen( lv_line ).
+      IF lv_len > 2
+        AND substring( val = lv_line off = 0 len = 1 ) = '&'
+        AND substring( val = lv_line off = lv_len - 1 len = 1 ) = '&'
+        AND NOT lv_line CS ' '.
+        rv_html = |{ rv_html }<p class="sec">{ esc(
+                    itf_section( substring( val = lv_line off = 1 len = lv_len - 2 ) ) ) }</p>|.
+        CONTINUE.
+      ENDIF.
+
+      lv_line = esc( lv_line ).
+
+      " ITF-Auszeichnungen: Verweise und Hervorhebungen werden fett
+      " dargestellt, die schliessende Marke gilt fuer alle drei.
+      REPLACE ALL OCCURRENCES OF PCRE '&lt;DS:[^&]+&gt;' IN lv_line WITH '<b>'.
+      REPLACE ALL OCCURRENCES OF '&lt;ZH&gt;' IN lv_line WITH '<b>'.
+      REPLACE ALL OCCURRENCES OF '&lt;LS&gt;' IN lv_line WITH '<b>'.
+      REPLACE ALL OCCURRENCES OF '&lt;/&gt;'  IN lv_line WITH '</b>'.
+
+      " Tabulatoren der ITF-Ablage
+      REPLACE ALL OCCURRENCES OF ',,' IN lv_line WITH ' '.
+
+      rv_html = |{ rv_html }{ lv_line }<br>|.
+
+    ENDLOOP.
+
+    rv_html = |{ rv_html }</div>|.
+
   ENDMETHOD.
 
   METHOD lif_docu_renderer~render.
@@ -1128,8 +1218,10 @@ CLASS lcl_renderer_html IMPLEMENTATION.
     add( 'th,td{border:1px solid #bbb;padding:3px 7px;text-align:left;' &&
          'font-size:11px}' ).
     add( 'th{background:#eee}' ).
-    add( 'pre.doc{background:#f7f7f7;border-left:3px solid #bbb;padding:8px;' &&
-         'white-space:pre-wrap;font-family:Consolas,monospace;font-size:11px}' ).
+    add( 'div.doc{background:#f7f7f7;border-left:3px solid #bbb;padding:8px;' &&
+         'margin:6px 0;line-height:1.45}' ).
+    add( 'p.sec{font-weight:bold;margin:10px 0 4px 0;color:#444}' ).
+    add( 'div.doc p{margin:0 0 6px 0}' ).
     add( '.ref{color:#666;font-size:11px;margin:2px 0}' ).
     add( '.warn{color:#a00;font-weight:bold}' ).
     add( 'ul.toc{line-height:1.6}' ).
@@ -1144,11 +1236,21 @@ CLASS lcl_renderer_html IMPLEMENTATION.
          | von { esc( ls_meta-created_by ) }</td></tr>| ).
     add( |<tr><th>Sprache</th><td>{ esc( ls_meta-language ) }</td></tr>| ).
     add( |<tr><th>Format</th><td>Version { esc( ls_meta-version ) }</td></tr>| ).
+
+    DATA lv_limit TYPE string.
+    IF ls_meta-node_limit = 0.
+      lv_limit = 'ohne Begrenzung'.
+    ELSE.
+      lv_limit = |Limit { ls_meta-node_limit }|.
+    ENDIF.
+    add( |<tr><th>Kapitel</th><td>{ ls_meta-node_total } im gewählten Umfang, | &&
+         |{ lv_limit }</td></tr>| ).
     add( '</table>' ).
 
     IF ls_meta-truncated = abap_true.
-      add( '<p class="warn">Achtung: Der Baum wurde durch die ' &&
-           'Mengenbegrenzung abgeschnitten und ist unvollstaendig.</p>' ).
+      add( |<p class="warn">Achtung: Von { ls_meta-node_total } Kapiteln im | &&
+           |gewählten Umfang sind nur { ls_meta-node_limit } enthalten. | &&
+           |Das Dokument ist unvollständig.</p>| ).
     ENDIF.
 
     add( '<h2>Inhalt</h2><ul class="toc">' ).
@@ -1197,13 +1299,13 @@ CLASS lcl_renderer_html IMPLEMENTATION.
 
     IF io_chapter->has_reference( ) = abap_true.
       DATA(ls_ref) = io_chapter->get_reference( ).
-      add( |<p class="ref">IMG-Aktivitaet { esc( ls_ref-activity ) }| &&
+      add( |<p class="ref">IMG-Aktivität { esc( ls_ref-activity ) }| &&
            |, Transaktion { esc( ls_ref-tcode ) }| &&
            |, Dokuobjekt { esc( ls_ref-docu_id ) }</p>| ).
     ENDIF.
 
     IF io_chapter->get_documentation( ) IS NOT INITIAL.
-      add( |<pre class="doc">{ esc( io_chapter->get_documentation( ) ) }</pre>| ).
+      add( itf_to_html( io_chapter->get_documentation( ) ) ).
     ENDIF.
 
     IF lines( io_chapter->get_objects( ) ) > 0.
@@ -1212,7 +1314,7 @@ CLASS lcl_renderer_html IMPLEMENTATION.
       LOOP AT io_chapter->get_objects( ) INTO DATA(lo_obj).
         DATA lv_rows TYPE string.
         IF lo_obj->get_truncated( ) = abap_true.
-          lv_rows = |{ lo_obj->get_row_count( ) } (gekuerzt)|.
+          lv_rows = |{ lo_obj->get_row_count( ) } (gekürzt)|.
         ELSE.
           lv_rows = |{ lo_obj->get_row_count( ) }|.
         ENDIF.
@@ -1364,7 +1466,7 @@ FORM download USING iv_content TYPE string
   DATA lv_dir  TYPE string.
 
   IF sy-batch = abap_true.
-    WRITE: / 'Download im Hintergrund nicht moeglich:', iv_ext.
+    WRITE: / 'Download im Hintergrund nicht möglich:', iv_ext.
     RETURN.
   ENDIF.
 
@@ -1437,7 +1539,7 @@ FORM search_structures.
     RETURN.
   ENDIF.
 
-  WRITE: / 'Gefundene IMG-Strukturen - GUID in P_TREE uebernehmen'.
+  WRITE: / 'Gefundene IMG-Strukturen - GUID in P_TREE übernehmen'.
   ULINE.
   LOOP AT lt_hits INTO DATA(ls_hit).
     WRITE: / ls_hit-tree_id, ls_hit-text.
@@ -1476,14 +1578,22 @@ START-OF-SELECTION.
   WRITE: / 'Documizer - IMG-Collector (ohne Dateninhalte)'.
   ULINE.
   WRITE: / 'Struktur                         :', p_tree.
-  WRITE: / 'Kapitel gesamt                   :', lo_collector->get_stat_nodes( ).
-  WRITE: / 'davon Aktivitaeten               :', lo_collector->get_stat_activities( ).
+  DATA(ls_docmeta) = lo_doc->get_meta( ).
+
+  WRITE: / 'Kapitel erzeugt                  :', lo_collector->get_stat_nodes( ).
+  WRITE: / 'Kapitel im gewaehlten Umfang     :', ls_docmeta-node_total.
+  IF p_maxnod = 0.
+    WRITE: / 'Limit                            : ohne Begrenzung'.
+  ELSE.
+    WRITE: / 'Limit                            :', p_maxnod.
+  ENDIF.
+  WRITE: / 'davon Aktivitäten                :', lo_collector->get_stat_activities( ).
   WRITE: / 'mit Standarddokumentation        :', lo_collector->get_stat_docu( ).
   WRITE: / 'zugeordnete Objekte              :', lo_collector->get_stat_objects( ).
   WRITE: / 'XML-Zeichen                      :', strlen( lv_xml ).
 
-  IF lo_doc->get_meta( )-truncated = abap_true.
-    WRITE: / 'ACHTUNG: Knotengrenze erreicht, Baum unvollstaendig.'.
+  IF ls_docmeta-truncated = abap_true.
+    WRITE: / 'ACHTUNG: Limit erreicht, Dokument unvollständig.'.
   ENDIF.
 
   " Roundtrip gegen echte Daten pruefen, nicht nur gegen ein Beispiel
@@ -1515,7 +1625,7 @@ START-OF-SELECTION.
       cl_abap_browser=>show_html( html_string = lv_html
                                   title       = 'Documizer' ).
     ELSE.
-      WRITE: / 'HTML-Anzeige im Hintergrund nicht moeglich.'.
+      WRITE: / 'HTML-Anzeige im Hintergrund nicht möglich.'.
     ENDIF.
   ENDIF.
 

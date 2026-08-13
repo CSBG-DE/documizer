@@ -984,6 +984,9 @@ CLASS lcl_collector_dev DEFINITION.
     METHODS add_usages
       IMPORTING iv_name    TYPE sobj_name
                 io_chapter TYPE REF TO lcl_chapter.
+    METHODS pack_reason
+      IMPORTING iv_subrc        TYPE sy-subrc
+      RETURNING VALUE(rv_reason) TYPE string.
 ENDCLASS.
 
 CLASS lcl_collector_dev IMPLEMENTATION.
@@ -1254,6 +1257,20 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
   ENDMETHOD.
 
+  METHOD pack_reason.
+    " Die Ausnahmen der Paket-API in Klartext. Eine nackte Nummer im
+    " Dokument zwingt den Leser sonst in die Funktionsbibliothek.
+    CASE iv_subrc.
+      WHEN 1. rv_reason = 'kein Paket angegeben'.
+      WHEN 2. rv_reason = 'Paket ohne Katalogeintrag in TDEVC'.
+      WHEN 3. rv_reason = 'Paket ohne Eintrag in TADIR'.
+      WHEN 4. rv_reason = 'Paket existiert nicht - Name pruefen'.
+      WHEN 5. rv_reason = 'ungueltiges Oberpaket'.
+      WHEN 6. rv_reason = 'kein Ausgabeparameter angefordert'.
+      WHEN OTHERS. rv_reason = |unbekannte Ursache { iv_subrc }|.
+    ENDCASE.
+  ENDMETHOD.
+
   METHOD add_usages.
 
     " Der Verwendungsnachweis kommt aus den Querverweistabellen der
@@ -1454,7 +1471,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
           APPEND ls_sub-package TO lt_all.
         ENDLOOP.
       ELSE.
-        mv_note = |Unterpakete nicht ermittelbar (Ursache { sy-subrc }).|.
+        mv_note = |Unterpakete nicht ermittelbar: { pack_reason( sy-subrc ) }.|.
       ENDIF.
     ENDIF.
 
@@ -1495,7 +1512,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       IF sy-subrc <> 0.
         " Paket ohne Katalogeintrag - im Dokument vermerken statt abbrechen
         lo_pchap->set_documentation(
-          |Objektliste nicht lesbar (Ursache { sy-subrc }).| ).
+          |Objektliste nicht lesbar: { pack_reason( sy-subrc ) }.| ).
         CONTINUE.
       ENDIF.
 

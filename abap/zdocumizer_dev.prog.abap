@@ -935,6 +935,7 @@ CLASS lcl_collector_dev DEFINITION.
     DATA mv_maxsrc TYPE i.
     DATA mv_used   TYPE abap_bool.
     DATA mv_maxuse TYPE i.
+    DATA mv_note   TYPE string.
     DATA mv_n_use  TYPE i.
     DATA mv_n_src  TYPE i.
     DATA mv_n_pack TYPE i.
@@ -945,6 +946,11 @@ CLASS lcl_collector_dev DEFINITION.
     METHODS read_short_text
       IMPORTING iv_type        TYPE trobjtype
                 iv_name        TYPE sobj_name
+      RETURNING VALUE(rv_text) TYPE string.
+    METHODS read_text_lang
+      IMPORTING iv_type        TYPE trobjtype
+                iv_name        TYPE sobj_name
+                iv_langu       TYPE sy-langu
       RETURNING VALUE(rv_text) TYPE string.
     METHODS read_docu
       IMPORTING iv_type        TYPE trobjtype
@@ -1023,47 +1029,60 @@ CLASS lcl_collector_dev IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD read_short_text.
+    " Viele Objekte tragen keinen Text in der gewaehlten Sprache. Statt eine
+    " leere Zeile auszugeben, wird auf Englisch zurueckgefallen - das ist bei
+    " SAP-Standard und oft auch bei Kundenobjekten die Pflegesprache.
+    rv_text = read_text_lang( iv_type  = iv_type
+                              iv_name  = iv_name
+                              iv_langu = mv_langu ).
+    IF rv_text IS INITIAL AND mv_langu <> 'E'.
+      rv_text = read_text_lang( iv_type  = iv_type
+                                iv_name  = iv_name
+                                iv_langu = 'E' ).
+    ENDIF.
+  ENDMETHOD.
+  METHOD read_text_lang.
 
     CASE iv_type.
 
       WHEN 'PROG'.
         SELECT SINGLE text FROM trdirt
-          WHERE name = @iv_name AND sprsl = @mv_langu INTO @DATA(lv_t1).
+          WHERE name = @iv_name AND sprsl = @iv_langu INTO @DATA(lv_t1).
         rv_text = lv_t1.
 
       WHEN 'CLAS' OR 'INTF'.
         SELECT SINGLE descript FROM seoclasstx
-          WHERE clsname = @iv_name AND langu = @mv_langu INTO @DATA(lv_t2).
+          WHERE clsname = @iv_name AND langu = @iv_langu INTO @DATA(lv_t2).
         rv_text = lv_t2.
 
       WHEN 'TABL' OR 'VIEW' OR 'TTYP'.
         SELECT SINGLE ddtext FROM dd02t
-          WHERE tabname = @iv_name AND ddlanguage = @mv_langu INTO @DATA(lv_t3).
+          WHERE tabname = @iv_name AND ddlanguage = @iv_langu INTO @DATA(lv_t3).
         rv_text = lv_t3.
 
       WHEN 'DTEL'.
         SELECT SINGLE ddtext FROM dd04t
-          WHERE rollname = @iv_name AND ddlanguage = @mv_langu INTO @DATA(lv_t4).
+          WHERE rollname = @iv_name AND ddlanguage = @iv_langu INTO @DATA(lv_t4).
         rv_text = lv_t4.
 
       WHEN 'DOMA'.
         SELECT SINGLE ddtext FROM dd01t
-          WHERE domname = @iv_name AND ddlanguage = @mv_langu INTO @DATA(lv_t5).
+          WHERE domname = @iv_name AND ddlanguage = @iv_langu INTO @DATA(lv_t5).
         rv_text = lv_t5.
 
       WHEN 'TRAN'.
         SELECT SINGLE ttext FROM tstct
-          WHERE tcode = @iv_name AND sprsl = @mv_langu INTO @DATA(lv_t6).
+          WHERE tcode = @iv_name AND sprsl = @iv_langu INTO @DATA(lv_t6).
         rv_text = lv_t6.
 
       WHEN 'FUGR'.
         SELECT SINGLE areat FROM tlibt
-          WHERE area = @iv_name AND spras = @mv_langu INTO @DATA(lv_t7).
+          WHERE area = @iv_name AND spras = @iv_langu INTO @DATA(lv_t7).
         rv_text = lv_t7.
 
       WHEN 'DEVC'.
         SELECT SINGLE ctext FROM tdevct
-          WHERE devclass = @iv_name AND spras = @mv_langu INTO @DATA(lv_t8).
+          WHERE devclass = @iv_name AND spras = @iv_langu INTO @DATA(lv_t8).
         rv_text = lv_t8.
 
     ENDCASE.
@@ -1404,18 +1423,32 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
     " Unterpakete rekursiv - die API liefert den kompletten Unterbaum,
     " ein eigener Abstieg ueber TDEVC-PARENTCL ist nicht noetig.
+    " Die Methoden arbeiten mit klassischen Ausnahmen. Ohne EXCEPTIONS-Zusatz
+    " im Aufruf fuehrt jede davon zum Kurzdump - TRY...CATCH greift hier
+    " nicht, weil es keine klassenbasierten Ausnahmen sind. Pakete ohne
+    " TDEVC- oder TADIR-Satz sind im Bestand durchaus vorhanden.
     IF mv_recur = abap_true.
-      TRY.
-          cl_pak_package_queries=>get_all_subpackages(
-            EXPORTING im_package             = mv_pack
-                      im_also_local_packages = mv_local
-            IMPORTING et_subpackages         = lt_packages ).
-          LOOP AT lt_packages INTO DATA(ls_sub).
-            APPEND ls_sub-package TO lt_all.
-          ENDLOOP.
-        CATCH cx_root.
-          " Paket ohne Unterpakete oder ohne TADIR-Satz
-      ENDTRY.
+      CALL METHOD cl_pak_package_queries=>get_all_subpackages
+        EXPORTING
+          im_package                    = mv_pack
+          im_also_local_packages        = mv_local
+        IMPORTING
+          et_subpackages                = lt_packages
+        EXCEPTIONS
+          no_package_specified          = 1
+          package_has_no_tdevc_record   = 2
+          package_has_no_tadir_record   = 3
+          package_does_not_exist        = 4
+          invalid_superpackage          = 5
+          no_output_parameter_requested = 6
+          OTHERS                        = 7.
+      IF sy-subrc = 0.
+        LOOP AT lt_packages INTO DATA(ls_sub).
+          APPEND ls_sub-package TO lt_all.
+        ENDLOOP.
+      ELSE.
+        mv_note = |Unterpakete nicht ermittelbar (Ursache { sy-subrc }).|.
+      ENDIF.
     ENDIF.
 
     SORT lt_all.
@@ -1439,13 +1472,25 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       ro_document->add_chapter( lo_pchap ).
 
       CLEAR lt_tadir.
-      TRY.
-          cl_pak_package_queries=>get_dev_object_tadir_keys(
-            EXPORTING im_package    = lv_pack
-            IMPORTING et_tadir_data = lt_tadir ).
-        CATCH cx_root.
-          CONTINUE.
-      ENDTRY.
+      CALL METHOD cl_pak_package_queries=>get_dev_object_tadir_keys
+        EXPORTING
+          im_package                    = lv_pack
+          im_also_local_packages        = mv_local
+        IMPORTING
+          et_tadir_data                 = lt_tadir
+        EXCEPTIONS
+          no_package_specified          = 1
+          package_has_no_tdevc_record   = 2
+          package_has_no_tadir_record   = 3
+          package_does_not_exist        = 4
+          no_output_parameter_requested = 5
+          OTHERS                        = 6.
+      IF sy-subrc <> 0.
+        " Paket ohne Katalogeintrag - im Dokument vermerken statt abbrechen
+        lo_pchap->set_documentation(
+          |Objektliste nicht lesbar (Ursache { sy-subrc }).| ).
+        CONTINUE.
+      ENDIF.
 
       " Objekte nach Typ gruppieren
       SORT lt_tadir BY object_type object_name.

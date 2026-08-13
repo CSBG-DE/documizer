@@ -163,6 +163,8 @@ CLASS lcl_chapter DEFINITION.
     METHODS set_reference     IMPORTING is_reference TYPE ty_reference.
     METHODS set_documentation IMPORTING iv_text      TYPE string.
     METHODS set_source        IMPORTING iv_source    TYPE string.
+    METHODS set_doclang       IMPORTING iv_lang      TYPE string.
+    METHODS get_doclang       RETURNING VALUE(rv_lang) TYPE string.
     METHODS get_source        RETURNING VALUE(rv_source) TYPE string.
     METHODS set_title         IMPORTING iv_title     TYPE string.
     METHODS get_id            RETURNING VALUE(rv_id)        TYPE string.
@@ -182,6 +184,7 @@ CLASS lcl_chapter DEFINITION.
     DATA ms_reference     TYPE ty_reference.
     DATA mv_documentation TYPE string.
     DATA mv_source        TYPE string.
+    DATA mv_doclang       TYPE string.
     DATA mt_children      TYPE ty_chapters.
     DATA mt_objects       TYPE ty_objects.
 ENDCLASS.
@@ -207,6 +210,12 @@ CLASS lcl_chapter IMPLEMENTATION.
   ENDMETHOD.
   METHOD set_source.
     mv_source = iv_source.
+  ENDMETHOD.
+  METHOD set_doclang.
+    mv_doclang = iv_lang.
+  ENDMETHOD.
+  METHOD get_doclang.
+    rv_lang = mv_doclang.
   ENDMETHOD.
   METHOD get_source.
     rv_source = mv_source.
@@ -379,6 +388,7 @@ CLASS lcl_renderer_xml IMPLEMENTATION.
     IF io_chapter->get_documentation( ) IS NOT INITIAL.
       mo_writer->open_element( name = 'documentation' ).
       mo_writer->write_attribute( name = 'format' value = 'ITF' ).
+      mo_writer->write_attribute( name = 'lang'   value = io_chapter->get_doclang( ) ).
       mo_writer->write_value( io_chapter->get_documentation( ) ).
       mo_writer->close_element( ).
     ENDIF.
@@ -511,6 +521,11 @@ CLASS lcl_parser_xml IMPLEMENTATION.
 
             WHEN 'documentation'.
               lv_target = 'documentation'.
+              LOOP AT lt_attr INTO lo_attr.
+                IF lo_attr->qname-name = 'lang' AND lo_current IS BOUND.
+                  lo_current->set_doclang( lo_attr->get_value( ) ).
+                ENDIF.
+              ENDLOOP.
 
             WHEN 'source'.
               lv_target = 'source'.
@@ -665,6 +680,12 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE gv_blk2.
     PARAMETERS p_langu TYPE sy-langu DEFAULT sy-langu.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tfalb FOR FIELD p_falb.
+    PARAMETERS p_falb AS CHECKBOX DEFAULT 'X'.
+    SELECTION-SCREEN COMMENT 35(12) gv_tflng FOR FIELD p_flang.
+    PARAMETERS p_flang TYPE sy-langu DEFAULT 'E'.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tmaxo FOR FIELD p_maxobj.
     PARAMETERS p_maxobj TYPE i DEFAULT 2000.
   SELECTION-SCREEN END OF LINE.
@@ -729,7 +750,11 @@ INITIALIZATION.
   gv_tpack = 'Paket'.
   gv_trec  = 'Unterpakete rekursiv'.
   gv_tloc  = 'lokale Pakete einbeziehen'.
-  gv_tlang = 'Sprache'.
+  gv_tlang = 'Ausgabesprache'.
+  gv_tfalb = 'Ersatzsprache verwenden'.
+  gv_tflng = 'Ersatzsprache'.
+  gv_tfalb = 'Ersatzsprache verwenden'.
+  gv_tflng = 'Ersatzsprache'.
   gv_tmaxo = 'Max. Objekte (0 = alle)'.
   gv_tdoku = 'Objektdokumentation'.
   gv_tdet  = 'Details (Felder, Methoden)'.
@@ -923,13 +948,16 @@ CLASS lcl_collector_dev DEFINITION.
                 iv_src    TYPE abap_bool
                 iv_maxsrc TYPE i
                 iv_used   TYPE abap_bool
-                iv_maxuse TYPE i.
+                iv_maxuse TYPE i
+                iv_falb   TYPE abap_bool
+                iv_flang  TYPE sy-langu.
     METHODS get_stat_packages RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_objects  RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_total    RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_docu     RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_source   RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_usage    RETURNING VALUE(rv) TYPE i.
+    METHODS get_stat_fallback RETURNING VALUE(rv) TYPE i.
   PRIVATE SECTION.
     DATA mv_pack   TYPE devclass.
     DATA mv_recur  TYPE abap_bool.
@@ -942,6 +970,10 @@ CLASS lcl_collector_dev DEFINITION.
     DATA mv_maxsrc TYPE i.
     DATA mv_used   TYPE abap_bool.
     DATA mv_maxuse TYPE i.
+    DATA mv_falb   TYPE abap_bool.
+    DATA mv_flang  TYPE sy-langu.
+    DATA mv_n_falb TYPE i.
+    DATA mv_last_lang TYPE sy-langu.
     DATA mv_note   TYPE string.
     DATA mv_n_use  TYPE i.
     DATA mv_n_src  TYPE i.
@@ -962,6 +994,11 @@ CLASS lcl_collector_dev DEFINITION.
     METHODS read_docu
       IMPORTING iv_type        TYPE trobjtype
                 iv_name        TYPE sobj_name
+      RETURNING VALUE(rv_text) TYPE string.
+    METHODS read_docu_lang
+      IMPORTING iv_type        TYPE trobjtype
+                iv_name        TYPE sobj_name
+                iv_langu       TYPE sy-langu
       RETURNING VALUE(rv_text) TYPE string.
     METHODS add_details
       IMPORTING iv_type    TYPE trobjtype
@@ -1003,6 +1040,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     mv_maxsrc = iv_maxsrc.
     mv_used   = iv_used.
     mv_maxuse = iv_maxuse.
+    mv_falb   = iv_falb.
+    mv_flang  = iv_flang.
   ENDMETHOD.
 
   METHOD build_title.
@@ -1045,10 +1084,10 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     rv_text = read_text_lang( iv_type  = iv_type
                               iv_name  = iv_name
                               iv_langu = mv_langu ).
-    IF rv_text IS INITIAL AND mv_langu <> 'E'.
+    IF rv_text IS INITIAL AND mv_falb = abap_true AND mv_flang <> mv_langu.
       rv_text = read_text_lang( iv_type  = iv_type
                                 iv_name  = iv_name
-                                iv_langu = 'E' ).
+                                iv_langu = mv_flang ).
     ENDIF.
   ENDMETHOD.
   METHOD read_text_lang.
@@ -1101,6 +1140,31 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
   METHOD read_docu.
 
+    CLEAR mv_last_lang.
+
+    rv_text = read_docu_lang( iv_type  = iv_type
+                              iv_name  = iv_name
+                              iv_langu = mv_langu ).
+    IF rv_text IS NOT INITIAL.
+      mv_last_lang = mv_langu.
+      RETURN.
+    ENDIF.
+
+    " Ist in der Ausgabesprache nichts gepflegt, wird die Ersatzsprache
+    " versucht. Die gelieferte Sprache steht anschliessend am Kapitel.
+    IF mv_falb = abap_true AND mv_flang IS NOT INITIAL AND mv_flang <> mv_langu.
+      rv_text = read_docu_lang( iv_type  = iv_type
+                                iv_name  = iv_name
+                                iv_langu = mv_flang ).
+      IF rv_text IS NOT INITIAL.
+        mv_last_lang = mv_flang.
+      ENDIF.
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD read_docu_lang.
+
     DATA lt_line TYPE STANDARD TABLE OF tline.
     DATA lv_id   TYPE dokhl-id.
     DATA lv_obj  TYPE dokhl-object.
@@ -1118,7 +1182,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     CALL FUNCTION 'DOCU_GET'
       EXPORTING
         id                = lv_id
-        langu             = mv_langu
+        langu             = iv_langu
         object            = lv_obj
         typ               = 'E'
       TABLES
@@ -1579,7 +1643,11 @@ CLASS lcl_collector_dev IMPLEMENTATION.
                                      iv_name = ls_tadir-object_name ).
           IF lv_docu IS NOT INITIAL.
             lo_ochap->set_documentation( lv_docu ).
+            lo_ochap->set_doclang( CONV string( mv_last_lang ) ).
             mv_n_docu = mv_n_docu + 1.
+            IF mv_last_lang <> mv_langu.
+              mv_n_falb = mv_n_falb + 1.
+            ENDIF.
           ENDIF.
         ENDIF.
 
@@ -1638,6 +1706,9 @@ CLASS lcl_collector_dev IMPLEMENTATION.
   ENDMETHOD.
   METHOD get_stat_usage.
     rv = mv_n_use.
+  ENDMETHOD.
+  METHOD get_stat_fallback.
+    rv = mv_n_falb.
   ENDMETHOD.
 
 ENDCLASS.
@@ -1765,7 +1836,9 @@ START-OF-SELECTION.
                                               iv_src    = p_src
                                               iv_maxsrc = p_maxsrc
                                               iv_used   = p_used
-                                              iv_maxuse = p_maxuse ).
+                                              iv_maxuse = p_maxuse
+                                              iv_falb   = p_falb
+                                              iv_flang  = p_flang ).
 
   DATA lo_coll TYPE REF TO lif_docu_collector.
   lo_coll = lo_collector.
@@ -1794,6 +1867,9 @@ START-OF-SELECTION.
   ENDIF.
   IF p_used = abap_true.
     WRITE: / 'mit Verwendungsnachweis          :', lo_collector->get_stat_usage( ).
+  ENDIF.
+  IF p_falb = abap_true.
+    WRITE: / 'davon in Ersatzsprache           :', lo_collector->get_stat_fallback( ).
   ENDIF.
   IF lv_xml IS NOT INITIAL.
     WRITE: / 'XML-Zeichen                      :', strlen( lv_xml ).

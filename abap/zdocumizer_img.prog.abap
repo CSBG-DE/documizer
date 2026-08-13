@@ -205,6 +205,8 @@ CLASS lcl_chapter DEFINITION.
     METHODS add_object        IMPORTING io_object    TYPE REF TO lcl_object.
     METHODS set_reference     IMPORTING is_reference TYPE ty_reference.
     METHODS set_documentation IMPORTING iv_text      TYPE string.
+    METHODS set_doclang       IMPORTING iv_lang      TYPE string.
+    METHODS get_doclang       RETURNING VALUE(rv_lang) TYPE string.
     METHODS set_title         IMPORTING iv_title     TYPE string.
     METHODS set_type          IMPORTING iv_type      TYPE string.
     METHODS get_id            RETURNING VALUE(rv_id)        TYPE string.
@@ -228,6 +230,7 @@ CLASS lcl_chapter DEFINITION.
     DATA mv_title         TYPE string.
     DATA ms_reference     TYPE ty_reference.
     DATA mv_documentation TYPE string.
+    DATA mv_doclang       TYPE string.
     DATA mt_children      TYPE ty_chapters.
     DATA mt_objects       TYPE ty_objects.
 ENDCLASS.
@@ -250,6 +253,12 @@ CLASS lcl_chapter IMPLEMENTATION.
   ENDMETHOD.
   METHOD set_documentation.
     mv_documentation = iv_text.
+  ENDMETHOD.
+  METHOD set_doclang.
+    mv_doclang = iv_lang.
+  ENDMETHOD.
+  METHOD get_doclang.
+    rv_lang = mv_doclang.
   ENDMETHOD.
   METHOD set_title.
     mv_title = iv_title.
@@ -442,6 +451,7 @@ CLASS lcl_renderer_xml IMPLEMENTATION.
     IF io_chapter->get_documentation( ) IS NOT INITIAL.
       mo_writer->open_element( name = 'documentation' ).
       mo_writer->write_attribute( name = 'format' value = 'ITF' ).
+      mo_writer->write_attribute( name = 'lang'   value = io_chapter->get_doclang( ) ).
       mo_writer->write_value( io_chapter->get_documentation( ) ).
       mo_writer->close_element( ).
     ENDIF.
@@ -616,6 +626,11 @@ CLASS lcl_parser_xml IMPLEMENTATION.
 
             WHEN 'documentation'.
               lv_target = 'documentation'.
+              LOOP AT lt_attr INTO lo_attr.
+                IF lo_attr->qname-name = 'lang' AND lo_current IS BOUND.
+                  lo_current->set_doclang( lo_attr->get_value( ) ).
+                ENDIF.
+              ENDLOOP.
 
             WHEN 'project'.
               DATA ls_pr TYPE ty_project.
@@ -840,6 +855,12 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE gv_blk2.
     PARAMETERS p_langu TYPE sy-langu DEFAULT sy-langu.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tfalb FOR FIELD p_falb.
+    PARAMETERS p_falb AS CHECKBOX DEFAULT 'X'.
+    SELECTION-SCREEN COMMENT 35(12) gv_tflng FOR FIELD p_flang.
+    PARAMETERS p_flang TYPE sy-langu DEFAULT 'E'.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tdep FOR FIELD p_depth.
     PARAMETERS p_depth TYPE i DEFAULT 0.
   SELECTION-SCREEN END OF LINE.
@@ -921,7 +942,9 @@ INITIALIZATION.
   gv_tsrch  = 'oder Suchbegriff Wurzel'.
   gv_tproj  = 'Projekt (Status/Memo)'.
   gv_tonly  = 'nur Projektknoten'.
-  gv_tlang = 'Sprache'.
+  gv_tlang = 'Ausgabesprache'.
+  gv_tfalb = 'Ersatzsprache verwenden'.
+  gv_tflng = 'Ersatzsprache'.
   gv_tdep = 'Max. Tiefe (0 = alle)'.
   gv_tmaxn  = 'Max. Kapitel (0 = alle)'.
   gv_tsubs  = 'Unterstrukturen auflösen'.
@@ -1334,12 +1357,15 @@ CLASS lcl_collector_img DEFINITION.
                 iv_onlypr  TYPE abap_bool OPTIONAL
                 iv_pstat   TYPE abap_bool DEFAULT abap_true
                 iv_pmemo   TYPE abap_bool DEFAULT abap_true
+                iv_falb    TYPE abap_bool DEFAULT abap_false
+                iv_flang   TYPE sy-langu  DEFAULT 'E'
                 io_cust    TYPE REF TO lcl_cust OPTIONAL.
     METHODS get_stat_nodes      RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_activities RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_docu       RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_objects    RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_project    RETURNING VALUE(rv) TYPE i.
+    METHODS get_stat_fallback   RETURNING VALUE(rv) TYPE i.
   PRIVATE SECTION.
     DATA mv_tree_id TYPE ttree-id.
     DATA mv_langu   TYPE sy-langu.
@@ -1360,6 +1386,9 @@ CLASS lcl_collector_img DEFINITION.
     DATA mv_onlypr  TYPE abap_bool.
     DATA mv_pstat   TYPE abap_bool.
     DATA mv_pmemo   TYPE abap_bool.
+    DATA mv_falb    TYPE abap_bool.
+    DATA mv_flang   TYPE sy-langu.
+    DATA mv_n_falb  TYPE i.
     DATA mt_pmap    TYPE HASHED TABLE OF ty_pmap WITH UNIQUE KEY node_id.
     DATA mv_n_proj  TYPE i.
     DATA mv_n_nodes TYPE i.
@@ -1371,7 +1400,12 @@ CLASS lcl_collector_img DEFINITION.
       IMPORTING io_chapter  TYPE REF TO lcl_chapter
                 iv_activity TYPE string.
     METHODS read_documentation
+      IMPORTING iv_docu_id TYPE string
+      EXPORTING ev_text    TYPE string
+                ev_lang    TYPE string.
+    METHODS read_docu_lang
       IMPORTING iv_docu_id     TYPE string
+                iv_langu       TYPE sy-langu
       RETURNING VALUE(rv_text) TYPE string.
     METHODS load_project.
     METHODS prune
@@ -1392,6 +1426,8 @@ CLASS lcl_collector_img IMPLEMENTATION.
     mv_onlypr  = iv_onlypr.
     mv_pstat   = iv_pstat.
     mv_pmemo   = iv_pmemo.
+    mv_falb    = iv_falb.
+    mv_flang   = iv_flang.
     mv_doku    = iv_doku.
     mv_obj     = iv_obj.
   ENDMETHOD.
@@ -1544,6 +1580,20 @@ CLASS lcl_collector_img IMPLEMENTATION.
         lv_title = ls_text-text.
       ENDIF.
 
+      " Knotentext in der Ersatzsprache nachschlagen. Ein zweiter Lauf des
+      " Bausteins in der Ersatzsprache waere teurer als der gezielte Zugriff
+      " auf die wenigen Knoten ohne Text.
+      IF lv_title IS INITIAL AND mv_falb = abap_true AND mv_flang <> mv_langu.
+        SELECT SINGLE text FROM tnodeimgt
+          WHERE tree_id = @ls_node-tree_id
+            AND node_id = @ls_node-node_id
+            AND spras   = @mv_flang
+          INTO @DATA(lv_ftext).
+        IF sy-subrc = 0.
+          lv_title = lv_ftext.
+        ENDIF.
+      ENDIF.
+
       " Aktivitaet oder Gliederung?
       DATA lv_type TYPE string.
       DATA lv_act  TYPE string.
@@ -1646,17 +1696,30 @@ CLASS lcl_collector_img IMPLEMENTATION.
       SELECT SINGLE text FROM cus_imgact
         WHERE spras = @mv_langu AND activity = @lv_act
         INTO @DATA(lv_text).
-      IF sy-subrc = 0.
+      IF sy-subrc <> 0 AND mv_falb = abap_true AND mv_flang <> mv_langu.
+        SELECT SINGLE text FROM cus_imgact
+          WHERE spras = @mv_flang AND activity = @lv_act
+          INTO @lv_text.
+      ENDIF.
+      IF lv_text IS NOT INITIAL.
         io_chapter->set_title( CONV string( lv_text ) ).
       ENDIF.
     ENDIF.
 
     " SAP-Standarddokumentation, Dokuklasse HY
     IF mv_doku = abap_true AND ls_reference-docu_id IS NOT INITIAL.
-      DATA(lv_docu) = read_documentation( ls_reference-docu_id ).
+      DATA lv_docu  TYPE string.
+      DATA lv_dlang TYPE string.
+      read_documentation( EXPORTING iv_docu_id = ls_reference-docu_id
+                          IMPORTING ev_text    = lv_docu
+                                    ev_lang    = lv_dlang ).
       IF lv_docu IS NOT INITIAL.
         io_chapter->set_documentation( lv_docu ).
+        io_chapter->set_doclang( lv_dlang ).
         mv_n_docu = mv_n_docu + 1.
+        IF lv_dlang <> mv_langu.
+          mv_n_falb = mv_n_falb + 1.
+        ENDIF.
       ENDIF.
     ENDIF.
 
@@ -1691,6 +1754,28 @@ CLASS lcl_collector_img IMPLEMENTATION.
 
   METHOD read_documentation.
 
+    CLEAR: ev_text, ev_lang.
+
+    ev_text = read_docu_lang( iv_docu_id = iv_docu_id iv_langu = mv_langu ).
+    IF ev_text IS NOT INITIAL.
+      ev_lang = mv_langu.
+      RETURN.
+    ENDIF.
+
+    " Ist in der Ausgabesprache nichts gepflegt, wird die Ersatzsprache
+    " versucht. Welche Sprache tatsaechlich geliefert hat, steht am Kapitel -
+    " sonst waere im Dokument nicht erkennbar, warum ein Abschnitt englisch ist.
+    IF mv_falb = abap_true AND mv_flang IS NOT INITIAL AND mv_flang <> mv_langu.
+      ev_text = read_docu_lang( iv_docu_id = iv_docu_id iv_langu = mv_flang ).
+      IF ev_text IS NOT INITIAL.
+        ev_lang = mv_flang.
+      ENDIF.
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD read_docu_lang.
+
     DATA lt_line TYPE STANDARD TABLE OF tline.
     DATA lv_obj  TYPE dokhl-object.
 
@@ -1699,7 +1784,7 @@ CLASS lcl_collector_img IMPLEMENTATION.
     CALL FUNCTION 'DOCU_GET'
       EXPORTING
         id                = gc_docuclas
-        langu             = mv_langu
+        langu             = iv_langu
         object            = lv_obj
         typ               = 'E'
       TABLES
@@ -1800,6 +1885,10 @@ CLASS lcl_collector_img IMPLEMENTATION.
 
   METHOD get_stat_project.
     rv = mv_n_proj.
+  ENDMETHOD.
+
+  METHOD get_stat_fallback.
+    rv = mv_n_falb.
   ENDMETHOD.
 
   METHOD get_stat_nodes.
@@ -2464,6 +2553,8 @@ START-OF-SELECTION.
                                               iv_onlypr  = p_onlypr
                                               iv_pstat   = p_pstat
                                               iv_pmemo   = p_pmemo
+                                              iv_falb    = p_falb
+                                              iv_flang   = p_flang
                                               io_cust    = COND #(
                                                 WHEN p_data = abap_true
                                                 THEN NEW lcl_cust( iv_custom = p_cust
@@ -2500,6 +2591,9 @@ START-OF-SELECTION.
   ENDIF.
   WRITE: / 'davon Aktivitäten                :', lo_collector->get_stat_activities( ).
   WRITE: / 'mit Standarddokumentation        :', lo_collector->get_stat_docu( ).
+  IF p_falb = abap_true.
+    WRITE: / 'davon in Ersatzsprache           :', lo_collector->get_stat_fallback( ).
+  ENDIF.
   WRITE: / 'zugeordnete Objekte              :', lo_collector->get_stat_objects( ).
   IF p_proj IS NOT INITIAL.
     WRITE: / 'Kapitel mit Projektdaten         :', lo_collector->get_stat_project( ).

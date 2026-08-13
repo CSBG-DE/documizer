@@ -1,0 +1,852 @@
+<title>Documizer — Dokumentation</title>
+
+<style>
+  :root {
+    --ground:    #F6F8F8;
+    --surface:   #FFFFFF;
+    --surface-2: #EEF2F2;
+    --ink:       #16222A;
+    --ink-muted: #5A6A74;
+    --ink-faint: #8A98A0;
+    --rule:      #DCE3E4;
+    --rule-soft: #E9EEEF;
+    --accent:    #0E6C6C;
+    --accent-ink:#0A4E4E;
+    --amber:     #A66A12;
+    --amber-bg:  #FBF3E4;
+    --code-bg:   #EEF2F2;
+    --shadow:    0 1px 2px rgba(22,34,42,.05), 0 8px 24px -16px rgba(22,34,42,.25);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:    #10171B;
+      --surface:   #161F24;
+      --surface-2: #1C272D;
+      --ink:       #E2E9EC;
+      --ink-muted: #9AAAB3;
+      --ink-faint: #6E7F88;
+      --rule:      #26343B;
+      --rule-soft: #1E2A30;
+      --accent:    #4FB5AF;
+      --accent-ink:#8FD4CF;
+      --amber:     #D9A15C;
+      --amber-bg:  #251D12;
+      --code-bg:   #1C272D;
+      --shadow:    0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:    #10171B;
+    --surface:   #161F24;
+    --surface-2: #1C272D;
+    --ink:       #E2E9EC;
+    --ink-muted: #9AAAB3;
+    --ink-faint: #6E7F88;
+    --rule:      #26343B;
+    --rule-soft: #1E2A30;
+    --accent:    #4FB5AF;
+    --accent-ink:#8FD4CF;
+    --amber:     #D9A15C;
+    --amber-bg:  #251D12;
+    --code-bg:   #1C272D;
+    --shadow:    0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  code, kbd, .mono {
+    font-family: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+    font-size: .875em;
+  }
+
+  .wrap {
+    max-width: 1160px;
+    margin: 0 auto;
+    padding: 0 24px 96px;
+  }
+
+  /* ---------- Kopf ---------- */
+  header.masthead {
+    border-bottom: 1px solid var(--rule);
+    padding: 56px 0 28px;
+    margin-bottom: 40px;
+  }
+  .eyebrow {
+    font-family: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+    font-size: 12px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-size: clamp(30px, 4.2vw, 46px);
+    line-height: 1.1;
+    letter-spacing: -.02em;
+    margin: 0 0 16px;
+    text-wrap: balance;
+    font-weight: 650;
+  }
+  .lede {
+    font-size: 18px;
+    color: var(--ink-muted);
+    max-width: 62ch;
+    margin: 0;
+  }
+  .factbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 28px;
+    margin-top: 28px;
+    font-size: 13px;
+    color: var(--ink-muted);
+  }
+  .factbar b {
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  /* ---------- Layout ---------- */
+  .cols {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    gap: 56px;
+    align-items: start;
+  }
+  @media (max-width: 900px) {
+    .cols { grid-template-columns: minmax(0, 1fr); gap: 32px; }
+    nav.toc { position: static; }
+  }
+
+  nav.toc {
+    position: sticky;
+    top: 24px;
+    font-size: 14px;
+  }
+  nav.toc p {
+    font-family: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+    font-size: 11px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 12px;
+  }
+  nav.toc ol {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    counter-reset: toc;
+  }
+  nav.toc a {
+    color: var(--ink-muted);
+    text-decoration: none;
+    display: block;
+    padding-left: 26px;
+    position: relative;
+    line-height: 1.35;
+  }
+  nav.toc li { counter-increment: toc; }
+  nav.toc a::before {
+    content: counter(toc, decimal-leading-zero);
+    position: absolute;
+    left: 0;
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    color: var(--ink-faint);
+    font-variant-numeric: tabular-nums;
+  }
+  nav.toc a:hover { color: var(--accent); }
+  nav.toc a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+
+  /* ---------- Abschnitte ---------- */
+  section { margin-bottom: 64px; scroll-margin-top: 24px; }
+  section > h2 {
+    font-size: 24px;
+    letter-spacing: -.01em;
+    margin: 0 0 6px;
+    font-weight: 640;
+    text-wrap: balance;
+  }
+  .sec-note {
+    color: var(--ink-muted);
+    margin: 0 0 24px;
+    max-width: 68ch;
+  }
+  h3 {
+    font-size: 16px;
+    margin: 32px 0 10px;
+    font-weight: 650;
+    letter-spacing: -.005em;
+  }
+  p { max-width: 68ch; }
+  a { color: var(--accent); }
+
+  /* ---------- Tabellen ---------- */
+  .tablewrap { overflow-x: auto; margin: 16px 0; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 14px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  th, td {
+    text-align: left;
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--rule-soft);
+    vertical-align: top;
+  }
+  th {
+    background: var(--surface-2);
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td code { background: none; padding: 0; }
+
+  code {
+    background: var(--code-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+
+  pre {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    border-radius: 4px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-family: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    margin: 16px 0;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+
+  /* ---------- Hinweise ---------- */
+  .note {
+    background: var(--amber-bg);
+    border-left: 3px solid var(--amber);
+    padding: 12px 16px;
+    border-radius: 0 4px 4px 0;
+    margin: 18px 0;
+    font-size: 14.5px;
+  }
+  .note b { color: var(--amber); }
+  .note p { margin: 0; max-width: none; }
+
+  .kette {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 16px 18px;
+    margin: 16px 0;
+    font-family: ui-monospace, monospace;
+    font-size: 13px;
+    line-height: 1.9;
+    overflow-x: auto;
+  }
+  .kette .step { color: var(--accent); font-weight: 600; }
+  .kette .arrow { color: var(--ink-faint); }
+
+  /* ---------- Karten ---------- */
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 16px;
+    margin: 20px 0;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 18px 20px;
+    box-shadow: var(--shadow);
+  }
+  .card h4 {
+    margin: 0 0 4px;
+    font-size: 15px;
+    font-weight: 650;
+  }
+  .card .rep {
+    font-family: ui-monospace, monospace;
+    font-size: 12px;
+    color: var(--accent);
+    letter-spacing: .04em;
+  }
+  .card p { margin: 10px 0 0; font-size: 14px; color: var(--ink-muted); }
+
+  ul.tight { padding-left: 20px; max-width: 68ch; }
+  ul.tight li { margin-bottom: 6px; }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    margin-top: 24px;
+    padding-top: 20px;
+    font-size: 13px;
+    color: var(--ink-faint);
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="eyebrow">SAP S/4HANA · On-Premise · klassisches ABAP</p>
+    <h1>Documizer</h1>
+    <p class="lede">
+      Zwei ABAP-Reports, die aus dem laufenden System heraus Dokumentation erzeugen:
+      einmal aus dem Einführungsleitfaden samt Customizing, einmal aus der Paketstruktur
+      der Eigenentwicklung. Beide schreiben dasselbe XML-Format, das sich wieder einlesen lässt.
+    </p>
+    <div class="factbar">
+      <span><b>Stand</b> 13.08.2026</span>
+      <span><b>System</b> S4H · SAP_BASIS 758</span>
+      <span><b>Pakete</b> ZCONS_DOCUMIZER</span>
+      <span><b>Transport</b> S4HK901757</span>
+    </div>
+  </header>
+
+  <div class="cols">
+
+    <nav class="toc">
+      <p>Inhalt</p>
+      <ol>
+        <li><a href="#ueberblick">Überblick</a></li>
+        <li><a href="#installation">Installation</a></li>
+        <li><a href="#img">IMG-Report</a></li>
+        <li><a href="#projekt">Projektmodus</a></li>
+        <li><a href="#dev">Development-Report</a></li>
+        <li><a href="#ausgabe">Ausgabe &amp; Export</a></li>
+        <li><a href="#datenmodell">Datenmodell</a></li>
+        <li><a href="#betrieb">Betrieb</a></li>
+        <li><a href="#fallen">Fallen</a></li>
+        <li><a href="#offen">Offene Punkte</a></li>
+      </ol>
+    </nav>
+
+    <main>
+
+      <!-- 1 -->
+      <section id="ueberblick">
+        <h2>Überblick</h2>
+        <p class="sec-note">
+          Der Documizer besteht aus zwei eigenständigen Reports mit gemeinsamem Kern.
+          Jeder ist so gebaut, dass er per Zwischenablage in ein beliebiges System kopiert
+          und dort sofort ausgeführt werden kann — ohne Textelemente, ohne Zusatzobjekte.
+        </p>
+
+        <div class="cards">
+          <div class="card">
+            <span class="rep">ZDOCUMIZER_IMG</span>
+            <h4>Customizing-Dokumentation</h4>
+            <p>Liest einen Strukturbaum des Einführungsleitfadens, ordnet den Knoten die
+               IMG-Aktivitäten zu, übernimmt die SAP-Standarddokumentation und liest das
+               zugehörige Customizing bis auf Tabelleninhalte hinunter.</p>
+          </div>
+          <div class="card">
+            <span class="rep">ZDOCUMIZER_DEV</span>
+            <h4>Entwicklerdokumentation</h4>
+            <p>Ermittelt ab einem Startpaket rekursiv alle Unterpakete, listet die
+               Entwicklungsobjekte, ergänzt Kurztexte, Feldlisten, Klassenkomponenten,
+               Quelltext und Verwendungsnachweis.</p>
+          </div>
+        </div>
+
+        <h3>Gemeinsamer Kern</h3>
+        <p>
+          Beide Reports enthalten dasselbe Kapitelmodell, dieselben zwei Schnittstellen und
+          denselben XML-Renderer samt Parser. Die Verdopplung ist der bewusst gezahlte Preis
+          für die Transportierbarkeit per Zwischenablage. Im Zielbild liegen diese Klassen
+          global in <code>ZCONS_DOCUMIZER_CORE</code>.
+        </p>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Baustein</th><th>Aufgabe</th></tr></thead>
+            <tbody>
+              <tr><td><code>lcl_chapter</code></td><td>Kapitelknoten mit Titel, Verweis, Dokumentation, Objekten und Kindern</td></tr>
+              <tr><td><code>lcl_object</code></td><td>Datenobjekt am Kapitel: Struktur, Zeilen, Zählwerk, Vermerke</td></tr>
+              <tr><td><code>lcl_document</code></td><td>Klammer aus Metadaten und Kapitelbaum</td></tr>
+              <tr><td><code>lif_docu_collector</code></td><td>Sammelt — je Report eine eigene Implementierung</td></tr>
+              <tr><td><code>lif_docu_renderer</code></td><td>Gibt aus — XML und HTML aus demselben Modell</td></tr>
+              <tr><td><code>lcl_parser_xml</code></td><td>Liest das XML wieder in das Modell ein</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note">
+          <p><b>Roundtrip.</b> Jeder Lauf kann sich selbst prüfen: Das Modell wird serialisiert,
+          aus dem XML neu aufgebaut, erneut serialisiert und zeichenweise verglichen.
+          Was der Parser verliert, fällt sofort auf. Der Selbsttest schreibt nichts ins System —
+          er prüft den Importpfad, nicht das Zurückschreiben.</p>
+        </div>
+      </section>
+
+      <!-- 2 -->
+      <section id="installation">
+        <h2>Installation</h2>
+        <p class="sec-note">
+          Zwei Wege: im Zielsystem als Kopie anlegen, oder aus dem Transport einspielen.
+        </p>
+
+        <h3>Copy/Paste in SE38</h3>
+        <ul class="tight">
+          <li>SE38, Programmnamen vergeben, Typ <em>Ausführbares Programm</em>, Titel eintragen.</li>
+          <li>Quelltext aus der Datei einfügen, sichern, aktivieren.</li>
+          <li>Fertig — sämtliche Feldbeschriftungen stehen im Quelltext und kommen mit.</li>
+        </ul>
+        <div class="note">
+          <p><b>Der Programmtitel</b> ist das einzige, was von Hand gesetzt werden muss.
+          Er liegt im Textpool und lässt sich nicht aus dem Quelltext füllen:
+          SE38 → <em>Springen → Attribute</em>.</p>
+        </div>
+
+        <h3>Paketstruktur im Quellsystem</h3>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Paket</th><th>Inhalt</th></tr></thead>
+            <tbody>
+              <tr><td><code>ZCONS_DOCUMIZER</code></td><td>Wurzel, Transportschicht SAP, Softwarekomponente HOME</td></tr>
+              <tr><td><code>ZCONS_DOCUMIZER_CORE</code></td><td>Rahmenwerk, Kapitelmodell, Export</td></tr>
+              <tr><td><code>ZCONS_DOCUMIZER_IMG</code></td><td>IMG- und Customizing-Collector</td></tr>
+              <tr><td><code>ZCONS_DOCUMIZER_DEV</code></td><td>Paket- und Entwicklungs-Collector</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 3 -->
+      <section id="img">
+        <h2>IMG-Report</h2>
+        <p class="sec-note">
+          <span class="mono">ZDOCUMIZER_IMG</span> — Einstieg über eine Struktur-GUID.
+          Ohne GUID läuft der Report im Suchmodus und listet passende Wurzelknoten auf.
+        </p>
+
+        <h3>Auswahl der Struktur</h3>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Feld</th><th>Bedeutung</th></tr></thead>
+            <tbody>
+              <tr><td>Struktur-ID (GUID)</td><td>Einstiegsstruktur. F4 zeigt Wurzelknoten mit Text, Knotenzahl, Strukturtyp, Softwarekomponente und Änderungsdatum.</td></tr>
+              <tr><td>oder Suchbegriff Wurzel</td><td>Ohne GUID: Suchmodus. Wirkt zusätzlich als Filter für die F4-Hilfe.</td></tr>
+              <tr><td>Projekt (Status/Memo)</td><td>Überlagert den Baum mit Status, Fortschritt und Memo aus einem IMG-Projekt.</td></tr>
+              <tr><td>nur Projektknoten</td><td>Beschneidet auf die im Projekt bearbeiteten Knoten. Siehe <a href="#projekt">Projektmodus</a>.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note">
+          <p><b>IMG-Strukturen haben keinen sprechenden Schlüssel.</b> <code>TTREE-EXT_KEY</code>
+          ist bei allen leer, der Zugriff geht ausschließlich über die GUID. Deshalb die
+          eigene Wertehilfe — die DDIC-Suchhilfe liefert 500 nackte GUIDs ohne Bezeichnung.</p>
+        </div>
+
+        <h3>Umfang</h3>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Feld</th><th class="num">Vorbelegung</th><th>Wirkung</th></tr></thead>
+            <tbody>
+              <tr><td>Sprache</td><td class="num">Anmeldesprache</td><td>Knotentexte und Dokumentation</td></tr>
+              <tr><td>Max. Tiefe</td><td class="num">0</td><td>0 = alle Ebenen</td></tr>
+              <tr><td>Max. Kapitel</td><td class="num">300</td><td>Harte Grenze; im Projektmodus ausgesetzt</td></tr>
+              <tr><td>Unterstrukturen auflösen</td><td class="num">an</td><td><b>Entscheidend.</b> Ohne dies endet der Lauf nach der ersten Ebene</td></tr>
+              <tr><td>Standarddokumentation</td><td class="num">an</td><td><code>DOCU_GET</code> je Aktivität — der teuerste Anteil</td></tr>
+              <tr><td>Objektzuordnung</td><td class="num">an</td><td>Customizing-Objekte aus <code>CUS_ACTOBJ</code></td></tr>
+              <tr><td>Customizing-Inhalte lesen</td><td class="num">an</td><td>Feldliste und Tabelleninhalte</td></tr>
+              <tr><td>nur kundeneigene Einträge</td><td class="num">an</td><td>Siehe unten</td></tr>
+              <tr><td>Max. Zeilen</td><td class="num">500</td><td>Je Tabelle; 0 = alle</td></tr>
+              <tr><td>Transport-Historie</td><td class="num">aus</td><td>Aufträge zur Tabelle aus <code>E071K</code>/<code>E070</code>/<code>E07T</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Kundeneigene Einträge</h3>
+        <p>
+          Zwei Verfahren wirken gleichzeitig, per ODER verknüpft: der <b>Namensraum</b> des
+          ersten fachlichen Schlüsselfeldes (Y, Z, /) und das <b>Vorkommen in Transportaufträgen</b>
+          zu dieser Tabelle. Der Namensraum findet auch nie transportiertes Customizing,
+          der Transportweg auch Schlüssel außerhalb des Kundennamensraums.
+        </p>
+        <p>Welches Verfahren gegriffen hat, steht als Attribut am Objekt:</p>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>filter</th><th>Bedeutung</th></tr></thead>
+            <tbody>
+              <tr><td><code>NAMENSRAUM+TRANSPORT</code></td><td>beide Verfahren aktiv</td></tr>
+              <tr><td><code>NAMENSRAUM</code></td><td>keine Transporteinträge gefunden</td></tr>
+              <tr><td><code>ALLE</code></td><td>Kennzeichen aus, oder Filter nicht anwendbar</td></tr>
+              <tr><td><code>GESPERRT</code></td><td>keine Leseberechtigung (<code>S_TABU_NAM</code>)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Das steht bewusst im Dokument und nicht nur im Protokoll — sonst lässt sich später
+          nicht mehr sagen, warum eine Tabelle mit drei Zeilen erscheint.
+        </p>
+
+        <h3>Objektauflösung</h3>
+        <p>
+          Views und View-Cluster werden grundsätzlich auf ihre Basistabellen zurückgeführt:
+          <code>DD26S</code>, ersatzweise <code>DD25L-ROOTTAB</code>, Cluster über <code>VCLSTRUC</code>.
+          Damit entfällt die Unterscheidung zwischen Datenbank- und Pflegeview — aus einem
+          Pflegeview lässt sich nicht per SELECT lesen, aus der Basistabelle immer.
+        </p>
+      </section>
+
+      <!-- 4 -->
+      <section id="projekt">
+        <h2>Projektmodus</h2>
+        <p class="sec-note">
+          Ein IMG-Projekt trägt je Aktivität Status, Fortschritt und ein Memo. Der Report
+          überlagert den Strukturbaum damit und kann auf die bearbeiteten Knoten beschneiden.
+        </p>
+
+        <div class="kette">
+          <span class="step">TNODEIMG</span> Knoten <span class="arrow">→</span>
+          <span class="step">CUSSTAT</span> Projekt + Knoten + Status-GUID <span class="arrow">→</span>
+          <span class="step">TSTAHTPR</span> Memo in COMM1…COMM5
+        </div>
+
+        <p>
+          Der Zugriff läuft über die Knoten-GUID und ist damit unabhängig davon, aus welcher
+          Struktur der Baum stammt. Die fünf Kommentarfelder à 50 Zeichen werden wieder zu
+          einem Text zusammengeführt.
+        </p>
+
+        <h3>Beschneiden</h3>
+        <p>
+          Mit <em>nur Projektknoten</em> bleiben Gliederungskapitel erhalten, solange unter
+          ihnen noch ein Projektknoten hängt — sonst zerfiele die Hierarchie und die
+          Kapitelnummerierung wäre wertlos. Die Nummern behalten ihre Position im
+          ungeschnittenen Baum; Lücken zeigen also an, dass etwas ausgelassen wurde.
+        </p>
+
+        <div class="note">
+          <p><b>Der Einstieg wird abgeleitet.</b> Bei <em>nur Projektknoten</em> ignoriert der
+          Report die Struktur-ID und liest nur die Strukturen, in denen die Projektknoten
+          tatsächlich liegen. Unterstrukturen werden dabei nicht aufgelöst — unter den
+          Projektknoten ist auch die Projektwurzel, und deren Struktur ist der komplette
+          Leitfaden. Der Unterschied in der Praxis: <b>0,5 Sekunden statt Abbruch</b>.</p>
+        </div>
+
+        <h3>Ausgabe steuern</h3>
+        <p>
+          <em>Projektstatus ausgeben</em> und <em>Projekt-Memo ausgeben</em> sind getrennt
+          schaltbar. Die Projektzuordnung selbst bleibt in beiden Fällen gesetzt — sonst
+          fände das Beschneiden nichts mehr.
+        </p>
+      </section>
+
+      <!-- 5 -->
+      <section id="dev">
+        <h2>Development-Report</h2>
+        <p class="sec-note">
+          <span class="mono">ZDOCUMIZER_DEV</span> — Eingabe ist ein Startpaket.
+          Kapitelaufbau: Paket → Gruppe je Objekttyp → Objekt.
+        </p>
+
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Feld</th><th class="num">Vorbelegung</th><th>Wirkung</th></tr></thead>
+            <tbody>
+              <tr><td>Paket</td><td class="num">—</td><td>Startpaket, Pflichtfeld</td></tr>
+              <tr><td>Unterpakete rekursiv</td><td class="num">an</td><td><code>GET_ALL_SUBPACKAGES</code></td></tr>
+              <tr><td>lokale Pakete einbeziehen</td><td class="num">aus</td><td>bezieht <code>$</code>-Pakete mit ein</td></tr>
+              <tr><td>Objekttyp / Objektname</td><td class="num">leer</td><td>Select-Options als Filter</td></tr>
+              <tr><td>Max. Objekte</td><td class="num">2000</td><td>0 = alle</td></tr>
+              <tr><td>Objektdokumentation</td><td class="num">an</td><td><code>DOCU_GET</code> für PROG, TRAN, DTEL</td></tr>
+              <tr><td>Details</td><td class="num">an</td><td>Feldlisten, Klassenkomponenten, CDS-Abhängigkeiten</td></tr>
+              <tr><td>Quelltext ausgeben</td><td class="num">aus</td><td>siehe unten</td></tr>
+              <tr><td>Max. Zeilen je Objekt</td><td class="num">300</td><td>Kürzungshinweis steht im Quelltext selbst</td></tr>
+              <tr><td>Verwendungsnachweis</td><td class="num">aus</td><td><code>WBCROSSGT</code> und <code>CROSS</code></td></tr>
+              <tr><td>Max. Verwendungen je Objekt</td><td class="num">50</td><td>eigene Grenze, getrennt von der Objektgrenze</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Quelltext je Objekttyp</h3>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Typ</th><th>Weg</th></tr></thead>
+            <tbody>
+              <tr><td><code>PROG</code></td><td><code>READ REPORT</code></td></tr>
+              <tr><td><code>FUGR</code></td><td>Rahmenprogramm <code>SAPL&lt;Gruppe&gt;</code> plus alle Includes über <code>RS_GET_ALL_INCLUDES</code></td></tr>
+              <tr><td><code>CLAS</code>, <code>INTF</code></td><td>Klassenpool (Name auf 30 Stellen mit <code>=</code> aufgefüllt, dann <code>CP</code>), Includes ebenso</td></tr>
+              <tr><td><code>DDLS</code></td><td><code>DDDDLSRC-SOURCE</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Bei mehreren Includes trennt eine Kommentarzeile mit dem Programmnamen die Abschnitte.
+        </p>
+
+        <h3>Kurztexte</h3>
+        <p>
+          Typabhängig aus <code>TRDIRT</code>, <code>SEOCLASSTX</code>, <code>DD01T</code>,
+          <code>DD02T</code>, <code>DD04T</code>, <code>TSTCT</code>, <code>TLIBT</code>,
+          <code>TDEVCT</code>. Fehlt der Text in der gewählten Sprache, fällt der Report auf
+          Englisch zurück. Objekte ohne Text in irgendeiner Sprache — etwa generierte
+          SICF-Knoten — bleiben leer; das ist der Zustand im System und wird nicht kaschiert.
+        </p>
+      </section>
+
+      <!-- 6 -->
+      <section id="ausgabe">
+        <h2>Ausgabe &amp; Export</h2>
+
+        <h3>XML</h3>
+        <p>
+          Führendes Format, erzeugt über sXML statt über eine Simple Transformation — eine ST
+          ist ein eigenes Repository-Objekt und ließe sich nicht in einen kopierbaren Report
+          packen. Das Format trägt eine Version, damit spätere Änderungen sauber behandelbar
+          bleiben.
+        </p>
+<pre><code>&lt;documizer version="1.0" type="IMG"&gt;
+ &lt;meta&gt;
+  &lt;system&gt;S4H&lt;/system&gt;
+  &lt;client&gt;100&lt;/client&gt;
+  &lt;truncated&gt;true&lt;/truncated&gt;
+  &lt;node_limit&gt;30&lt;/node_limit&gt;
+  &lt;node_total&gt;8349&lt;/node_total&gt;
+ &lt;/meta&gt;
+ &lt;chapters&gt;
+  &lt;chapter id="1.2.1" level="3" type="ACTIVITY"&gt;
+   &lt;title&gt;Partnerrollen definieren&lt;/title&gt;
+   &lt;reference activity="/SAPSLL/PARTNERROLES" docu_id="…" tcode="SM30"/&gt;
+   &lt;project name="DOKUMIZER" status="03" done="100"&gt;Memo…&lt;/project&gt;
+   &lt;documentation format="ITF"&gt;…&lt;/documentation&gt;
+   &lt;object type="V" name="T856" filter="NAMENSRAUM+TRANSPORT"&gt;
+    &lt;structure&gt;&lt;field name="MANDT" rollname="MANDT" key="X"/&gt;…&lt;/structure&gt;
+    &lt;data row_count="19" truncated="true"&gt;…&lt;/data&gt;
+   &lt;/object&gt;
+  &lt;/chapter&gt;
+ &lt;/chapters&gt;
+&lt;/documizer&gt;</code></pre>
+
+        <div class="note">
+          <p><b>Vollständigkeit ist immer nachvollziehbar.</b> <code>row_count</code> nennt die
+          Gesamtzahl im gewählten Filter, <code>truncated</code> die Kürzung, <code>node_total</code>
+          gegen <code>node_limit</code> den Anteil des Baums. Ein Dokument darf nie unbemerkt
+          unvollständig sein.</p>
+        </div>
+
+        <h3>HTML</h3>
+        <p>
+          Eine in sich geschlossene Datei mit eingebettetem CSS, ohne JavaScript und ohne
+          externe Abhängigkeiten, mit Inhaltsverzeichnis über die obersten beiden Ebenen.
+          Erzeugt aus demselben Kapitelmodell wie das XML — nicht aus dem XML, damit es
+          keinen zweiten Parserpfad gibt, der auseinanderlaufen kann.
+        </p>
+        <p>
+          Die ITF-Auszeichnungen der SAP-Dokumentation werden dabei aufgelöst:
+          Abschnittsmarken wie <code>&amp;USE&amp;</code> werden zu Zwischenüberschriften
+          (<em>Verwendung</em>, <em>Voraussetzungen</em>, <em>Standardeinstellungen</em>,
+          <em>Vorgehen</em>, <em>Beispiel</em>), Hervorhebungen und Querverweise zu Fettdruck.
+          Das XML behält den unveränderten ITF-Text — dort zählt Verlustfreiheit,
+          die Aufbereitung gehört in die Anzeige.
+        </p>
+
+        <h3>Ablage</h3>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Ziel</th><th>Verfügbar</th><th>Hinweis</th></tr></thead>
+            <tbody>
+              <tr><td>Download auf PC</td><td>nur im Dialog</td><td>Frontend-Dienste gibt es im Hintergrund nicht</td></tr>
+              <tr><td>Ablage Appl.-Server</td><td>Dialog und Hintergrund</td><td>Prüfung mit AL11</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Beide Wege schreiben <b>binär nach vorheriger Wandlung in UTF-8</b>. Ein Textdownload
+          würde die Zeichen in die Frontend-Codepage umsetzen, und genau dort gehen Umlaute
+          verloren. Der Dateiname entsteht aus System, Datum und Uhrzeit, damit
+          aufeinanderfolgende Läufe sich nicht überschreiben.
+        </p>
+      </section>
+
+      <!-- 7 -->
+      <section id="datenmodell">
+        <h2>Datenmodell</h2>
+        <p class="sec-note">
+          Die Kette vom Kapitelknoten bis zum Tabelleninhalt — an einem realen Beispiel
+          durchgemessen und der eigentliche Ertrag der Vorarbeit.
+        </p>
+
+        <div class="kette">
+          <span class="step">TNODEIMG</span> Knoten, Hierarchie über PARENT_ID/BROTHER_ID<br>
+          <span class="arrow">└─</span> <span class="step">TNODEIMGR</span> REF_TYPE = <code>COBJ</code>, REF_OBJECT = IMG-Aktivität<br>
+          <span class="arrow">&nbsp;&nbsp;&nbsp;└─</span> <span class="step">CUS_IMGACH</span> ACTIVITY, DOCU_ID, TCODE<br>
+          <span class="arrow">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├─</span> <span class="step">DOKHL</span> Dokuklasse <code>HY</code> → <code>DOCU_GET</code><br>
+          <span class="arrow">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├─</span> <span class="step">CUS_ACTOBJ</span> Objekttyp und -name → Basistabelle<br>
+          <span class="arrow">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└─</span> <span class="step">CUS_IMGACT</span> sprachabhängiger Titel
+        </div>
+
+        <div class="note">
+          <p><b>Die Dokumentenklasse ist <code>HY</code>, nicht <code>SIMG</code>.</b>
+          <code>DOKHL-ID</code> ist nur zwei Zeichen lang — <code>SIMG</code> ist der Präfix des
+          Dokumentationsobjekts, nicht die Klasse. Der Objektname lautet
+          <code>'SIMG' + ACTIVITY</code>. Mit der falschen Klasse liefert <code>DOCU_GET</code>
+          durchgehend leere Texte, ohne Fehlermeldung.</p>
+        </div>
+
+        <h3>Lese-APIs statt Direktzugriff</h3>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Baustein</th><th>Zweck</th></tr></thead>
+            <tbody>
+              <tr><td><code>STREE_HIERARCHY_READ</code></td><td>Eine Struktur mit Texten und Knotenverweisen</td></tr>
+              <tr><td><code>STREE_HIERARCHY_READ_ALL_SUBS</code></td><td>Dasselbe inklusive aller Unterstrukturen</td></tr>
+              <tr><td><code>S_CUS_IMG_ACTIVITY_READ</code></td><td>Kopfdaten einer IMG-Aktivität</td></tr>
+              <tr><td><code>DOCU_GET</code></td><td>Dokumentation, Klasse <code>HY</code> bzw. <code>RE</code>/<code>TR</code>/<code>DE</code></td></tr>
+              <tr><td><code>CL_PAK_PACKAGE_QUERIES</code></td><td>Pakete rekursiv und Objektlisten</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note">
+          <p><b>Die Rückgabestruktur <code>HIER_IFACE</code> enthält keine IMG-Aktivität.</b>
+          Sie führt ausschließlich Strukturinformationen — GUIDs, Ebene, Gültigkeit, Flags.
+          Die fachliche Zuordnung kommt erst über <code>TNODEIMGR</code>. Wer das nicht weiß,
+          sucht dort vergeblich.</p>
+        </div>
+      </section>
+
+      <!-- 8 -->
+      <section id="betrieb">
+        <h2>Betrieb</h2>
+
+        <h3>Laufzeit</h3>
+        <p>
+          Die teuersten Anteile sind <code>DOCU_GET</code> je Aktivität beziehungsweise je
+          Objekt und der Verwendungsnachweis mit zwei Abfragen pro Objekt. Kurztexte kommen
+          aus gepufferten Texttabellen und fallen nicht ins Gewicht.
+        </p>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Lauf</th><th class="num">Umfang</th><th class="num">Dauer</th></tr></thead>
+            <tbody>
+              <tr><td>IMG, Projektmodus</td><td class="num">351 Kapitel</td><td class="num">0,48 s</td></tr>
+              <tr><td>IMG, Teilstruktur mit Doku</td><td class="num">12 Kapitel</td><td class="num">wenige s</td></tr>
+              <tr><td>DEV, Pakethierarchie</td><td class="num">10 Pakete / 352 Objekte</td><td class="num">0,23 s</td></tr>
+              <tr><td>DEV, CDS mit Quelltext</td><td class="num">4 Objekte</td><td class="num">0,08 s</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Für Vollläufe gilt: Mengengrenzen auf 0, Ausführung im Hintergrund, Ablage auf dem
+          Applikationsserver. Der Referenz-IMG mit aufgelösten Unterstrukturen umfasst über
+          6.000 Kapitel.
+        </p>
+
+        <h3>Berechtigungen</h3>
+        <p>
+          Der IMG-Report prüft vor jedem Tabellenzugriff <code>S_TABU_NAM</code>. Fehlt die
+          Berechtigung, erscheint das Objekt mit Vermerk im Dokument statt stillschweigend
+          leer zu bleiben. Ein Dokumentationswerkzeug darf keine Leseberechtigungen umgehen.
+        </p>
+      </section>
+
+      <!-- 9 -->
+      <section id="fallen">
+        <h2>Fallen</h2>
+        <p class="sec-note">
+          Fehler, die beim Bau aufgetreten sind und beim Weiterentwickeln erneut auftreten
+          können. Alle sind behoben — sie stehen hier, weil sie sich nicht aus der
+          Dokumentation ableiten lassen.
+        </p>
+
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Symptom</th><th>Ursache</th></tr></thead>
+            <tbody>
+              <tr>
+                <td>Abschnittsmarken <code>&amp;USE&amp;</code> blieben stehen</td>
+                <td><code>zeile CS space</code> ist <b>immer wahr</b> — CS ignoriert nachgestellte Leerzeichen im Suchbegriff, ein reines Leerzeichen wird zur leeren Zeichenkette. Prüfung über regulären Ausdruck.</td>
+              </tr>
+              <tr>
+                <td>Kurzdump <code>PACKAGE_HAS_NO_TDEVC_RECORD</code></td>
+                <td><code>CL_PAK_PACKAGE_QUERIES</code> arbeitet mit klassischen Ausnahmen. <code>TRY…CATCH</code> fängt die nicht — sie müssen im Aufruf über <code>EXCEPTIONS</code> angegeben werden.</td>
+              </tr>
+              <tr>
+                <td>„dieMengenbegrenzung" ohne Leerzeichen</td>
+                <td>ABAP schneidet nachgestellte Leerzeichen in Textfeldliteralen ab. Trennzeichen gehören an den Anfang des Folgeliterals.</td>
+              </tr>
+              <tr>
+                <td>Selektionsbild zeigt technische Feldnamen</td>
+                <td>Textelemente sind ein eigener Programmbestandteil und kommen beim Kopieren nicht mit. Lösung: COMMENT-Felder, in <code>INITIALIZATION</code> gefüllt. Bei Select-Options greift das nicht — dort <code>%_&lt;name&gt;_%_app_%-text</code> setzen.</td>
+              </tr>
+              <tr>
+                <td>Doppeldeklaration bei COMMENT-Feldern</td>
+                <td>Die Felder von <code>SELECTION-SCREEN COMMENT</code> und <code>FRAME TITLE</code> werden implizit angelegt und dürfen nicht zusätzlich per <code>DATA</code> deklariert werden. Namen sind auf acht Zeichen begrenzt.</td>
+              </tr>
+              <tr>
+                <td>Projektmodus lief endlos</td>
+                <td>Unter den Projektknoten ist die Projektwurzel, deren Struktur der komplette Leitfaden ist. Mit aufgelösten Unterstrukturen lief der Report darüber. Im Projektmodus wird die Auflösung abgeschaltet.</td>
+              </tr>
+              <tr>
+                <td>CDS-Quelltext mit <code>\r</code> am Zeilenende</td>
+                <td><code>DDDDLSRC-SOURCE</code> ist mit CRLF abgelegt; der Wagenrücklauf muss entfernt werden.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- 10 -->
+      <section id="offen">
+        <h2>Offene Punkte</h2>
+
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Thema</th><th>Stand</th></tr></thead>
+            <tbody>
+              <tr><td>Markdown als drittes Format</td><td>nicht begonnen; greift auf denselben ITF-Rohtext zu wie HTML</td></tr>
+              <tr><td>DOCX</td><td>bewusst zurückgestellt — ZIP-Container mit OOXML, deutlich mehr Aufwand als HTML. Für „im Word öffnen" reicht oft HTML</td></tr>
+              <tr><td>Anwendungsprotokoll (BAL)</td><td>offen: gelesene Knoten, übersprungene wegen Berechtigung, abgeschnittene Tabellen, Laufzeit</td></tr>
+              <tr><td><code>S_DEVELOP</code>-Prüfung im DEV-Report</td><td>offen; der IMG-Report prüft bereits <code>S_TABU_NAM</code></td></tr>
+              <tr><td>Reimport ins System</td><td>Phase 2 über BC-Sets und abapGit — der Documizer schreibt bewusst nicht selbst</td></tr>
+              <tr><td>Verwendungsnachweis: Include → Objekt</td><td>Fundstellen sind Includes, keine Objektnamen. Auflösung kostet eine weitere Abfrage je Fundstelle</td></tr>
+              <tr><td>Tabs Mitarbeiter und Stichwörter</td><td>liegen in Nachbartabellen von <code>CUSSTAT</code>, mit demselben Muster anbindbar</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note">
+          <p><b>Zur Bereichsauswahl.</b> Im System liegen etliche verwaiste IMG-Strukturen —
+          im Test fanden sich drei gleichnamige „Logistik"-Strukturen aus 4.6C, 2014 und 2023.
+          Ein Einstieg über eine frei gewählte Struktur ist deshalb riskant. Sauberer wäre,
+          den Einstieg an den aktiven Referenz-IMG oder an ein Projekt-IMG zu binden.</p>
+        </div>
+      </section>
+
+      <footer>
+        Documizer · Reports <span class="mono">ZDOCUMIZER_IMG</span> und
+        <span class="mono">ZDOCUMIZER_DEV</span> · verifiziert gegen S4H, SAP_BASIS 758 ·
+        Quelltext und Spezifikation im Repository <span class="mono">documizer</span>.
+      </footer>
+
+    </main>
+  </div>
+</div>

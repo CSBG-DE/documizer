@@ -737,6 +737,13 @@ INITIALIZATION.
   gv_tmaxs = 'Max. Zeilen je Objekt'.
   gv_tuse  = 'Verwendungsnachweis'.
   gv_tmaxu = 'Max. Verwendungen je Objekt'.
+
+* Beschriftung der Select-Options. Bei ihnen greift der COMMENT-Trick nicht,
+* ihre Bezeichnung kommt aus dem Textpool. Ueber die generierten Felder
+* %_<name>_%_app_%-text laesst sie sich zur Laufzeit setzen und bleibt damit
+* wie alle uebrigen Texte im Quelltext.
+  %_s_objtyp_%_app_%-text = 'Objekttyp'.
+  %_s_objnam_%_app_%-text = 'Objektname'.
   gv_txml  = 'XML erzeugen/ausgeben'.
   gv_thtml = 'HTML erzeugen/anzeigen'.
   gv_trt   = 'Roundtrip prüfen'.

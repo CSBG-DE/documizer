@@ -1,22 +1,22 @@
 REPORT zdocumizer_dev.
 
 ************************************************************************
-* Documizer - Schritt 5: ABAP-Paket-/Entwicklerdokumentation
+* Documizer - step 5: ABAP package / developer documentation
 *
-* Zweiter Pfeiler neben dem IMG-Report. Eingabe ist ein Startpaket, von
-* dort werden alle Unterpakete rekursiv ermittelt, die enthaltenen
-* Entwicklungsobjekte gelesen und kapitelweise aufbereitet.
+* The second pillar next to the IMG report. The input is a start package;
+* from there all subpackages are determined recursively, the development
+* objects they contain are read and arranged into chapters.
 *
-* Kapitelmodell, Schnittstellen, XML-Renderer und -Parser sind mit
-* ZDOCUMIZER_IMG identisch - der Preis dafuer, dass jeder Report per
-* Copy/Paste in SE38 lauffaehig bleibt. Im Zielbild liegen sie als globale
-* Klassen in ZCONS_DOCUMIZER_CORE.
+* Chapter model, interfaces, XML renderer and parser are identical to
+* ZDOCUMIZER_IMG - the price for keeping every report runnable after a
+* copy/paste into SE38. In the target design they live as global classes
+* in ZCONS_DOCUMIZER_CORE.
 *
-* Verwendete Standardschnittstellen:
-*   CL_PAK_PACKAGE_QUERIES=>GET_ALL_SUBPACKAGES        Pakete rekursiv
-*   CL_PAK_PACKAGE_QUERIES=>GET_DEV_OBJECT_TADIR_KEYS  Objekte je Paket
-*   DOCU_GET                                           Objektdokumentation
-*   DD03L, SEOCOMPO                                    Detailinformationen
+* Standard interfaces used:
+*   CL_PAK_PACKAGE_QUERIES=>GET_ALL_SUBPACKAGES        packages recursively
+*   CL_PAK_PACKAGE_QUERIES=>GET_DEV_OBJECT_TADIR_KEYS  objects per package
+*   DOCU_GET                                           object documentation
+*   DD03L, SEOCOMPO                                    detail information
 ************************************************************************
 
 CLASS lcl_chapter  DEFINITION DEFERRED.
@@ -24,7 +24,7 @@ CLASS lcl_object   DEFINITION DEFERRED.
 CLASS lcl_document DEFINITION DEFERRED.
 
 *----------------------------------------------------------------------*
-* Typen des Modells
+* Model types
 *----------------------------------------------------------------------*
 TYPES: BEGIN OF ty_field,
          name     TYPE string,
@@ -45,9 +45,9 @@ TYPES: BEGIN OF ty_row,
 TYPES ty_rows TYPE STANDARD TABLE OF ty_row WITH EMPTY KEY.
 
 TYPES: BEGIN OF ty_reference,
-         activity TYPE string,   " hier: Objekttyp
-         docu_id  TYPE string,   " hier: Autor
-         tcode    TYPE string,   " hier: Paket
+         activity TYPE string,   " here: object type
+         docu_id  TYPE string,   " here: author
+         tcode    TYPE string,   " here: package
        END OF ty_reference.
 
 TYPES: BEGIN OF ty_meta,
@@ -286,7 +286,7 @@ CLASS lcl_document IMPLEMENTATION.
 ENDCLASS.
 
 *----------------------------------------------------------------------*
-* Schnittstellen
+* Interfaces
 *----------------------------------------------------------------------*
 INTERFACE lif_docu_collector.
   METHODS collect RETURNING VALUE(ro_document) TYPE REF TO lcl_document.
@@ -645,15 +645,15 @@ CLASS lcl_parser_xml IMPLEMENTATION.
 ENDCLASS.
 
 *----------------------------------------------------------------------*
-* Selektionsbild
+* Selection screen
 *
-* Beschriftungen im Quelltext statt im Textpool, damit der Report beim
-* Kopieren in ein anderes System lesbar bleibt. Die Felder von COMMENT
-* und FRAME TITLE werden implizit angelegt, ihre Namen sind auf acht
-* Zeichen begrenzt.
+* Labels in the source instead of the text pool so that the report stays
+* readable when it is copied into another system. The fields of COMMENT
+* and FRAME TITLE are created implicitly, their names are limited to
+* eight characters.
 *----------------------------------------------------------------------*
-* Bezugsfelder fuer die Select-Options. Sie erscheinen nicht auf dem Bild,
-* SELECT-OPTIONS braucht aber ein deklariertes Feld als Typvorlage.
+* Reference fields for the select-options. They do not appear on the
+* screen, but SELECT-OPTIONS needs a declared field as a type template.
 DATA gv_dummy_typ TYPE tadir-object.
 DATA gv_dummy_nam TYPE tadir-obj_name.
 
@@ -1086,7 +1086,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD build_title.
-    " Ohne Kurztext bleibt sonst ein Trennstrich am Zeilenende stehen.
+    " Without a short text a dangling dash would be left at the end.
     DATA lv_text TYPE string.
     lv_text = iv_text.
     CONDENSE lv_text.
@@ -1119,9 +1119,9 @@ CLASS lcl_collector_dev IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD read_short_text.
-    " Viele Objekte tragen keinen Text in der gewaehlten Sprache. Statt eine
-    " leere Zeile auszugeben, wird auf Englisch zurueckgefallen - das ist bei
-    " SAP-Standard und oft auch bei Kundenobjekten die Pflegesprache.
+    " Many objects carry no text in the chosen language. Instead of writing
+    " an empty line the code falls back to English - that is the maintenance
+    " language for SAP standard and often for customer objects as well.
     rv_text = read_text_lang( iv_type  = iv_type
                               iv_name  = iv_name
                               iv_langu = mv_langu ).
@@ -1191,8 +1191,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    " Ist in der Ausgabesprache nichts gepflegt, wird die Ersatzsprache
-    " versucht. Die gelieferte Sprache steht anschliessend am Kapitel.
+    " If nothing is maintained in the output language, the fallback language
+    " is tried. The language that delivered is then noted on the chapter.
     IF mv_falb = abap_true AND mv_flang IS NOT INITIAL AND mv_flang <> mv_langu.
       rv_text = read_docu_lang( iv_type  = iv_type
                                 iv_name  = iv_name
@@ -1210,7 +1210,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     DATA lv_id   TYPE dokhl-id.
     DATA lv_obj  TYPE dokhl-object.
 
-    " Nur die Typen, fuer die es eine klassische Objektdokumentation gibt.
+    " Only the types that have a classic object documentation.
     CASE iv_type.
       WHEN 'PROG'. lv_id = 'RE'.
       WHEN 'TRAN'. lv_id = 'TR'.
@@ -1279,7 +1279,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         append_report( EXPORTING iv_prog = lv_prog CHANGING ct_source = lt_src ).
 
       WHEN 'FUGR'.
-        " Rahmenprogramm der Funktionsgruppe und alle Includes
+        " Frame program of the function group and all its includes
         lv_prog = |SAPL{ iv_name }|.
         CALL FUNCTION 'RS_GET_ALL_INCLUDES'
           EXPORTING
@@ -1297,8 +1297,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         ENDLOOP.
 
       WHEN 'CLAS' OR 'INTF'.
-        " Der Name des Klassenpools ist der auf 30 Stellen mit
-        " Gleichheitszeichen aufgefuellte Objektname plus CP.
+        " The name of the class pool is the object name padded to 30
+        " characters with equals signs, plus CP.
         lv_prog = iv_name.
         lv_i = strlen( iv_name ).
         WHILE lv_i < 30.
@@ -1328,8 +1328,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
           WHERE ddlname = @lv_ddl AND as4local = 'A'
           INTO @DATA(lv_cds).
         IF sy-subrc = 0 AND lv_cds IS NOT INITIAL.
-          " Der CDS-Quelltext ist mit CRLF abgelegt; ohne Entfernen des
-          " Wagenruecklaufs bleibt er am Zeilenende stehen.
+          " The CDS source is stored with CRLF; without removing the
+          " carriage return it would stay at the end of every line.
           REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf
                   IN lv_cds WITH cl_abap_char_utilities=>newline.
           SPLIT lv_cds AT cl_abap_char_utilities=>newline INTO TABLE lt_src.
@@ -1442,8 +1442,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD pack_reason.
-    " Die Ausnahmen der Paket-API in Klartext. Eine nackte Nummer im
-    " Dokument zwingt den Leser sonst in die Funktionsbibliothek.
+    " The exceptions of the package API in plain text. A bare number in the
+    " document would otherwise send the reader into the function library.
     CASE iv_subrc.
       WHEN 1. rv_reason = 'kein Paket angegeben'.
       WHEN 2. rv_reason = 'Paket ohne Katalogeintrag in TDEVC'.
@@ -1457,14 +1457,14 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
   METHOD add_usages.
 
-    " Der Verwendungsnachweis kommt aus den Querverweistabellen der
-    " Workbench. WBCROSSGT fuehrt die Verwendung globaler Typen - dazu
-    " zaehlen Klassen, Interfaces und DDIC-Typen -, CROSS die uebrigen
-    " Verweise auf Programmebene. Beides wird zusammengefuehrt.
+    " The where-used list comes from the cross-reference tables of the
+    " workbench. WBCROSSGT records the use of global types - classes,
+    " interfaces and DDIC types among them -, CROSS the remaining
+    " references on program level. Both are merged.
     "
-    " Der Nachweis kann sehr gross werden: eine viel benutzte Tabelle hat
-    " leicht Tausende Verwender. Deshalb die eigene Mengengrenze, und der
-    " Hinweis steht im Dokument, wenn sie greift.
+    " The list can grow very large: a heavily used table easily has
+    " thousands of consumers. Hence the separate limit, and a note in the
+    " document whenever it takes effect.
 
     TYPES: BEGIN OF ty_use,
              where TYPE string,
@@ -1576,7 +1576,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         DATA(lo_o2) = NEW lcl_object( iv_type = CONV string( iv_type )
                                       iv_name = CONV string( iv_name ) ).
         lo_o2->set_note( 'Komponenten' ).
-        " Fortsetzung siehe unten
+        " Continued below
         LOOP AT lt_c INTO DATA(ls_c).
           DATA lv_tkind TYPE string.
           CASE ls_c-cmptype.
@@ -1678,8 +1678,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         " Dependencies of the CDS view - the objects it consumes
         DATA lv_ddl TYPE ddldependency-ddlname.
         lv_ddl = iv_name.
-        " Der View selbst steht ebenfalls in der Abhaengigkeitstabelle und
-        " wird ausgeblendet - er ist keine Verwendung.
+        " The view itself is listed in the dependency table as well and is
+        " hidden - it is not a usage.
         SELECT objectname, objecttype, state FROM ddldependency
           WHERE ddlname = @lv_ddl AND state = 'A' AND objectname <> @lv_ddl
           ORDER BY objecttype, objectname
@@ -1712,12 +1712,12 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
     APPEND mv_pack TO lt_all.
 
-    " Unterpakete rekursiv - die API liefert den kompletten Unterbaum,
-    " ein eigener Abstieg ueber TDEVC-PARENTCL ist nicht noetig.
-    " Die Methoden arbeiten mit klassischen Ausnahmen. Ohne EXCEPTIONS-Zusatz
-    " im Aufruf fuehrt jede davon zum Kurzdump - TRY...CATCH greift hier
-    " nicht, weil es keine klassenbasierten Ausnahmen sind. Pakete ohne
-    " TDEVC- oder TADIR-Satz sind im Bestand durchaus vorhanden.
+    " Subpackages recursively - the API returns the complete subtree, a
+    " descent of our own through TDEVC-PARENTCL is not necessary.
+    " The methods work with classic exceptions. Without an EXCEPTIONS
+    " clause in the call every one of them leads to a short dump -
+    " TRY...CATCH does not help here because they are not class-based.
+    " Packages without a TDEVC or TADIR record do occur in practice.
     IF mv_recur = abap_true.
       CALL METHOD cl_pak_package_queries=>get_all_subpackages
         EXPORTING
@@ -1777,13 +1777,13 @@ CLASS lcl_collector_dev IMPLEMENTATION.
           no_output_parameter_requested = 5
           OTHERS                        = 6.
       IF sy-subrc <> 0.
-        " Paket ohne Katalogeintrag - im Dokument vermerken statt abbrechen
+        " Package without a catalog entry - note it instead of aborting
         lo_pchap->set_documentation(
           |Objektliste nicht lesbar: { pack_reason( sy-subrc ) }.| ).
         CONTINUE.
       ENDIF.
 
-      " Objekte nach Typ gruppieren
+      " Group the objects by type
       SORT lt_tadir BY object_type object_name.
 
       DATA lv_last_type TYPE trobjtype.
@@ -1925,7 +1925,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 ENDCLASS.
 
 *----------------------------------------------------------------------*
-* Ausgabe-Hilfsroutinen
+* Output helper routines
 *----------------------------------------------------------------------*
 FORM f4_verzeichnis.
 
@@ -2033,7 +2033,7 @@ FORM download_srv USING iv_content TYPE string
 ENDFORM.
 
 *----------------------------------------------------------------------*
-* Ablauf
+* Main flow
 *----------------------------------------------------------------------*
 START-OF-SELECTION.
 

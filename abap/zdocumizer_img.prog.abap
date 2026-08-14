@@ -1,30 +1,30 @@
 REPORT zdocumizer_img.
 
 ************************************************************************
-* Documizer - Schritt 3: IMG-Collector ohne Dateninhalte
+* Documizer - step 3: IMG collector without data contents
 *
-* Liest einen IMG-Strukturbaum, ordnet den Knoten die IMG-Aktivitaeten zu,
-* uebernimmt die SAP-Standarddokumentation und gibt das Ergebnis als XML
-* aus. Bewusst noch OHNE Customizing-Inhalte - das ist Schritt 4. Die
-* zugeordneten Objekte werden mit Typ und Name aufgefuehrt, aber ohne
-* Feldliste und ohne Daten.
+* Reads an IMG structure tree, assigns the IMG activities to the nodes,
+* takes over the SAP standard documentation and writes the result as XML.
+* Deliberately still WITHOUT customizing contents - that is step 4. The
+* assigned objects are listed with type and name, but without a field
+* list and without data.
 *
-* Enthaelt wie der Vorgaenger alles in einem Report, damit er per
-* Copy/Paste in SE38 auf einem beliebigen System lauffaehig ist:
-* Kapitelmodell, Schnittstellen, XML-Renderer und -Parser sind mit
-* ZDOCUMIZER_CORE_DEMO identisch. Im Zielbild liegen sie als globale
-* Klassen in ZCONS_DOCUMIZER_CORE; die Verdopplung ist der Preis fuer die
-* Transportierbarkeit per Zwischenablage.
+* Like its predecessor it keeps everything in one report so that it runs
+* after a copy/paste into SE38 on any system: chapter model, interfaces,
+* XML renderer and parser are identical to ZDOCUMIZER_CORE_DEMO. In the
+* target design they live as global classes in ZCONS_DOCUMIZER_CORE; the
+* duplication is the price for being transportable through the
+* clipboard.
 *
-* Verwendete Standardschnittstellen:
-*   STREE_HIERARCHY_READ  Struktur, Texte und Knotenverweise
-*   DOCU_GET              Standarddokumentation, Dokuklasse HY
-*   CUS_IMGACH            Kopfsatz der IMG-Aktivitaet
-*   CUS_IMGACT            sprachabhaengiger Titel
-*   CUS_ACTOBJ            zugeordnete Customizing-Objekte
+* Standard interfaces used:
+*   STREE_HIERARCHY_READ  structure, texts and node references
+*   DOCU_GET              standard documentation, doc class HY
+*   CUS_IMGACH            header record of the IMG activity
+*   CUS_IMGACT            language-dependent title
+*   CUS_ACTOBJ            assigned customizing objects
 *
-* Der Knoten-Verweis steht in HIER_REF mit REF_TYPE = 'COBJ';
-* REF_OBJECT ist die IMG-Aktivitaet.
+* The node reference sits in HIER_REF with REF_TYPE = 'COBJ';
+* REF_OBJECT is the IMG activity.
 ************************************************************************
 
 CLASS lcl_chapter  DEFINITION DEFERRED.
@@ -32,7 +32,7 @@ CLASS lcl_object   DEFINITION DEFERRED.
 CLASS lcl_document DEFINITION DEFERRED.
 
 *----------------------------------------------------------------------*
-* Typen des Modells
+* Model types
 *----------------------------------------------------------------------*
 TYPES: BEGIN OF ty_field,
          name     TYPE string,
@@ -349,7 +349,7 @@ CLASS lcl_document IMPLEMENTATION.
 ENDCLASS.
 
 *----------------------------------------------------------------------*
-* Schnittstellen
+* Interfaces
 *----------------------------------------------------------------------*
 INTERFACE lif_docu_collector.
   METHODS collect RETURNING VALUE(ro_document) TYPE REF TO lcl_document.
@@ -818,17 +818,17 @@ CLASS lcl_parser_xml IMPLEMENTATION.
 ENDCLASS.
 
 *----------------------------------------------------------------------*
-* Selektionsbild
+* Selection screen
 *----------------------------------------------------------------------*
-* Die Beschriftungen stehen bewusst im Quelltext und nicht im Textpool.
-* Textelemente sind ein eigener Programmbestandteil, der beim Kopieren des
-* Quelltextes in ein anderes System nicht mitkommt - dort stuenden sonst
-* nur die technischen Feldnamen. Ueber COMMENT-Felder, die in
-* INITIALIZATION gefuellt werden, ist der Report ohne Nacharbeit lesbar.
+* The labels deliberately live in the source and not in the text pool.
+* Text elements are a separate program part that does not travel along
+* when the source is copied into another system - only the technical
+* field names would show up there. Filling COMMENT fields in
+* INITIALIZATION keeps the report readable without any rework.
 
-* Die Felder gv_* werden von SELECTION-SCREEN COMMENT bzw. FRAME TITLE
-* implizit angelegt und duerfen nicht zusaetzlich per DATA deklariert
-* werden - sonst meldet der Compiler eine Doppeldeklaration.
+* The gv_* fields are created implicitly by SELECTION-SCREEN COMMENT and
+* FRAME TITLE and must not be declared with DATA on top of that -
+* otherwise the compiler reports a duplicate declaration.
 
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE gv_blk1.
   SELECTION-SCREEN BEGIN OF LINE.
@@ -1004,27 +1004,27 @@ AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_path.
 AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_proj.
   PERFORM f4_projekt.
 
-* Wertehilfe fuer die Struktur-ID. Die DDIC-Suchhilfe auf TTREE-ID liefert
-* nur nackte GUIDs ohne Bezeichnung und ist damit unbrauchbar. Hier werden
-* stattdessen die Wurzelknoten mit ihrem Text angeboten, optional gefiltert
-* ueber den Suchbegriff im zweiten Feld.
+* Value help for the structure ID. The DDIC search help on TTREE-ID
+* returns bare GUIDs without any description and is therefore useless.
+* Here the root nodes are offered with their text instead, optionally
+* filtered by the search term in the second field.
 AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_tree.
   PERFORM f4_struktur.
 
 *----------------------------------------------------------------------*
-* lcl_cust - Auflösung und Lesen des Customizings (Schritt 4)
+* lcl_cust - resolving and reading the customizing (step 4)
 *
-* Views und View-Cluster werden immer auf ihre Basistabellen aufgelöst.
-* Ein Pflegeview lässt sich nicht per SELECT lesen, ein Datenbankview
-* schon - die Unterscheidung entfällt, wenn grundsätzlich aus den
-* transparenten Tabellen gelesen wird.
+* Views and view clusters are always resolved to their base tables. A
+* maintenance view cannot be read with SELECT, a database view can - the
+* distinction disappears once everything is read from the transparent
+* tables.
 *
-* "Kundeneigen" wird über zwei Verfahren zugleich bestimmt:
-*   Namensraum   erstes Schlüsselfeld beginnt mit Y, Z oder /
-*   Transport    Schlüssel taucht in E071K zu dieser Tabelle auf
-* Beides greift per ODER. Der Namensraum findet auch nie transportiertes
-* Customizing, der Transportweg auch Schlüssel ausserhalb des
-* Kundennamensraums. Welches Verfahren gegriffen hat, steht am Objekt.
+* "Customer entry" is determined by two methods at the same time:
+*   namespace   first key field starts with Y, Z or /
+*   transport   key shows up in E071K for this table
+* Both apply with OR. The namespace also finds customizing that was
+* never transported, the transport route also finds keys outside the
+* customer namespace. Which method matched is noted on the object.
 *----------------------------------------------------------------------*
 CLASS lcl_cust DEFINITION.
   PUBLIC SECTION.
@@ -1157,7 +1157,7 @@ CLASS lcl_cust IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    " Lage des ersten fachlichen Schlüsselfeldes im TABKEY bestimmen
+    " Determine the position of the first business key field in TABKEY
     LOOP AT it_flds INTO DATA(ls_f) WHERE keyflag = 'X'.
       IF ls_f-fieldname = 'MANDT' OR ls_f-fieldname = 'MANDANT'.
         lv_off = ls_f-intlen.
@@ -1374,7 +1374,7 @@ CLASS lcl_cust IMPLEMENTATION.
 ENDCLASS.
 
 *----------------------------------------------------------------------*
-* lcl_collector_img - der eigentliche Gegenstand von Schritt 3
+* lcl_collector_img - the actual subject of step 3
 *----------------------------------------------------------------------*
 CLASS lcl_collector_img DEFINITION.
   PUBLIC SECTION.
@@ -1480,11 +1480,11 @@ CLASS lcl_collector_img IMPLEMENTATION.
 
     load_project( ).
 
-    " Im Projektmodus mit "nur Projektknoten" waere es verschwenderisch, den
-    " gesamten Einfuehrungsleitfaden zu durchlaufen, um am Ende eine Handvoll
-    " Knoten zu behalten. Welche Strukturen betroffen sind, steht vorher fest:
-    " es sind genau die, in denen die Projektknoten liegen. Der Einstieg wird
-    " daher aus den Projektdaten abgeleitet statt aus dem Selektionsbild.
+    " In project mode with "project nodes only" it would be wasteful to walk
+    " the whole implementation guide just to keep a handful of nodes in the
+    " end. Which structures are affected is known beforehand: exactly those
+    " the project nodes sit in. The entry point is therefore derived from
+    " the project data instead of from the selection screen.
     DATA lt_trees TYPE STANDARD TABLE OF ttree-id.
     DATA lv_subs  TYPE abap_bool.
 
@@ -1496,11 +1496,11 @@ CLASS lcl_collector_img IMPLEMENTATION.
         WHERE node_id = @mt_pmap-node_id
         INTO TABLE @lt_trees.
 
-      " Unterstrukturen duerfen hier nicht aufgeloest werden. Unter den
-      " Projektknoten ist auch der Wurzelknoten des Projekts, und dessen
-      " Struktur ist der komplette Einfuehrungsleitfaden - mit Aufloesung
-      " liefe der Lauf wieder ueber den ganzen IMG. Die Projektknoten liegen
-      " jeweils direkt in ihrer eigenen Struktur.
+      " Substructures must not be resolved here. Among the project nodes is
+      " the project root as well, and its structure is the complete
+      " implementation guide - with resolution the run would cover the
+      " whole IMG again. Each project node sits directly in its own
+      " structure.
       lv_subs = abap_false.
     ENDIF.
 
@@ -1516,13 +1516,13 @@ CLASS lcl_collector_img IMPLEMENTATION.
 
     CLEAR: lt_nodes, lt_texts, lt_refs, lt_ref_idx, lt_stack.
 
-    " Struktur, Texte und Knotenverweise lesen.
+    " Read structure, texts and node references.
     "
-    " Wichtig: STREE_HIERARCHY_READ liefert nur die eigene Struktur. Im IMG
-    " sind die Unterkapitel jedoch REF-Knoten auf eigenstaendige Strukturen -
-    " ein Lauf ohne Aufloesung endet daher nach der ersten Ebene und findet
-    " keine einzige Aktivitaet. STREE_HIERARCHY_READ_ALL_SUBS loest die
-    " Verweise auf und liefert den durchgaengigen Baum.
+    " Important: STREE_HIERARCHY_READ only returns the structure itself. In
+    " the IMG the subchapters are REF nodes pointing to structures of their
+    " own - a run without resolution therefore ends after the first level
+    " and finds not a single activity. STREE_HIERARCHY_READ_ALL_SUBS
+    " resolves the references and returns the continuous tree.
     IF lv_subs = abap_true.
       CALL FUNCTION 'STREE_HIERARCHY_READ_ALL_SUBS'
         EXPORTING
@@ -1549,7 +1549,7 @@ CLASS lcl_collector_img IMPLEMENTATION.
           list_of_references = lt_refs.
     ENDIF.
 
-    " Verweise und Texte fuer den Direktzugriff aufbereiten.
+    " Prepare references and texts for direct access.
     LOOP AT lt_refs INTO DATA(ls_ref_line).
       IF ls_ref_line-ref_type = gc_reftype AND ls_ref_line-del_flag IS INITIAL.
         INSERT ls_ref_line INTO TABLE lt_ref_idx.
@@ -1566,27 +1566,27 @@ CLASS lcl_collector_img IMPLEMENTATION.
         CONTINUE.
       ENDIF.
 
-      " Alle Knoten zaehlen, die in den Umfang fielen - auch die, die das
-      " Limit abschneidet. Nur so laesst sich im Dokument angeben, wie
-      " vollstaendig es ist.
+      " Count every node that fell into the scope - including those the
+      " limit cuts off. Only then can the document state how complete it
+      " actually is.
       mv_n_total = mv_n_total + 1.
 
-      " Im Projektmodus mit "nur Projektknoten" darf die Kapitelgrenze nicht
-      " waehrend der Traversierung greifen: die Projektknoten liegen oft
-      " tief im Baum, und was vorher abgeschnitten wird, kann das
-      " Beschneiden hinterher nicht mehr finden.
+      " In project mode with "project nodes only" the chapter limit must not
+      " apply during the traversal: the project nodes often sit deep in the
+      " tree, and whatever is cut off beforehand can no longer be found by
+      " the pruning afterwards.
       IF mv_maxnod > 0 AND mv_n_nodes >= mv_maxnod
          AND NOT ( mv_onlypr = abap_true AND mv_proj IS NOT INITIAL ).
         lv_trunc = abap_true.
         CONTINUE.
       ENDIF.
 
-      " Stapel auf die Elternebene zurueckschneiden
+      " Cut the stack back to the parent level
       WHILE lines( lt_stack ) >= lv_level.
         DELETE lt_stack INDEX lines( lt_stack ).
       ENDWHILE.
 
-      " Kapitelnummer fortschreiben
+      " Carry the chapter number forward
       WHILE lines( lt_count ) > lv_level.
         DELETE lt_count INDEX lines( lt_count ).
       ENDWHILE.
@@ -1605,7 +1605,7 @@ CLASS lcl_collector_img IMPLEMENTATION.
         ENDIF.
       ENDLOOP.
 
-      " Titel
+      " Title
       DATA lv_title TYPE string.
       CLEAR lv_title.
       READ TABLE lt_texts INTO DATA(ls_text)
@@ -1614,9 +1614,9 @@ CLASS lcl_collector_img IMPLEMENTATION.
         lv_title = ls_text-text.
       ENDIF.
 
-      " Knotentext in der Ersatzsprache nachschlagen. Ein zweiter Lauf des
-      " Bausteins in der Ersatzsprache waere teurer als der gezielte Zugriff
-      " auf die wenigen Knoten ohne Text.
+      " Look up the node text in the fallback language. A second call of the
+      " function module in the fallback language would cost more than the
+      " targeted access to the few nodes without a text.
       IF lv_title IS INITIAL AND mv_falb = abap_true AND mv_flang <> mv_langu.
         SELECT SINGLE text FROM tnodeimgt
           WHERE tree_id = @ls_node-tree_id
@@ -1628,7 +1628,7 @@ CLASS lcl_collector_img IMPLEMENTATION.
         ENDIF.
       ENDIF.
 
-      " Aktivitaet oder Gliederung?
+      " Activity or structure node?
       DATA lv_type TYPE string.
       DATA lv_act  TYPE string.
       CLEAR: lv_type, lv_act.
@@ -1654,13 +1654,13 @@ CLASS lcl_collector_img IMPLEMENTATION.
       ENDIF.
       APPEND lo_chapter TO lt_stack.
 
-      " Projektdaten des Knotens ueberlagern
+      " Overlay the project data of the node
       READ TABLE mt_pmap INTO DATA(ls_pm)
            WITH TABLE KEY node_id = ls_node-node_id.
       IF sy-subrc = 0.
-        " Status und Memo sind einzeln abschaltbar. Die Projektzuordnung
-        " selbst bleibt gesetzt, sonst wuerde "nur Projektknoten" nichts
-        " mehr finden.
+        " Status and memo can be switched off separately. The project
+        " assignment itself stays in place, otherwise "project nodes only"
+        " would no longer find anything.
         lo_chapter->set_project( VALUE ty_project(
           project = mv_proj
           status  = COND #( WHEN mv_pstat = abap_true THEN ls_pm-status )
@@ -1678,10 +1678,10 @@ CLASS lcl_collector_img IMPLEMENTATION.
 
     ENDLOOP.
 
-    ENDLOOP. " naechste Struktur
+    ENDLOOP. " next structure
 
-    " Bei "nur Projektknoten" bleiben Gliederungskapitel erhalten, solange
-    " unter ihnen noch ein Projektknoten haengt - sonst zerfaellt der Baum.
+    " With "project nodes only" structure chapters are kept as long as a
+    " project node still hangs below them - otherwise the tree falls apart.
     IF mv_onlypr = abap_true AND mv_proj IS NOT INITIAL.
       DATA lt_roots TYPE ty_chapters.
       LOOP AT ro_document->get_chapters( ) INTO DATA(lo_root).
@@ -1725,7 +1725,7 @@ CLASS lcl_collector_img IMPLEMENTATION.
     ENDIF.
     io_chapter->set_reference( ls_reference ).
 
-    " Sprachabhaengiger Titel der Aktivitaet, falls der Knotentext leer ist
+    " Language-dependent title of the activity if the node text is empty
     IF io_chapter->get_title( ) IS INITIAL.
       SELECT SINGLE text FROM cus_imgact
         WHERE spras = @mv_langu AND activity = @lv_act
@@ -1740,7 +1740,7 @@ CLASS lcl_collector_img IMPLEMENTATION.
       ENDIF.
     ENDIF.
 
-    " SAP-Standarddokumentation, Dokuklasse HY
+    " SAP standard documentation, doc class HY
     IF mv_doku = abap_true AND ls_reference-docu_id IS NOT INITIAL.
       DATA lv_docu  TYPE string.
       DATA lv_dlang TYPE string.
@@ -1757,7 +1757,7 @@ CLASS lcl_collector_img IMPLEMENTATION.
       ENDIF.
     ENDIF.
 
-    " Zugeordnete Customizing-Objekte - Schritt 3 bewusst ohne Inhalte
+    " Assigned customizing objects - step 3 deliberately without contents
     IF mv_obj = abap_true.
       DATA lv_actid TYPE cus_actobj-act_id.
       lv_actid = iv_activity.
@@ -1767,7 +1767,7 @@ CLASS lcl_collector_img IMPLEMENTATION.
         INTO TABLE @DATA(lt_obj).
       LOOP AT lt_obj INTO DATA(ls_obj).
         IF mo_cust IS BOUND.
-          " Schritt 4: Objekt auflösen und Inhalte lesen
+          " Step 4: resolve the object and read its contents
           LOOP AT mo_cust->build( iv_type  = CONV string( ls_obj-objecttype )
                                   iv_name  = CONV string( ls_obj-objectname )
                                   iv_tcode = CONV string( ls_obj-tcode ) ) INTO DATA(lo_built).
@@ -1796,9 +1796,9 @@ CLASS lcl_collector_img IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    " Ist in der Ausgabesprache nichts gepflegt, wird die Ersatzsprache
-    " versucht. Welche Sprache tatsaechlich geliefert hat, steht am Kapitel -
-    " sonst waere im Dokument nicht erkennbar, warum ein Abschnitt englisch ist.
+    " If nothing is maintained in the output language, the fallback language
+    " is tried. Which language actually delivered is noted on the chapter -
+    " otherwise the document would not show why a section is in English.
     IF mv_falb = abap_true AND mv_flang IS NOT INITIAL AND mv_flang <> mv_langu.
       ev_text = read_docu_lang( iv_docu_id = iv_docu_id iv_langu = mv_flang ).
       IF ev_text IS NOT INITIAL.
@@ -1834,9 +1834,9 @@ CLASS lcl_collector_img IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    " Die ITF-Formatkennzeichen werden hier noch nicht ausgewertet; die
-    " Zeilen werden nur zusammengefuehrt. Die Umsetzung nach HTML bzw.
-    " Markdown gehoert zu Schritt 6.
+    " The ITF format keys are not evaluated here yet; the lines are only
+    " joined together. Converting them to HTML or Markdown belongs to
+    " step 6.
     LOOP AT lt_line INTO DATA(ls_line).
       IF rv_text IS INITIAL.
         rv_text = ls_line-tdline.
@@ -1853,8 +1853,8 @@ CLASS lcl_collector_img IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    " CUSSTAT verbindet Projekt und IMG-Knoten mit der Status-GUID,
-    " TSTAHTPR haelt darunter das Memo in fuenf Kommentarfeldern.
+    " CUSSTAT links project and IMG node through the status GUID,
+    " TSTAHTPR holds the memo below it in five comment fields.
     SELECT node_id, status, done, id FROM cusstat
       WHERE project_id = @mv_proj
       INTO TABLE @DATA(lt_st).
@@ -1941,15 +1941,15 @@ CLASS lcl_collector_img IMPLEMENTATION.
 ENDCLASS.
 
 *----------------------------------------------------------------------*
-* lcl_renderer_html - lesbare Ausgabe aus demselben Kapitelmodell
+* lcl_renderer_html - readable output from the same chapter model
 *
-* Bewusst eine in sich geschlossene Datei ohne externe Abhaengigkeiten:
-* CSS eingebettet, kein JavaScript. Die Datei soll auch in Jahren noch
-* ohne Nacharbeit zu oeffnen sein.
+* Deliberately a self-contained file without external dependencies: CSS
+* embedded, no JavaScript. The file should still open without any rework
+* years from now.
 *
-* Die ITF-Formatkennzeichen der Dokumentation werden noch nicht
-* ausgewertet, der Text erscheint als vorformatierter Block. Die
-* Umsetzung nach Absaetzen und Listen gehoert zu Schritt 6.
+* The ITF format keys of the documentation are not evaluated yet, the
+* text appears as a preformatted block. Converting it into paragraphs
+* and lists belongs to step 6.
 *----------------------------------------------------------------------*
 CLASS lcl_renderer_html DEFINITION.
   PUBLIC SECTION.
@@ -1980,8 +1980,8 @@ CLASS lcl_renderer_html IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD itf_section.
-    " Die IMG-Dokumentation ist in feste Abschnitte gegliedert, die im
-    " ITF-Text als &NAME& stehen. Sie werden zu Zwischenüberschriften.
+    " The IMG documentation is divided into fixed sections that appear in
+    " the ITF text as &NAME&. They become subheadings.
     CASE iv_marker.
       WHEN 'SHORTTEXT'.      rv_label = 'Kurztext'.
       WHEN 'USE'.            rv_label = 'Verwendung'.
@@ -2009,7 +2009,7 @@ CLASS lcl_renderer_html IMPLEMENTATION.
 
       CONDENSE lv_line.
 
-      " SAPscript-Steueranweisung, kein Inhalt
+      " SAPscript control statement, no content
       IF lv_line = 'RESET N1'.
         CONTINUE.
       ENDIF.
@@ -2019,12 +2019,12 @@ CLASS lcl_renderer_html IMPLEMENTATION.
         CONTINUE.
       ENDIF.
 
-      " Abschnittsmarke &NAME& - wird zur Überschrift, die Kaufmanns-Und
-      " verschwinden dabei.
+      " Section marker &NAME& - becomes a heading, the ampersands
+      " disappear in the process.
       "
-      " Die Pruefung laeuft ueber einen regulaeren Ausdruck und nicht ueber
-      " CS: der Vergleichsoperator ignoriert nachgestellte Leerzeichen im
-      " Suchbegriff, weshalb "zeile CS space" immer wahr ist.
+      " The check uses a regular expression and not CS: the comparison
+      " operator ignores trailing blanks in the search operand, which is
+      " why "line CS space" is always true.
       lv_len = strlen( lv_line ).
       FIND PCRE '^&[A-Z0-9_]+&$' IN lv_line.
       IF sy-subrc = 0.
@@ -2035,18 +2035,18 @@ CLASS lcl_renderer_html IMPLEMENTATION.
 
       lv_line = esc( lv_line ).
 
-      " ITF-Auszeichnungen. Es gibt davon mehr als die gaengigen drei -
-      " ZH, LS, ZK, PF, US und weitere. Statt sie einzeln zu pflegen,
-      " werden alle zwei- bis dreistelligen Marken generisch behandelt;
-      " Querverweise <DS:...> kommen hinzu. Alle werden fett dargestellt,
-      " die schliessende Marke </> gilt fuer jede von ihnen.
+      " ITF markup. There are more of them than the common three - ZH, LS,
+      " ZK, PF, US and others. Instead of maintaining them one by one, all
+      " two- to three-character markers are handled generically; cross
+      " references <DS:...> are added. All of them are rendered in bold,
+      " the closing marker </> applies to every one of them.
       REPLACE ALL OCCURRENCES OF PCRE '&lt;DS:[^&]+&gt;' IN lv_line WITH '<b>'.
       REPLACE ALL OCCURRENCES OF '&lt;/&gt;' IN lv_line WITH '</b>'.
       REPLACE ALL OCCURRENCES OF PCRE '&lt;[A-Z0-9]{2,3}&gt;' IN lv_line WITH '<b>'.
 
-      " Auszeichnung je Zeile ausgleichen. Im ITF laufen Marken auch ueber
-      " Zeilengrenzen; ohne Ausgleich faerbt eine offene Marke den Rest des
-      " Dokuments ein.
+      " Balance the markup per line. In ITF markers also run across line
+      " boundaries; without balancing an open marker would style the rest
+      " of the document.
       DATA(lv_open)  = count( val = lv_line sub = '<b>' ).
       DATA(lv_close) = count( val = lv_line sub = '</b>' ).
       IF lv_open > lv_close.
@@ -2059,7 +2059,7 @@ CLASS lcl_renderer_html IMPLEMENTATION.
         ENDDO.
       ENDIF.
 
-      " Tabulatoren der ITF-Ablage
+      " Tabs of the ITF storage format
       REPLACE ALL OCCURRENCES OF ',,' IN lv_line WITH ' '.
 
       rv_html = |{ rv_html }{ lv_line }<br>|.
@@ -2141,8 +2141,8 @@ CLASS lcl_renderer_html IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD write_toc.
-    " Nur die obersten beiden Ebenen, sonst wird das Verzeichnis laenger
-    " als das Dokument.
+    " Only the top two levels, otherwise the table of contents grows
+    " longer than the document.
     IF io_chapter->get_level( ) > 2.
       RETURN.
     ENDIF.
@@ -2211,7 +2211,7 @@ CLASS lcl_renderer_html IMPLEMENTATION.
         add( |<p class="warn">{ esc( lo_obj->get_note( ) ) }</p>| ).
       ENDIF.
 
-      " Dateninhalte
+      " Data contents
       IF lines( lo_obj->get_rows( ) ) > 0.
         add( '<table><tr>' ).
         LOOP AT lo_obj->get_fields( ) INTO DATA(ls_fh).
@@ -2231,7 +2231,7 @@ CLASS lcl_renderer_html IMPLEMENTATION.
         ENDLOOP.
         add( '</table>' ).
       ELSEIF lines( lo_obj->get_fields( ) ) > 0.
-        " keine Daten, aber Struktur bekannt
+        " no data, but the structure is known
         add( '<table><tr><th>Feld</th><th>Datenelement</th><th>Schlüssel</th></tr>' ).
         LOOP AT lo_obj->get_fields( ) INTO DATA(ls_fs).
           add( |<tr><td>{ esc( ls_fs-name ) }</td>| &&
@@ -2241,7 +2241,7 @@ CLASS lcl_renderer_html IMPLEMENTATION.
         add( '</table>' ).
       ENDIF.
 
-      " Transport-Historie
+      " Transport history
       IF lines( lo_obj->get_transports( ) ) > 0.
         add( '<p class="ref">Transport-Historie</p>' ).
         add( '<table><tr><th>Auftrag</th><th>Benutzer</th>' &&
@@ -2266,14 +2266,14 @@ CLASS lcl_renderer_html IMPLEMENTATION.
 ENDCLASS.
 
 *----------------------------------------------------------------------*
-* Wertehilfe fuer die Struktur-ID
+* Value help for the structure ID
 *----------------------------------------------------------------------*
 FORM f4_struktur.
 
-* Die Spalten tragen bewusst DDIC-Typen: die Wertehilfe leitet ihre
-* Ueberschriften daraus ab. Die Knotenzahl haengt am Text, weil es dafuer
-* kein Datenelement mit brauchbarer Bezeichnung gibt - und sie ist der
-* wichtigste Unterscheider, wenn mehrere Strukturen gleich heissen.
+* The columns deliberately carry DDIC types: the value help derives its
+* column headings from them. The node count is appended to the text
+* because there is no data element with a usable label for it - and it is
+* the most important discriminator when several structures share a name.
 
   TYPES: BEGIN OF ty_f4,
            tree_id TYPE ttree-id,
@@ -2316,13 +2316,13 @@ FORM f4_struktur.
     APPEND VALUE #( sign = 'I' option = 'EQ' low = ls_f4-tree_id ) TO lr_tree.
   ENDLOOP.
 
-  " Strukturtyp und Aenderungsdatum
+  " Structure type and change date
   SELECT id, type, ldate FROM ttree
     WHERE id IN @lr_tree
     INTO TABLE @DATA(lt_tree).
 
-  " Knotenzahl je Struktur - ohne FOR ALL ENTRIES, weil Aggregate damit
-  " nicht zulaessig sind
+  " Node count per structure - without FOR ALL ENTRIES, because aggregates
+  " are not allowed with it
   SELECT tree_id, COUNT(*) AS cnt FROM tnodeimg
     WHERE tree_id IN @lr_tree
     GROUP BY tree_id
@@ -2360,7 +2360,7 @@ FORM f4_struktur.
 ENDFORM.
 
 *----------------------------------------------------------------------*
-* Wertehilfe fuer das Projekt
+* Value help for the project
 *----------------------------------------------------------------------*
 FORM f4_projekt.
 
@@ -2404,7 +2404,7 @@ FORM f4_projekt.
 ENDFORM.
 
 *----------------------------------------------------------------------*
-* Wertehilfe fuer das Zielverzeichnis
+* Value help for the target directory
 *----------------------------------------------------------------------*
 FORM f4_verzeichnis.
 
@@ -2425,11 +2425,11 @@ FORM f4_verzeichnis.
 ENDFORM.
 
 *----------------------------------------------------------------------*
-* Datei auf den PC schreiben
+* Write the file to the PC
 *
-* Der Inhalt wird zuerst nach UTF-8 gewandelt und binaer geschrieben.
-* Ein Textdownload wuerde die Zeichen in die Frontend-Codepage umsetzen,
-* und genau dort gehen Umlaute und Sonderzeichen verloren.
+* The content is converted to UTF-8 first and written in binary mode. A
+* text download would translate the characters into the frontend code
+* page, and that is where umlauts and special characters get lost.
 *----------------------------------------------------------------------*
 FORM download USING iv_content TYPE string
                     iv_ext     TYPE string.
@@ -2450,7 +2450,7 @@ FORM download USING iv_content TYPE string
   SHIFT lv_dir RIGHT DELETING TRAILING space.
   SHIFT lv_dir LEFT  DELETING LEADING space.
   IF lv_dir CA '\'.
-    " Verzeichnis ohne abschliessenden Trenner ergaenzen
+    " Add the separator if the directory does not end with one
     IF substring( val = lv_dir off = strlen( lv_dir ) - 1 len = 1 ) <> '\'.
       lv_dir = |{ lv_dir }\\|.
     ENDIF.
@@ -2487,11 +2487,11 @@ FORM download USING iv_content TYPE string
 ENDFORM.
 
 *----------------------------------------------------------------------*
-* Datei auf dem Applikationsserver ablegen
+* Store the file on the application server
 *
-* Der Weg fuer Hintergrundverarbeitung: Frontend-Dienste stehen dort nicht
-* zur Verfuegung. Geschrieben wird wie beim PC-Download binaer in UTF-8,
-* damit beide Ablagen dieselbe Datei erzeugen.
+* The route for background processing: frontend services are not
+* available there. Writing works as with the PC download, binary in
+* UTF-8, so that both destinations produce the same file.
 *----------------------------------------------------------------------*
 FORM download_srv USING iv_content TYPE string
                         iv_ext     TYPE string.
@@ -2530,7 +2530,7 @@ FORM download_srv USING iv_content TYPE string
 ENDFORM.
 
 *----------------------------------------------------------------------*
-* Hilfsroutine: Strukturen suchen, wenn keine GUID bekannt ist
+* Helper routine: search structures when no GUID is known
 *----------------------------------------------------------------------*
 FORM search_structures.
 
@@ -2567,7 +2567,7 @@ FORM search_structures.
 ENDFORM.
 
 *----------------------------------------------------------------------*
-* Ablauf
+* Main flow
 *----------------------------------------------------------------------*
 START-OF-SELECTION.
 
@@ -2603,8 +2603,8 @@ START-OF-SELECTION.
   DATA lo_renderer TYPE REF TO lif_docu_renderer.
   lo_renderer = NEW lcl_renderer_xml( ).
 
-* XML wird nur erzeugt, wenn es auch gebraucht wird: fuer die Ausgabe,
-* fuer den Download oder fuer den Roundtrip-Selbsttest.
+* XML is only produced when it is actually needed: for the output, for
+* the download or for the roundtrip self-test.
   DATA lv_xml TYPE string.
   IF p_xml = abap_true OR p_rtest = abap_true
      OR ( p_down = abap_true AND p_xml = abap_true ).
@@ -2644,7 +2644,7 @@ START-OF-SELECTION.
     WRITE: / 'ACHTUNG: Limit erreicht, Dokument unvollständig.'.
   ENDIF.
 
-  " Roundtrip gegen echte Daten pruefen, nicht nur gegen ein Beispiel
+  " Check the roundtrip against real data, not just against a sample
   IF p_rtest = abap_true.
     DATA(lo_doc2) = lcl_parser_xml=>parse( lv_xml ).
     DATA(lv_xml2) = lo_renderer->render( lo_doc2 ).

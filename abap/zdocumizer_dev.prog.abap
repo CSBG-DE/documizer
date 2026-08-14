@@ -24,6 +24,52 @@ CLASS lcl_object   DEFINITION DEFERRED.
 CLASS lcl_document DEFINITION DEFERRED.
 
 *----------------------------------------------------------------------*
+* lcl_t - texts of the document itself
+*
+* Everything that ends up in the document follows the output language the
+* user selected, not the logon language: headings, table columns, notes.
+* A document requested in English must not carry German column headers.
+*
+* Only German and English are provided. Any other output language falls
+* back to English, which is the maintenance language of the SAP standard.
+*----------------------------------------------------------------------*
+CLASS lcl_t DEFINITION.
+  PUBLIC SECTION.
+    CLASS-METHODS set_lang IMPORTING iv_langu TYPE sy-langu.
+    CLASS-METHODS t IMPORTING d         TYPE string
+                              e         TYPE string
+                    RETURNING VALUE(rv) TYPE string.
+    CLASS-METHODS ui IMPORTING d         TYPE string
+                               e         TYPE string
+                     RETURNING VALUE(rv) TYPE string.
+  PRIVATE SECTION.
+    CLASS-DATA gv_de TYPE abap_bool.
+ENDCLASS.
+
+CLASS lcl_t IMPLEMENTATION.
+  METHOD set_lang.
+    gv_de = boolc( iv_langu = 'D' ).
+  ENDMETHOD.
+  METHOD t.
+    IF gv_de = abap_true.
+      rv = d.
+    ELSE.
+      rv = e.
+    ENDIF.
+  ENDMETHOD.
+  METHOD ui.
+*   The run protocol on screen belongs to whoever started the report, so
+*   it follows the logon language - unlike the document, which follows
+*   the output language.
+    IF sy-langu = 'D'.
+      rv = d.
+    ELSE.
+      rv = e.
+    ENDIF.
+  ENDMETHOD.
+ENDCLASS.
+
+*----------------------------------------------------------------------*
 * Model types
 *----------------------------------------------------------------------*
 TYPES: BEGIN OF ty_field,
@@ -866,24 +912,32 @@ CLASS lcl_renderer_html IMPLEMENTATION.
          'white-space:pre}' ).
     add( '</style></head><body>' ).
 
-    add( |<h1>Documizer - Entwicklerdokumentation</h1>| ).
+    add( |<h1>{ lcl_t=>t( d = lcl_t=>ui( d = `Documizer - Entwicklerdokumentation` e = `Documizer - developer documentation` )
+                          e = 'Documizer - developer documentation' ) }</h1>| ).
 
     add( '<table>' ).
     add( |<tr><th>System</th><td>{ esc( ls_meta-system ) }| &&
-         | / Mandant { esc( ls_meta-client ) }</td></tr>| ).
-    add( |<tr><th>Erzeugt</th><td>{ esc( ls_meta-created_at ) }| &&
-         | von { esc( ls_meta-created_by ) }</td></tr>| ).
-    add( |<tr><th>Sprache</th><td>{ esc( ls_meta-language ) }</td></tr>| ).
-    add( |<tr><th>Objekte</th><td>{ ls_meta-node_total } gefunden</td></tr>| ).
+         | / { lcl_t=>t( d = 'Mandant' e = 'Client' ) } { esc( ls_meta-client ) }</td></tr>| ).
+    add( |<tr><th>{ lcl_t=>t( d = 'Erzeugt' e = 'Created' ) }</th>| &&
+         |<td>{ esc( ls_meta-created_at ) }| &&
+         | { lcl_t=>t( d = 'von' e = 'by' ) } { esc( ls_meta-created_by ) }</td></tr>| ).
+    add( |<tr><th>{ lcl_t=>t( d = 'Sprache' e = 'Language' ) }</th>| &&
+         |<td>{ esc( ls_meta-language ) }</td></tr>| ).
+    add( |<tr><th>{ lcl_t=>t( d = 'Objekte' e = 'Objects' ) }</th>| &&
+         |<td>{ ls_meta-node_total } { lcl_t=>t( d = 'gefunden' e = 'found' ) }</td></tr>| ).
     add( '</table>' ).
 
     IF ls_meta-truncated = abap_true.
-      add( |<p class="warn">Achtung: Von { ls_meta-node_total } Objekten sind | &&
-           |nur { ls_meta-node_limit } enthalten. Das Dokument ist | &&
-           |unvollständig.</p>| ).
+      add( |<p class="warn">{ lcl_t=>t(
+             d = |Achtung: Von { ls_meta-node_total } Objekten sind nur | &&
+                 |{ ls_meta-node_limit } enthalten. Das Dokument ist | &&
+                 |unvollständig.|
+             e = |Caution: of { ls_meta-node_total } objects only | &&
+                 |{ ls_meta-node_limit } are contained. The document is | &&
+                 |incomplete.| ) }</p>| ).
     ENDIF.
 
-    add( '<h2>Inhalt</h2><ul class="toc">' ).
+    add( |<h2>{ lcl_t=>t( d = 'Inhalt' e = 'Contents' ) }</h2><ul class="toc">| ).
     LOOP AT io_document->get_chapters( ) INTO DATA(lo_top).
       write_toc( lo_top ).
     ENDLOOP.
@@ -927,9 +981,10 @@ CLASS lcl_renderer_html IMPLEMENTATION.
 
     IF io_chapter->has_reference( ) = abap_true.
       DATA(ls_ref) = io_chapter->get_reference( ).
-      add( |<p class="ref">Typ { esc( ls_ref-activity ) }| &&
-           | &nbsp; Paket { esc( ls_ref-tcode ) }| &&
-           | &nbsp; Autor { esc( ls_ref-docu_id ) }</p>| ).
+      add( |<p class="ref">{ lcl_t=>t( d = 'Typ' e = 'Type' ) }| &&
+           | { esc( ls_ref-activity ) }| &&
+           | &nbsp; { lcl_t=>t( d = 'Paket' e = 'package' ) } { esc( ls_ref-tcode ) }| &&
+           | &nbsp; { lcl_t=>t( d = 'Autor' e = 'author' ) } { esc( ls_ref-docu_id ) }</p>| ).
     ENDIF.
 
     IF io_chapter->get_documentation( ) IS NOT INITIAL.
@@ -945,8 +1000,10 @@ CLASS lcl_renderer_html IMPLEMENTATION.
         add( |<p class="ref">{ esc( lo_obj->get_note( ) ) }</p>| ).
       ENDIF.
       IF lines( lo_obj->get_fields( ) ) > 0.
-        add( '<table><tr><th>Name</th><th>Typ / Datenelement</th>' &&
-             '<th>Schlüssel</th></tr>' ).
+        add( |<table><tr><th>Name</th>| &&
+             |<th>{ lcl_t=>t( d = 'Typ / Datenelement'
+                              e = 'Type / data element' ) }</th>| &&
+             |<th>{ lcl_t=>t( d = 'Schlüssel' e = 'Key' ) }</th></tr>| ).
         LOOP AT lo_obj->get_fields( ) INTO DATA(ls_fs).
           add( |<tr><td>{ esc( ls_fs-name ) }</td>| &&
                |<td>{ esc( ls_fs-rollname ) }</td>| &&
@@ -1099,22 +1156,22 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
   METHOD type_title.
     CASE iv_type.
-      WHEN 'PROG'. rv_title = 'Programme'.
-      WHEN 'CLAS'. rv_title = 'Klassen'.
+      WHEN 'PROG'. rv_title = lcl_t=>t( d = 'Programme' e = 'Programs' ).
+      WHEN 'CLAS'. rv_title = lcl_t=>t( d = 'Klassen' e = 'Classes' ).
       WHEN 'INTF'. rv_title = 'Interfaces'.
-      WHEN 'FUGR'. rv_title = 'Funktionsgruppen'.
-      WHEN 'TABL'. rv_title = 'Tabellen und Strukturen'.
+      WHEN 'FUGR'. rv_title = lcl_t=>t( d = 'Funktionsgruppen' e = 'Function groups' ).
+      WHEN 'TABL'. rv_title = lcl_t=>t( d = 'Tabellen und Strukturen' e = 'Tables and structures' ).
       WHEN 'DDLS'. rv_title = 'CDS Views'.
-      WHEN 'DTEL'. rv_title = 'Datenelemente'.
-      WHEN 'DOMA'. rv_title = 'Domänen'.
-      WHEN 'TTYP'. rv_title = 'Tabellentypen'.
+      WHEN 'DTEL'. rv_title = lcl_t=>t( d = 'Datenelemente' e = 'Data elements' ).
+      WHEN 'DOMA'. rv_title = lcl_t=>t( d = 'Domänen' e = 'Domains' ).
+      WHEN 'TTYP'. rv_title = lcl_t=>t( d = 'Tabellentypen' e = 'Table types' ).
       WHEN 'VIEW'. rv_title = 'Views'.
-      WHEN 'TRAN'. rv_title = 'Transaktionen'.
-      WHEN 'MSAG'. rv_title = 'Nachrichtenklassen'.
-      WHEN 'ENQU'. rv_title = 'Sperrobjekte'.
-      WHEN 'SHLP'. rv_title = 'Suchhilfen'.
-      WHEN 'DEVC'. rv_title = 'Pakete'.
-      WHEN OTHERS. rv_title = |Objekttyp { iv_type }|.
+      WHEN 'TRAN'. rv_title = lcl_t=>t( d = 'Transaktionen' e = 'Transactions' ).
+      WHEN 'MSAG'. rv_title = lcl_t=>t( d = 'Nachrichtenklassen' e = 'Message classes' ).
+      WHEN 'ENQU'. rv_title = lcl_t=>t( d = 'Sperrobjekte' e = 'Lock objects' ).
+      WHEN 'SHLP'. rv_title = lcl_t=>t( d = 'Suchhilfen' e = 'Search helps' ).
+      WHEN 'DEVC'. rv_title = lcl_t=>t( d = 'Pakete' e = 'Packages' ).
+      WHEN OTHERS. rv_title = |{ lcl_t=>t( d = `Objekttyp` e = `Object type` ) } { iv_type }|.
     ENDCASE.
   ENDMETHOD.
 
@@ -1370,6 +1427,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     " it is the reason this option is switched off by default.
 
     TYPES: BEGIN OF ty_call,
+             rank TYPE i,
              what TYPE string,
              kind TYPE string,
            END OF ty_call.
@@ -1392,44 +1450,89 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
     LOOP AT lt_cr INTO DATA(ls_cr).
       CLEAR ls_call.
+      ls_call-rank = 4.
       ls_call-what = ls_cr-name.
-      ls_call-kind = |Verweis { ls_cr-type }|.
+      ls_call-kind = |{ lcl_t=>t( d = `Verweis` e = `reference` ) } { ls_cr-type }|.
       APPEND ls_call TO lt_call.
     ENDLOOP.
 
-    " The includes of a class all start with the class name, so a prefix
-    " match yields the global types the class uses.
+    " The includes of an object all start with its name, so a prefix match
+    " yields what it consumes. Three record types are relevant and they say
+    " different things: ME are the calls, TY the global types, DA the
+    " constants and attributes.
+    "
+    " CROSS above is empty in many S/4 systems because the classic index is
+    " not built there (SAPRSEUB); WBCROSSGT then carries everything.
+    "
+    " Each record type is read with its own limit. A single select with a
+    " shared limit would return an arbitrary slice, and with a few hundred
+    " types per program the calls would regularly fall out of it.
     DATA lv_like TYPE string.
+    DATA lt_gt   TYPE STANDARD TABLE OF wbcrossgt.
+    DATA lt_one  TYPE STANDARD TABLE OF wbcrossgt.
+    DATA lv_ot   TYPE wbcrossgt-otype.
+
     lv_like = |{ iv_name }%|.
-    SELECT name FROM wbcrossgt
-      WHERE otype = 'TY' AND include LIKE @lv_like
-      INTO TABLE @DATA(lt_gt)
-      UP TO @lv_max ROWS.
+    LOOP AT VALUE string_table( ( `ME` ) ( `TY` ) ( `DA` ) ) INTO DATA(lv_type).
+      lv_ot = lv_type.
+      SELECT * FROM wbcrossgt
+        WHERE otype = @lv_ot AND include LIKE @lv_like
+        INTO TABLE @lt_one
+        UP TO @lv_max ROWS.
+      APPEND LINES OF lt_one TO lt_gt.
+    ENDLOOP.
 
     LOOP AT lt_gt INTO DATA(ls_gt).
+
+      " Named actual parameters are stored as DA below their method and add
+      " nothing but noise - the method itself is already in the list.
+      IF ls_gt-otype = 'DA' AND ls_gt-name CS '\ME:'.
+        CONTINUE.
+      ENDIF.
+
       CLEAR ls_call.
       ls_call-what = ls_gt-name.
-      ls_call-kind = 'Typverwendung'.
+      CASE ls_gt-otype.
+        WHEN 'ME'.
+          ls_call-rank = 1.
+          ls_call-kind = lcl_t=>t( d = 'Methodenaufruf' e = 'method call' ).
+        WHEN 'TY'.
+          ls_call-rank = 2.
+          ls_call-kind = lcl_t=>t( d = 'Typverwendung' e = 'type used' ).
+        WHEN 'DA'.
+          ls_call-rank = 3.
+          ls_call-kind = lcl_t=>t( d = 'Datenobjekt' e = 'data object' ).
+      ENDCASE.
       APPEND ls_call TO lt_call.
+
     ENDLOOP.
 
-    DELETE lt_call WHERE what = iv_name.
+    DELETE lt_call WHERE what = iv_name OR what IS INITIAL.
     IF lt_call IS INITIAL.
       RETURN.
     ENDIF.
 
-    SORT lt_call BY what kind.
+    SORT lt_call BY what rank.
     DELETE ADJACENT DUPLICATES FROM lt_call COMPARING what.
+
+    " Order by kind: if the limit cuts, the calls should survive and not a
+    " random slice of the type list.
+    SORT lt_call BY rank what.
 
     DATA(lo_c) = NEW lcl_object( iv_type = 'CALLS'
                                  iv_name = CONV string( iv_name ) ).
-    IF mv_maxuse > 0 AND lines( lt_call ) >= mv_maxuse.
-      lo_c->set_note( |Verwendete Objekte (bei { mv_maxuse } Eintraegen gekürzt)| ).
+
+    DATA(lv_total) = lines( lt_call ).
+    IF mv_maxuse > 0 AND lv_total > mv_maxuse.
+      DELETE lt_call FROM mv_maxuse + 1.
+      lo_c->set_note( |{ lcl_t=>t( d = `Verwendete Objekte` e = `Objects used` ) }| &&
+                      | { lcl_t=>t( d = `(gekürzt bei` e = `(truncated at` ) }| &&
+                      | { mv_maxuse } { lcl_t=>t( d = `von` e = `of` ) } { lv_total })| ).
       lo_c->set_truncated( abap_true ).
     ELSE.
-      lo_c->set_note( 'Verwendete Objekte' ).
+      lo_c->set_note( lcl_t=>t( d = 'Verwendete Objekte' e = 'Objects used' ) ).
     ENDIF.
-    lo_c->set_row_count( lines( lt_call ) ).
+    lo_c->set_row_count( lv_total ).
 
     LOOP AT lt_call INTO ls_call.
       lo_c->add_field( VALUE ty_field( name     = ls_call-what
@@ -1445,13 +1548,20 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     " The exceptions of the package API in plain text. A bare number in the
     " document would otherwise send the reader into the function library.
     CASE iv_subrc.
-      WHEN 1. rv_reason = 'kein Paket angegeben'.
-      WHEN 2. rv_reason = 'Paket ohne Katalogeintrag in TDEVC'.
-      WHEN 3. rv_reason = 'Paket ohne Eintrag in TADIR'.
-      WHEN 4. rv_reason = 'Paket existiert nicht - Name pruefen'.
-      WHEN 5. rv_reason = 'ungueltiges Oberpaket'.
-      WHEN 6. rv_reason = 'kein Ausgabeparameter angefordert'.
-      WHEN OTHERS. rv_reason = |unbekannte Ursache { iv_subrc }|.
+      WHEN 1. rv_reason = lcl_t=>t( d = 'kein Paket angegeben'
+                                    e = 'no package specified' ).
+      WHEN 2. rv_reason = lcl_t=>t( d = 'Paket ohne Katalogeintrag in TDEVC'
+                                    e = 'package has no TDEVC record' ).
+      WHEN 3. rv_reason = lcl_t=>t( d = 'Paket ohne Eintrag in TADIR'
+                                    e = 'package has no TADIR record' ).
+      WHEN 4. rv_reason = lcl_t=>t( d = 'Paket existiert nicht - Name pruefen'
+                                    e = 'package does not exist - check the name' ).
+      WHEN 5. rv_reason = lcl_t=>t( d = 'ungueltiges Oberpaket'
+                                    e = 'invalid superpackage' ).
+      WHEN 6. rv_reason = lcl_t=>t( d = 'kein Ausgabeparameter angefordert'
+                                    e = 'no output parameter requested' ).
+      WHEN OTHERS. rv_reason = |{ lcl_t=>t( d = `unbekannte Ursache`
+                                            e = `unknown reason` ) } { iv_subrc }|.
     ENDCASE.
   ENDMETHOD.
 
@@ -1490,7 +1600,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     LOOP AT lt_gt INTO DATA(ls_gt).
       CLEAR ls_use.
       ls_use-where = ls_gt-include.
-      ls_use-kind  = 'Typverwendung'.
+      ls_use-kind  = lcl_t=>t( d = 'Typverwendung' e = 'Type usage' ).
       APPEND ls_use TO lt_use.
     ENDLOOP.
 
@@ -1505,10 +1615,17 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     LOOP AT lt_cr INTO DATA(ls_cr).
       CLEAR ls_use.
       ls_use-where = ls_cr-prog.
-      ls_use-kind  = 'Programmverwendung'.
+      ls_use-kind  = lcl_t=>t( d = 'Programmverwendung' e = 'Program usage' ).
       APPEND ls_use TO lt_use.
     ENDLOOP.
 
+    IF lt_use IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    " CROSS keeps rows without a program name; they would show up as an
+    " empty line in the document.
+    DELETE lt_use WHERE where IS INITIAL.
     IF lt_use IS INITIAL.
       RETURN.
     ENDIF.
@@ -1520,10 +1637,12 @@ CLASS lcl_collector_dev IMPLEMENTATION.
                                  iv_name = CONV string( iv_name ) ).
 
     IF mv_maxuse > 0 AND lines( lt_use ) >= mv_maxuse.
-      lo_u->set_note( |Verwendungsnachweis (bei { mv_maxuse } Eintraegen gekürzt)| ).
+      lo_u->set_note( |{ lcl_t=>t( d = `Verwendungsnachweis` e = `Where-used list` ) }| &&
+                      | { lcl_t=>t( d = `(gekürzt bei` e = `(truncated at` ) }| &&
+                      | { mv_maxuse })| ).
       lo_u->set_truncated( abap_true ).
     ELSE.
-      lo_u->set_note( 'Verwendungsnachweis' ).
+      lo_u->set_note( lcl_t=>t( d = 'Verwendungsnachweis' e = 'Where-used list' ) ).
     ENDIF.
     lo_u->set_row_count( lines( lt_use ) ).
 
@@ -1555,7 +1674,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         ENDIF.
         DATA(lo_o1) = NEW lcl_object( iv_type = CONV string( iv_type )
                                       iv_name = CONV string( iv_name ) ).
-        lo_o1->set_note( 'Feldliste' ).
+        lo_o1->set_note( lcl_t=>t( d = 'Feldliste' e = 'Field list' ) ).
         LOOP AT lt_f INTO DATA(ls_f).
           lo_o1->add_field( VALUE ty_field(
             name     = ls_f-fieldname
@@ -1575,16 +1694,16 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         ENDIF.
         DATA(lo_o2) = NEW lcl_object( iv_type = CONV string( iv_type )
                                       iv_name = CONV string( iv_name ) ).
-        lo_o2->set_note( 'Komponenten' ).
+        lo_o2->set_note( lcl_t=>t( d = 'Komponenten' e = 'Components' ) ).
         " Continued below
         LOOP AT lt_c INTO DATA(ls_c).
           DATA lv_tkind TYPE string.
           CASE ls_c-cmptype.
-            WHEN '0'. lv_tkind = 'Attribut'.
-            WHEN '1'. lv_tkind = 'Methode'.
-            WHEN '2'. lv_tkind = 'Ereignis'.
-            WHEN '3'. lv_tkind = 'Typ'.
-            WHEN OTHERS. lv_tkind = |Typ { ls_c-cmptype }|.
+            WHEN '0'. lv_tkind = lcl_t=>t( d = 'Attribut' e = 'attribute' ).
+            WHEN '1'. lv_tkind = lcl_t=>t( d = 'Methode' e = 'method' ).
+            WHEN '2'. lv_tkind = lcl_t=>t( d = 'Ereignis' e = 'event' ).
+            WHEN '3'. lv_tkind = lcl_t=>t( d = 'Typ' e = 'type' ).
+            WHEN OTHERS. lv_tkind = |{ lcl_t=>t( d = `Typ` e = `type` ) } { ls_c-cmptype }|.
           ENDCASE.
           lo_o2->add_field( VALUE ty_field( name     = ls_c-cmpname
                                             rollname = lv_tkind ) ).
@@ -1607,14 +1726,14 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         ENDIF.
         DATA(lo_tp) = NEW lcl_object( iv_type = CONV string( iv_type )
                                       iv_name = CONV string( iv_name ) ).
-        lo_tp->set_note( 'Textelemente' ).
+        lo_tp->set_note( lcl_t=>t( d = 'Textelemente' e = 'Text elements' ) ).
         LOOP AT lt_tp INTO DATA(ls_tp).
           DATA lv_tpkind TYPE string.
           CASE ls_tp-id.
-            WHEN 'R'. lv_tpkind = 'Titel'.
-            WHEN 'S'. lv_tpkind = 'Selektionstext'.
-            WHEN 'I'. lv_tpkind = 'Textsymbol'.
-            WHEN 'H'. lv_tpkind = 'Ueberschrift'.
+            WHEN 'R'. lv_tpkind = lcl_t=>t( d = 'Titel' e = 'Title' ).
+            WHEN 'S'. lv_tpkind = lcl_t=>t( d = 'Selektionstext' e = 'Selection text' ).
+            WHEN 'I'. lv_tpkind = lcl_t=>t( d = 'Textsymbol' e = 'Text symbol' ).
+            WHEN 'H'. lv_tpkind = lcl_t=>t( d = 'Ueberschrift' e = 'List heading' ).
             WHEN OTHERS. lv_tpkind = CONV string( ls_tp-id ).
           ENDCASE.
           lo_tp->add_field( VALUE ty_field(
@@ -1642,7 +1761,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         ENDIF.
         DATA(lo_fix) = NEW lcl_object( iv_type = CONV string( iv_type )
                                        iv_name = CONV string( iv_name ) ).
-        lo_fix->set_note( 'Festwerte' ).
+        lo_fix->set_note( lcl_t=>t( d = 'Festwerte' e = 'Fixed values' ) ).
         LOOP AT lt_fix INTO DATA(ls_fix).
           lo_fix->add_field( VALUE ty_field( name     = ls_fix-domvalue_l
                                              rollname = ls_fix-ddtext ) ).
@@ -1667,11 +1786,15 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         ENDIF.
         DATA(lo_lab) = NEW lcl_object( iv_type = CONV string( iv_type )
                                        iv_name = CONV string( iv_name ) ).
-        lo_lab->set_note( 'Feldbezeichner' ).
-        lo_lab->add_field( VALUE ty_field( name = 'kurz'      rollname = ls_lab-scrtext_s ) ).
-        lo_lab->add_field( VALUE ty_field( name = 'mittel'    rollname = ls_lab-scrtext_m ) ).
-        lo_lab->add_field( VALUE ty_field( name = 'lang'      rollname = ls_lab-scrtext_l ) ).
-        lo_lab->add_field( VALUE ty_field( name = 'Ueberschr' rollname = ls_lab-reptext ) ).
+        lo_lab->set_note( lcl_t=>t( d = 'Feldbezeichner' e = 'Field labels' ) ).
+        lo_lab->add_field( VALUE ty_field( name = lcl_t=>t( d = 'kurz' e = 'short' )
+                                           rollname = ls_lab-scrtext_s ) ).
+        lo_lab->add_field( VALUE ty_field( name = lcl_t=>t( d = 'mittel' e = 'medium' )
+                                           rollname = ls_lab-scrtext_m ) ).
+        lo_lab->add_field( VALUE ty_field( name = lcl_t=>t( d = 'lang' e = 'long' )
+                                           rollname = ls_lab-scrtext_l ) ).
+        lo_lab->add_field( VALUE ty_field( name = lcl_t=>t( d = 'Ueberschr' e = 'heading' )
+                                           rollname = ls_lab-reptext ) ).
         io_chapter->add_object( lo_lab ).
 
       WHEN 'DDLS'.
@@ -1689,7 +1812,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         ENDIF.
         DATA(lo_o3) = NEW lcl_object( iv_type = CONV string( iv_type )
                                       iv_name = CONV string( iv_name ) ).
-        lo_o3->set_note( 'Verwendete Objekte' ).
+        lo_o3->set_note( lcl_t=>t( d = 'Verwendete Objekte' e = 'Objects used' ) ).
         LOOP AT lt_d INTO DATA(ls_d).
           lo_o3->add_field( VALUE ty_field( name     = ls_d-objectname
                                             rollname = ls_d-objecttype ) ).
@@ -1779,7 +1902,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       IF sy-subrc <> 0.
         " Package without a catalog entry - note it instead of aborting
         lo_pchap->set_documentation(
-          |Objektliste nicht lesbar: { pack_reason( sy-subrc ) }.| ).
+          |{ lcl_t=>t( d = `Objektliste nicht lesbar` e = `Object list cannot be read` ) }| &&
+          |: { pack_reason( sy-subrc ) }.| ).
         CONTINUE.
       ENDIF.
 
@@ -1955,7 +2079,7 @@ FORM download USING iv_content TYPE string
   DATA lv_dir  TYPE string.
 
   IF sy-batch = abap_true.
-    WRITE: / 'Download auf den PC im Hintergrund nicht möglich:', iv_ext.
+    WRITE: / lcl_t=>ui( d = `Download auf den PC im Hintergrund nicht möglich:` e = `PC download not possible in the background:` ), iv_ext.
     RETURN.
   ENDIF.
 
@@ -1989,9 +2113,9 @@ FORM download USING iv_content TYPE string
       OTHERS       = 1 ).
 
   IF sy-subrc = 0.
-    WRITE: / 'Datei geschrieben               :', lv_file.
+    WRITE: / lcl_t=>ui( d = `Datei geschrieben               :` e = `File written                     :` ), lv_file.
   ELSE.
-    WRITE: / 'Download fehlgeschlagen         :', lv_file.
+    WRITE: / lcl_t=>ui( d = `Download fehlgeschlagen         :` e = `Download failed                  :` ), lv_file.
   ENDIF.
 
 ENDFORM.
@@ -2020,14 +2144,14 @@ FORM download_srv USING iv_content TYPE string
   TRY.
       OPEN DATASET lv_file FOR OUTPUT IN BINARY MODE MESSAGE lv_msg.
       IF sy-subrc <> 0.
-        WRITE: / 'Serverdatei nicht anlegbar      :', lv_file, lv_msg.
+        WRITE: / lcl_t=>ui( d = `Serverdatei nicht anlegbar      :` e = `Server file cannot be created    :` ), lv_file, lv_msg.
         RETURN.
       ENDIF.
       TRANSFER lv_x TO lv_file.
       CLOSE DATASET lv_file.
-      WRITE: / 'Serverdatei geschrieben         :', lv_file.
+      WRITE: / lcl_t=>ui( d = `Serverdatei geschrieben         :` e = `Server file written              :` ), lv_file.
     CATCH cx_root.
-      WRITE: / 'Serverdatei fehlgeschlagen      :', lv_file.
+      WRITE: / lcl_t=>ui( d = `Serverdatei fehlgeschlagen      :` e = `Server file failed               :` ), lv_file.
   ENDTRY.
 
 ENDFORM.
@@ -2036,6 +2160,9 @@ ENDFORM.
 * Main flow
 *----------------------------------------------------------------------*
 START-OF-SELECTION.
+
+* The document speaks the output language, including its own headings.
+  lcl_t=>set_lang( p_langu ).
 
   DATA(lo_collector) = NEW lcl_collector_dev( iv_pack   = p_pack
                                               iv_recur  = p_recur
@@ -2067,40 +2194,40 @@ START-OF-SELECTION.
 
   DATA(ls_docmeta) = lo_doc->get_meta( ).
 
-  WRITE: / 'Documizer - Entwicklerdokumentation'.
+  WRITE: / lcl_t=>ui( d = `Documizer - Entwicklerdokumentation` e = `Documizer - developer documentation` ).
   ULINE.
-  WRITE: / 'Startpaket                       :', p_pack.
-  WRITE: / 'Pakete                           :', lo_collector->get_stat_packages( ).
-  WRITE: / 'Objekte aufgenommen              :', lo_collector->get_stat_objects( ).
-  WRITE: / 'Objekte gefunden                 :', lo_collector->get_stat_total( ).
-  WRITE: / 'mit Objektdokumentation          :', lo_collector->get_stat_docu( ).
+  WRITE: / lcl_t=>ui( d = `Startpaket                       :` e = `Start package                    :` ), p_pack.
+  WRITE: / lcl_t=>ui( d = `Pakete                           :` e = `Packages                         :` ), lo_collector->get_stat_packages( ).
+  WRITE: / lcl_t=>ui( d = `Objekte aufgenommen              :` e = `Objects included                 :` ), lo_collector->get_stat_objects( ).
+  WRITE: / lcl_t=>ui( d = `Objekte gefunden                 :` e = `Objects found                    :` ), lo_collector->get_stat_total( ).
+  WRITE: / lcl_t=>ui( d = `mit Objektdokumentation          :` e = `with object documentation        :` ), lo_collector->get_stat_docu( ).
   IF p_src = abap_true.
-    WRITE: / 'mit Quelltext                    :', lo_collector->get_stat_source( ).
+    WRITE: / lcl_t=>ui( d = `mit Quelltext                    :` e = `with source code                 :` ), lo_collector->get_stat_source( ).
   ENDIF.
   IF p_used = abap_true.
-    WRITE: / 'mit Verwendungsnachweis          :', lo_collector->get_stat_usage( ).
+    WRITE: / lcl_t=>ui( d = `mit Verwendungsnachweis          :` e = `with where-used list             :` ), lo_collector->get_stat_usage( ).
   ENDIF.
   IF p_calls = abap_true.
-    WRITE: / 'mit ausgehenden Aufrufen         :', lo_collector->get_stat_calls( ).
+    WRITE: / lcl_t=>ui( d = `mit ausgehenden Aufrufen         :` e = `with outgoing references         :` ), lo_collector->get_stat_calls( ).
   ENDIF.
   IF p_falb = abap_true.
-    WRITE: / 'davon in Ersatzsprache           :', lo_collector->get_stat_fallback( ).
+    WRITE: / lcl_t=>ui( d = `davon in Ersatzsprache           :` e = `of these in the fallback language:` ), lo_collector->get_stat_fallback( ).
   ENDIF.
   IF lv_xml IS NOT INITIAL.
-    WRITE: / 'XML-Zeichen                      :', strlen( lv_xml ).
+    WRITE: / lcl_t=>ui( d = `XML-Zeichen                      :` e = `XML characters                   :` ), strlen( lv_xml ).
   ENDIF.
 
   IF ls_docmeta-truncated = abap_true.
-    WRITE: / 'ACHTUNG: Objektgrenze erreicht, Dokument unvollständig.'.
+    WRITE: / lcl_t=>ui( d = `ACHTUNG: Objektgrenze erreicht, Dokument unvollständig.` e = `CAUTION: object limit reached, document is incomplete.` ).
   ENDIF.
 
   IF p_rtest = abap_true AND lv_xml IS NOT INITIAL.
     DATA(lo_doc2) = lcl_parser_xml=>parse( lv_xml ).
     DATA(lv_xml2) = lo_renderer->render( lo_doc2 ).
     IF lv_xml = lv_xml2.
-      WRITE: / 'Roundtrip                        : IDENTISCH - bestanden'.
+      WRITE: / lcl_t=>ui( d = `Roundtrip                        : IDENTISCH - bestanden` e = `Roundtrip                        : IDENTICAL - passed` ).
     ELSE.
-      WRITE: / 'Roundtrip                        : ABWEICHUNG', strlen( lv_xml2 ).
+      WRITE: / lcl_t=>ui( d = `Roundtrip                        : ABWEICHUNG` e = `Roundtrip                        : DEVIATION` ), strlen( lv_xml2 ).
     ENDIF.
   ENDIF.
 
@@ -2117,7 +2244,7 @@ START-OF-SELECTION.
     DATA lo_html TYPE REF TO lif_docu_renderer.
     lo_html = NEW lcl_renderer_html( ).
     DATA(lv_html) = lo_html->render( lo_doc ).
-    WRITE: / 'HTML-Zeichen                     :', strlen( lv_html ).
+    WRITE: / lcl_t=>ui( d = `HTML-Zeichen                     :` e = `HTML characters                  :` ), strlen( lv_html ).
     IF p_down = abap_true.
       PERFORM download USING lv_html 'html'.
     ENDIF.
@@ -2132,7 +2259,7 @@ START-OF-SELECTION.
 
   IF p_xml = abap_true.
     SKIP.
-    WRITE: / 'Erzeugtes XML'.
+    WRITE: / lcl_t=>ui( d = `Erzeugtes XML` e = `Generated XML` ).
     ULINE.
     DATA(lv_pretty) = lo_renderer->render( io_document = lo_doc iv_pretty = abap_true ).
     SPLIT lv_pretty AT cl_abap_char_utilities=>newline INTO TABLE DATA(lt_lines).

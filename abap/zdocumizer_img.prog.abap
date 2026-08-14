@@ -32,6 +32,52 @@ CLASS lcl_object   DEFINITION DEFERRED.
 CLASS lcl_document DEFINITION DEFERRED.
 
 *----------------------------------------------------------------------*
+* lcl_t - texts of the document itself
+*
+* Everything that ends up in the document follows the output language the
+* user selected, not the logon language: headings, table columns, notes.
+* A document requested in English must not carry German column headers.
+*
+* Only German and English are provided. Any other output language falls
+* back to English, which is the maintenance language of the SAP standard.
+*----------------------------------------------------------------------*
+CLASS lcl_t DEFINITION.
+  PUBLIC SECTION.
+    CLASS-METHODS set_lang IMPORTING iv_langu TYPE sy-langu.
+    CLASS-METHODS t IMPORTING d         TYPE string
+                              e         TYPE string
+                    RETURNING VALUE(rv) TYPE string.
+    CLASS-METHODS ui IMPORTING d         TYPE string
+                               e         TYPE string
+                     RETURNING VALUE(rv) TYPE string.
+  PRIVATE SECTION.
+    CLASS-DATA gv_de TYPE abap_bool.
+ENDCLASS.
+
+CLASS lcl_t IMPLEMENTATION.
+  METHOD set_lang.
+    gv_de = boolc( iv_langu = 'D' ).
+  ENDMETHOD.
+  METHOD t.
+    IF gv_de = abap_true.
+      rv = d.
+    ELSE.
+      rv = e.
+    ENDIF.
+  ENDMETHOD.
+  METHOD ui.
+*   The run protocol on screen belongs to whoever started the report, so
+*   it follows the logon language - unlike the document, which follows
+*   the output language.
+    IF sy-langu = 'D'.
+      rv = d.
+    ELSE.
+      rv = e.
+    ENDIF.
+  ENDMETHOD.
+ENDCLASS.
+
+*----------------------------------------------------------------------*
 * Model types
 *----------------------------------------------------------------------*
 TYPES: BEGIN OF ty_field,
@@ -1216,8 +1262,10 @@ CLASS lcl_cust IMPLEMENTATION.
       ID 'ACTVT' FIELD '03'
       ID 'TABLE' FIELD lv_tabname.
     IF sy-subrc <> 0.
-      io_obj->set_note( |{ io_obj->get_note( ) } Keine Leseberechtigung (S_TABU_NAM).| ).
-      io_obj->set_filter( 'GESPERRT' ).
+      io_obj->set_note( |{ io_obj->get_note( ) } { lcl_t=>t(
+        d = `Keine Leseberechtigung (S_TABU_NAM).`
+        e = `No read authorization (S_TABU_NAM).` ) }| ).
+      io_obj->set_filter( lcl_t=>t( d = 'GESPERRT' e = 'BLOCKED' ) ).
       RETURN.
     ENDIF.
 
@@ -1235,8 +1283,10 @@ CLASS lcl_cust IMPLEMENTATION.
       ENDLOOP.
 
       IF lv_kf IS INITIAL.
-        io_obj->set_filter( 'ALLE' ).
-        io_obj->set_note( |{ io_obj->get_note( ) } Kundenfilter nicht anwendbar.| ).
+        io_obj->set_filter( lcl_t=>t( d = 'ALLE' e = 'ALL' ) ).
+        io_obj->set_note( |{ io_obj->get_note( ) } { lcl_t=>t(
+          d = `Kundenfilter nicht anwendbar.`
+          e = `Customer filter not applicable.` ) }| ).
       ELSE.
         APPEND |{ lv_kf } LIKE 'Y%' OR { lv_kf } LIKE 'Z%' OR { lv_kf } LIKE '/%'|
                TO lt_where.
@@ -1254,23 +1304,25 @@ CLASS lcl_cust IMPLEMENTATION.
           ENDLOOP.
           IF lv_in IS NOT INITIAL.
             APPEND |OR { lv_kf } IN ( { lv_in } )| TO lt_where.
-            io_obj->set_filter( 'NAMENSRAUM+TRANSPORT' ).
+            io_obj->set_filter( lcl_t=>t( d = 'NAMENSRAUM+TRANSPORT' e = 'NAMESPACE+TRANSPORT' ) ).
           ELSE.
-            io_obj->set_filter( 'NAMENSRAUM' ).
+            io_obj->set_filter( lcl_t=>t( d = 'NAMENSRAUM' e = 'NAMESPACE' ) ).
           ENDIF.
         ELSE.
-          io_obj->set_filter( 'NAMENSRAUM' ).
+          io_obj->set_filter( lcl_t=>t( d = 'NAMENSRAUM' e = 'NAMESPACE' ) ).
         ENDIF.
       ENDIF.
 
     ELSE.
-      io_obj->set_filter( 'ALLE' ).
+      io_obj->set_filter( lcl_t=>t( d = 'ALLE' e = 'ALL' ) ).
     ENDIF.
 
     TRY.
         SELECT COUNT(*) FROM (iv_tab) WHERE (lt_where) INTO @lv_cnt.
       CATCH cx_root.
-        io_obj->set_note( |{ io_obj->get_note( ) } Tabelle nicht lesbar.| ).
+        io_obj->set_note( |{ io_obj->get_note( ) } { lcl_t=>t(
+          d = `Tabelle nicht lesbar.`
+          e = `Table cannot be read.` ) }| ).
         RETURN.
     ENDTRY.
 
@@ -1289,7 +1341,9 @@ CLASS lcl_cust IMPLEMENTATION.
             WHERE (lt_where).
         ENDIF.
       CATCH cx_root.
-        io_obj->set_note( |{ io_obj->get_note( ) } Daten nicht lesbar.| ).
+        io_obj->set_note( |{ io_obj->get_note( ) } { lcl_t=>t(
+          d = `Daten nicht lesbar.`
+          e = `Data cannot be read.` ) }| ).
         RETURN.
     ENDTRY.
 
@@ -1321,7 +1375,8 @@ CLASS lcl_cust IMPLEMENTATION.
       DATA(lo_none) = NEW lcl_object( iv_type  = iv_type
                                       iv_name  = iv_name
                                       iv_tcode = iv_tcode ).
-      lo_none->set_note( 'Kein lesbares Datenobjekt hinterlegt.' ).
+      lo_none->set_note( lcl_t=>t( d = 'Kein lesbares Datenobjekt hinterlegt.'
+                                   e = 'No readable data object assigned.' ) ).
       APPEND lo_none TO rt_objects.
       RETURN.
     ENDIF.
@@ -1333,7 +1388,7 @@ CLASS lcl_cust IMPLEMENTATION.
                                      iv_tcode = iv_tcode ).
 
       IF lv_tab <> iv_name.
-        lo_obj->set_note( |Basistabelle aus { iv_name }.| ).
+        lo_obj->set_note( |{ lcl_t=>t( d = `Basistabelle aus` e = `Base table from` ) } { iv_name }.| ).
       ENDIF.
 
       DATA(lt_flds) = read_ddic( lv_tab ).
@@ -1983,14 +2038,14 @@ CLASS lcl_renderer_html IMPLEMENTATION.
     " The IMG documentation is divided into fixed sections that appear in
     " the ITF text as &NAME&. They become subheadings.
     CASE iv_marker.
-      WHEN 'SHORTTEXT'.      rv_label = 'Kurztext'.
-      WHEN 'USE'.            rv_label = 'Verwendung'.
-      WHEN 'PRECONDITIONS'.  rv_label = 'Voraussetzungen'.
-      WHEN 'STANDARD_SETUP'. rv_label = 'Standardeinstellungen'.
-      WHEN 'ACTIVITY'.       rv_label = 'Vorgehen'.
-      WHEN 'EXAMPLE'.        rv_label = 'Beispiel'.
-      WHEN 'RECOMMENDATION'. rv_label = 'Empfehlung'.
-      WHEN 'CAUTION'.        rv_label = 'Achtung'.
+      WHEN 'SHORTTEXT'.      rv_label = lcl_t=>t( d = 'Kurztext' e = 'Short text' ).
+      WHEN 'USE'.            rv_label = lcl_t=>t( d = 'Verwendung' e = 'Use' ).
+      WHEN 'PRECONDITIONS'.  rv_label = lcl_t=>t( d = 'Voraussetzungen' e = 'Prerequisites' ).
+      WHEN 'STANDARD_SETUP'. rv_label = lcl_t=>t( d = 'Standardeinstellungen' e = 'Standard settings' ).
+      WHEN 'ACTIVITY'.       rv_label = lcl_t=>t( d = 'Vorgehen' e = 'Activities' ).
+      WHEN 'EXAMPLE'.        rv_label = lcl_t=>t( d = 'Beispiel' e = 'Example' ).
+      WHEN 'RECOMMENDATION'. rv_label = lcl_t=>t( d = 'Empfehlung' e = 'Recommendation' ).
+      WHEN 'CAUTION'.        rv_label = lcl_t=>t( d = 'Achtung' e = 'Caution' ).
       WHEN OTHERS.           rv_label = iv_marker.
     ENDCASE.
   ENDMETHOD.
@@ -2098,33 +2153,42 @@ CLASS lcl_renderer_html IMPLEMENTATION.
     add( 'ul.toc{line-height:1.6}' ).
     add( '</style></head><body>' ).
 
-    add( |<h1>Documizer - { esc( ls_meta-doc_type ) }-Dokumentation</h1>| ).
+    add( |<h1>{ lcl_t=>t( d = 'Documizer - IMG-Dokumentation'
+                          e = 'Documizer - IMG documentation' ) }</h1>| ).
 
     add( '<table>' ).
     add( |<tr><th>System</th><td>{ esc( ls_meta-system ) }| &&
-         | / Mandant { esc( ls_meta-client ) }</td></tr>| ).
-    add( |<tr><th>Erzeugt</th><td>{ esc( ls_meta-created_at ) }| &&
-         | von { esc( ls_meta-created_by ) }</td></tr>| ).
-    add( |<tr><th>Sprache</th><td>{ esc( ls_meta-language ) }</td></tr>| ).
+         | / { lcl_t=>t( d = 'Mandant' e = 'Client' ) } { esc( ls_meta-client ) }</td></tr>| ).
+    add( |<tr><th>{ lcl_t=>t( d = 'Erzeugt' e = 'Created' ) }</th>| &&
+         |<td>{ esc( ls_meta-created_at ) }| &&
+         | { lcl_t=>t( d = 'von' e = 'by' ) } { esc( ls_meta-created_by ) }</td></tr>| ).
+    add( |<tr><th>{ lcl_t=>t( d = 'Sprache' e = 'Language' ) }</th>| &&
+         |<td>{ esc( ls_meta-language ) }</td></tr>| ).
     add( |<tr><th>Format</th><td>Version { esc( ls_meta-version ) }</td></tr>| ).
 
     DATA lv_limit TYPE string.
     IF ls_meta-node_limit = 0.
-      lv_limit = 'ohne Begrenzung'.
+      lv_limit = lcl_t=>t( d = 'ohne Begrenzung' e = 'no limit' ).
     ELSE.
-      lv_limit = |Limit { ls_meta-node_limit }|.
+      lv_limit = |{ lcl_t=>t( d = 'Limit' e = 'limit' ) } { ls_meta-node_limit }|.
     ENDIF.
-    add( |<tr><th>Kapitel</th><td>{ ls_meta-node_total } im gewählten Umfang, | &&
+    add( |<tr><th>{ lcl_t=>t( d = 'Kapitel' e = 'Chapters' ) }</th>| &&
+         |<td>{ ls_meta-node_total } | &&
+         |{ lcl_t=>t( d = 'im gewählten Umfang' e = 'in the selected scope' ) }, | &&
          |{ lv_limit }</td></tr>| ).
     add( '</table>' ).
 
     IF ls_meta-truncated = abap_true.
-      add( |<p class="warn">Achtung: Von { ls_meta-node_total } Kapiteln im | &&
-           |gewählten Umfang sind nur { ls_meta-node_limit } enthalten. | &&
-           |Das Dokument ist unvollständig.</p>| ).
+      add( |<p class="warn">{ lcl_t=>t(
+             d = |Achtung: Von { ls_meta-node_total } Kapiteln im gewählten | &&
+                 |Umfang sind nur { ls_meta-node_limit } enthalten. Das | &&
+                 |Dokument ist unvollständig.|
+             e = |Caution: of { ls_meta-node_total } chapters in the selected | &&
+                 |scope only { ls_meta-node_limit } are contained. The | &&
+                 |document is incomplete.| ) }</p>| ).
     ENDIF.
 
-    add( '<h2>Inhalt</h2><ul class="toc">' ).
+    add( |<h2>{ lcl_t=>t( d = 'Inhalt' e = 'Contents' ) }</h2><ul class="toc">| ).
     LOOP AT io_document->get_chapters( ) INTO DATA(lo_top).
       write_toc( lo_top ).
     ENDLOOP.
@@ -2170,17 +2234,20 @@ CLASS lcl_renderer_html IMPLEMENTATION.
 
     IF io_chapter->has_reference( ) = abap_true.
       DATA(ls_ref) = io_chapter->get_reference( ).
-      add( |<p class="ref">IMG-Aktivität { esc( ls_ref-activity ) }| &&
-           |, Transaktion { esc( ls_ref-tcode ) }| &&
-           |, Dokuobjekt { esc( ls_ref-docu_id ) }</p>| ).
+      add( |<p class="ref">{ lcl_t=>t( d = 'IMG-Aktivität' e = 'IMG activity' ) }| &&
+           | { esc( ls_ref-activity ) }| &&
+           |, { lcl_t=>t( d = 'Transaktion' e = 'transaction' ) } { esc( ls_ref-tcode ) }| &&
+           |, { lcl_t=>t( d = 'Dokuobjekt' e = 'doc object' ) } { esc( ls_ref-docu_id ) }</p>| ).
     ENDIF.
 
     IF io_chapter->has_project( ) = abap_true.
       DATA(ls_pr) = io_chapter->get_project( ).
-      add( |<div class="proj"><b>Projekt { esc( ls_pr-project ) }</b>| ).
+      add( |<div class="proj"><b>{ lcl_t=>t( d = 'Projekt' e = 'Project' ) }| &&
+           | { esc( ls_pr-project ) }</b>| ).
       IF ls_pr-status IS NOT INITIAL.
         add( | &nbsp; Status { esc( ls_pr-status ) }| &&
-             | &nbsp; Fortschritt { esc( ls_pr-done ) } %| ).
+             | &nbsp; { lcl_t=>t( d = 'Fortschritt' e = 'progress' ) }| &&
+             | { esc( ls_pr-done ) } %| ).
       ENDIF.
       IF ls_pr-memo IS NOT INITIAL.
         add( |<p class="memo">{ esc( ls_pr-memo ) }</p>| ).
@@ -2196,16 +2263,20 @@ CLASS lcl_renderer_html IMPLEMENTATION.
 
       DATA lv_rows TYPE string.
       IF lo_obj->get_truncated( ) = abap_true.
-        lv_rows = |{ lines( lo_obj->get_rows( ) ) } von { lo_obj->get_row_count( ) } (gekürzt)|.
+        lv_rows = |{ lines( lo_obj->get_rows( ) ) } | &&
+                  |{ lcl_t=>t( d = 'von' e = 'of' ) } { lo_obj->get_row_count( ) } | &&
+                  |{ lcl_t=>t( d = '(gekürzt)' e = '(truncated)' ) }|.
       ELSE.
         lv_rows = |{ lo_obj->get_row_count( ) }|.
       ENDIF.
 
       add( |<p class="obj"><b>{ esc( lo_obj->get_name( ) ) }</b>| &&
-           | &nbsp; Typ { esc( lo_obj->get_type( ) ) }| &&
-           | &nbsp; Transaktion { esc( lo_obj->get_tcode( ) ) }| &&
-           | &nbsp; Zeilen { lv_rows }| &&
-           | &nbsp; Auswahl { esc( lo_obj->get_filter( ) ) }</p>| ).
+           | &nbsp; { lcl_t=>t( d = 'Typ' e = 'type' ) } { esc( lo_obj->get_type( ) ) }| &&
+           | &nbsp; { lcl_t=>t( d = 'Transaktion' e = 'transaction' ) }| &&
+           | { esc( lo_obj->get_tcode( ) ) }| &&
+           | &nbsp; { lcl_t=>t( d = 'Zeilen' e = 'rows' ) } { lv_rows }| &&
+           | &nbsp; { lcl_t=>t( d = 'Auswahl' e = 'selection' ) }| &&
+           | { esc( lo_obj->get_filter( ) ) }</p>| ).
 
       IF lo_obj->get_note( ) IS NOT INITIAL.
         add( |<p class="warn">{ esc( lo_obj->get_note( ) ) }</p>| ).
@@ -2232,7 +2303,9 @@ CLASS lcl_renderer_html IMPLEMENTATION.
         add( '</table>' ).
       ELSEIF lines( lo_obj->get_fields( ) ) > 0.
         " no data, but the structure is known
-        add( '<table><tr><th>Feld</th><th>Datenelement</th><th>Schlüssel</th></tr>' ).
+        add( |<table><tr><th>{ lcl_t=>t( d = 'Feld' e = 'Field' ) }</th>| &&
+             |<th>{ lcl_t=>t( d = 'Datenelement' e = 'Data element' ) }</th>| &&
+             |<th>{ lcl_t=>t( d = 'Schlüssel' e = 'Key' ) }</th></tr>| ).
         LOOP AT lo_obj->get_fields( ) INTO DATA(ls_fs).
           add( |<tr><td>{ esc( ls_fs-name ) }</td>| &&
                |<td>{ esc( ls_fs-rollname ) }</td>| &&
@@ -2243,9 +2316,12 @@ CLASS lcl_renderer_html IMPLEMENTATION.
 
       " Transport history
       IF lines( lo_obj->get_transports( ) ) > 0.
-        add( '<p class="ref">Transport-Historie</p>' ).
-        add( '<table><tr><th>Auftrag</th><th>Benutzer</th>' &&
-             '<th>Datum</th><th>Kurztext</th></tr>' ).
+        add( |<p class="ref">{ lcl_t=>t( d = 'Transport-Historie'
+                                         e = 'Transport history' ) }</p>| ).
+        add( |<table><tr><th>{ lcl_t=>t( d = 'Auftrag' e = 'Request' ) }</th>| &&
+             |<th>{ lcl_t=>t( d = 'Benutzer' e = 'User' ) }</th>| &&
+             |<th>{ lcl_t=>t( d = 'Datum' e = 'Date' ) }</th>| &&
+             |<th>{ lcl_t=>t( d = 'Kurztext' e = 'Short text' ) }</th></tr>| ).
         LOOP AT lo_obj->get_transports( ) INTO DATA(ls_th).
           add( |<tr><td>{ esc( ls_th-trkorr ) }</td>| &&
                |<td>{ esc( ls_th-user ) }</td>| &&
@@ -2441,8 +2517,8 @@ FORM download USING iv_content TYPE string
   DATA lv_dir  TYPE string.
 
   IF sy-batch = abap_true.
-    WRITE: / 'Download auf den PC im Hintergrund nicht möglich:', iv_ext.
-    WRITE: / 'Bitte Verzeichnis auf dem Applikationsserver angeben.'.
+    WRITE: / lcl_t=>ui( d = `Download auf den PC im Hintergrund nicht möglich:` e = `PC download not possible in the background:` ), iv_ext.
+    WRITE: / lcl_t=>ui( d = `Bitte Verzeichnis auf dem Applikationsserver angeben.` e = `Please specify a directory on the application server.` ).
     RETURN.
   ENDIF.
 
@@ -2479,9 +2555,9 @@ FORM download USING iv_content TYPE string
       OTHERS       = 1 ).
 
   IF sy-subrc = 0.
-    WRITE: / 'Datei geschrieben               :', lv_file.
+    WRITE: / lcl_t=>ui( d = `Datei geschrieben               :` e = `File written                     :` ), lv_file.
   ELSE.
-    WRITE: / 'Download fehlgeschlagen         :', lv_file.
+    WRITE: / lcl_t=>ui( d = `Download fehlgeschlagen         :` e = `Download failed                  :` ), lv_file.
   ENDIF.
 
 ENDFORM.
@@ -2517,14 +2593,14 @@ FORM download_srv USING iv_content TYPE string
   TRY.
       OPEN DATASET lv_file FOR OUTPUT IN BINARY MODE MESSAGE lv_msg.
       IF sy-subrc <> 0.
-        WRITE: / 'Serverdatei nicht anlegbar      :', lv_file, lv_msg.
+        WRITE: / lcl_t=>ui( d = `Serverdatei nicht anlegbar      :` e = `Server file cannot be created    :` ), lv_file, lv_msg.
         RETURN.
       ENDIF.
       TRANSFER lv_x TO lv_file.
       CLOSE DATASET lv_file.
-      WRITE: / 'Serverdatei geschrieben         :', lv_file.
+      WRITE: / lcl_t=>ui( d = `Serverdatei geschrieben         :` e = `Server file written              :` ), lv_file.
     CATCH cx_root.
-      WRITE: / 'Serverdatei fehlgeschlagen      :', lv_file.
+      WRITE: / lcl_t=>ui( d = `Serverdatei fehlgeschlagen      :` e = `Server file failed               :` ), lv_file.
   ENDTRY.
 
 ENDFORM.
@@ -2537,7 +2613,7 @@ FORM search_structures.
   DATA lv_pattern TYPE string.
 
   IF p_srch IS INITIAL.
-    WRITE: / 'Bitte Struktur-GUID (P_TREE) oder Suchbegriff (P_SRCH) angeben.'.
+    WRITE: / lcl_t=>ui( d = `Bitte Struktur-GUID (P_TREE) oder Suchbegriff (P_SRCH) angeben.` e = `Please specify a structure GUID (P_TREE) or a search term (P_SRCH).` ).
     RETURN.
   ENDIF.
 
@@ -2554,11 +2630,11 @@ FORM search_structures.
     UP TO 50 ROWS.
 
   IF lines( lt_hits ) = 0.
-    WRITE: / 'Keine IMG-Struktur gefunden zu:', p_srch.
+    WRITE: / lcl_t=>ui( d = `Keine IMG-Struktur gefunden zu:` e = `No IMG structure found for:` ), p_srch.
     RETURN.
   ENDIF.
 
-  WRITE: / 'Gefundene IMG-Strukturen - GUID in P_TREE übernehmen'.
+  WRITE: / lcl_t=>ui( d = `Gefundene IMG-Strukturen - GUID in P_TREE übernehmen` e = `IMG structures found - copy the GUID into P_TREE` ).
   ULINE.
   LOOP AT lt_hits INTO DATA(ls_hit).
     WRITE: / ls_hit-tree_id, ls_hit-text.
@@ -2570,6 +2646,9 @@ ENDFORM.
 * Main flow
 *----------------------------------------------------------------------*
 START-OF-SELECTION.
+
+* The document speaks the output language, including its own headings.
+  lcl_t=>set_lang( p_langu ).
 
   IF p_tree IS INITIAL.
     PERFORM search_structures.
@@ -2611,37 +2690,38 @@ START-OF-SELECTION.
     lv_xml = lo_renderer->render( lo_doc ).
   ENDIF.
 
-  WRITE: / 'Documizer - IMG-Collector (ohne Dateninhalte)'.
+  WRITE: / lcl_t=>ui( d = `Documizer - IMG-Collector (ohne Dateninhalte)` e = `Documizer - IMG collector` ).
   ULINE.
-  WRITE: / 'Struktur                         :', p_tree.
+  WRITE: / lcl_t=>ui( d = `Struktur                         :` e = `Structure                        :` ), p_tree.
   DATA(ls_docmeta) = lo_doc->get_meta( ).
 
-  WRITE: / 'Kapitel erzeugt                  :', lo_collector->get_stat_nodes( ).
-  WRITE: / 'Kapitel im gewaehlten Umfang     :', ls_docmeta-node_total.
+  WRITE: / lcl_t=>ui( d = `Kapitel erzeugt                  :` e = `Chapters created                 :` ), lo_collector->get_stat_nodes( ).
+  WRITE: / lcl_t=>ui( d = `Kapitel im gewaehlten Umfang     :` e = `Chapters in the selected scope   :` ), ls_docmeta-node_total.
   IF p_maxnod = 0.
-    WRITE: / 'Limit                            : ohne Begrenzung'.
+    WRITE: / lcl_t=>ui( d = `Limit                            : ohne Begrenzung` e = `Limit                            : none` ).
   ELSE.
-    WRITE: / 'Limit                            :', p_maxnod.
+    WRITE: / lcl_t=>ui( d = `Limit                            :` e = `Limit                            :` ), p_maxnod.
   ENDIF.
-  WRITE: / 'davon Aktivitäten                :', lo_collector->get_stat_activities( ).
-  WRITE: / 'mit Standarddokumentation        :', lo_collector->get_stat_docu( ).
+  WRITE: / lcl_t=>ui( d = `davon Aktivitäten                :` e = `of these activities              :` ), lo_collector->get_stat_activities( ).
+  WRITE: / lcl_t=>ui( d = `mit Standarddokumentation        :` e = `with standard documentation      :` ), lo_collector->get_stat_docu( ).
   IF p_falb = abap_true.
-    WRITE: / 'davon in Ersatzsprache           :', lo_collector->get_stat_fallback( ).
+    WRITE: / lcl_t=>ui( d = `davon in Ersatzsprache           :` e = `of these in the fallback language:` ), lo_collector->get_stat_fallback( ).
   ENDIF.
-  WRITE: / 'zugeordnete Objekte              :', lo_collector->get_stat_objects( ).
+  WRITE: / lcl_t=>ui( d = `zugeordnete Objekte              :` e = `assigned objects                 :` ), lo_collector->get_stat_objects( ).
   IF p_proj IS NOT INITIAL.
-    WRITE: / 'Kapitel mit Projektdaten         :', lo_collector->get_stat_project( ).
+    WRITE: / lcl_t=>ui( d = `Kapitel mit Projektdaten         :` e = `chapters with project data       :` ), lo_collector->get_stat_project( ).
     IF p_onlypr = abap_true AND p_maxnod > 0.
-      WRITE: / 'Hinweis: Kapitelgrenze im Projektmodus ausgesetzt,',
-               'sonst wuerden tiefe Projektknoten nicht gefunden.'.
+      WRITE: / lcl_t=>ui( d = `Hinweis: Kapitelgrenze im Projektmodus ausgesetzt,` e = `Note: chapter limit suspended in project mode,` ),
+               lcl_t=>ui( d = `sonst wuerden tiefe Projektknoten nicht gefunden.`
+                          e = `deep project nodes would not be found otherwise.` ).
     ENDIF.
   ENDIF.
   IF lv_xml IS NOT INITIAL.
-    WRITE: / 'XML-Zeichen                      :', strlen( lv_xml ).
+    WRITE: / lcl_t=>ui( d = `XML-Zeichen                      :` e = `XML characters                   :` ), strlen( lv_xml ).
   ENDIF.
 
   IF ls_docmeta-truncated = abap_true.
-    WRITE: / 'ACHTUNG: Limit erreicht, Dokument unvollständig.'.
+    WRITE: / lcl_t=>ui( d = `ACHTUNG: Limit erreicht, Dokument unvollständig.` e = `CAUTION: limit reached, document is incomplete.` ).
   ENDIF.
 
   " Check the roundtrip against real data, not just against a sample
@@ -2649,9 +2729,9 @@ START-OF-SELECTION.
     DATA(lo_doc2) = lcl_parser_xml=>parse( lv_xml ).
     DATA(lv_xml2) = lo_renderer->render( lo_doc2 ).
     IF lv_xml = lv_xml2.
-      WRITE: / 'Roundtrip                        : IDENTISCH - bestanden'.
+      WRITE: / lcl_t=>ui( d = `Roundtrip                        : IDENTISCH - bestanden` e = `Roundtrip                        : IDENTICAL - passed` ).
     ELSE.
-      WRITE: / 'Roundtrip                        : ABWEICHUNG', strlen( lv_xml2 ).
+      WRITE: / lcl_t=>ui( d = `Roundtrip                        : ABWEICHUNG` e = `Roundtrip                        : DEVIATION` ), strlen( lv_xml2 ).
     ENDIF.
   ENDIF.
 
@@ -2668,7 +2748,7 @@ START-OF-SELECTION.
     DATA lo_html TYPE REF TO lif_docu_renderer.
     lo_html = NEW lcl_renderer_html( ).
     DATA(lv_html) = lo_html->render( lo_doc ).
-    WRITE: / 'HTML-Zeichen                     :', strlen( lv_html ).
+    WRITE: / lcl_t=>ui( d = `HTML-Zeichen                     :` e = `HTML characters                  :` ), strlen( lv_html ).
 
     IF p_down = abap_true.
       PERFORM download USING lv_html 'html'.
@@ -2681,13 +2761,13 @@ START-OF-SELECTION.
       cl_abap_browser=>show_html( html_string = lv_html
                                   title       = 'Documizer' ).
     ELSE.
-      WRITE: / 'HTML-Anzeige im Hintergrund nicht möglich.'.
+      WRITE: / lcl_t=>ui( d = `HTML-Anzeige im Hintergrund nicht möglich.` e = `HTML display not possible in the background.` ).
     ENDIF.
   ENDIF.
 
   IF p_xml = abap_true.
     SKIP.
-    WRITE: / 'Erzeugtes XML'.
+    WRITE: / lcl_t=>ui( d = `Erzeugtes XML` e = `Generated XML` ).
     ULINE.
     DATA(lv_pretty) = lo_renderer->render( io_document = lo_doc iv_pretty = abap_true ).
     SPLIT lv_pretty AT cl_abap_char_utilities=>newline INTO TABLE DATA(lt_lines).

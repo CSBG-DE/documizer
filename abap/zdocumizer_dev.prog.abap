@@ -682,7 +682,7 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE gv_blk2.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tfalb FOR FIELD p_falb.
     PARAMETERS p_falb AS CHECKBOX DEFAULT 'X'.
-    SELECTION-SCREEN COMMENT 35(12) gv_tflng FOR FIELD p_flang.
+    SELECTION-SCREEN COMMENT 35(14) gv_tflng FOR FIELD p_flang.
     PARAMETERS p_flang TYPE sy-langu DEFAULT 'E'.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
@@ -708,6 +708,10 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE gv_blk2.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tuse FOR FIELD p_used.
     PARAMETERS p_used AS CHECKBOX.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tcall FOR FIELD p_calls.
+    PARAMETERS p_calls AS CHECKBOX.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tmaxu FOR FIELD p_maxuse.
@@ -744,38 +748,67 @@ SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE gv_blk3.
 SELECTION-SCREEN END OF BLOCK b3.
 
 INITIALIZATION.
-  gv_blk1  = 'Startpaket'.
-  gv_blk2  = 'Umfang'.
-  gv_blk3  = 'Ausgabe'.
-  gv_tpack = 'Paket'.
-  gv_trec  = 'Unterpakete rekursiv'.
-  gv_tloc  = 'lokale Pakete einbeziehen'.
-  gv_tlang = 'Ausgabesprache'.
-  gv_tfalb = 'Ersatzsprache verwenden'.
-  gv_tflng = 'Ersatzsprache'.
-  gv_tfalb = 'Ersatzsprache verwenden'.
-  gv_tflng = 'Ersatzsprache'.
-  gv_tmaxo = 'Max. Objekte (0 = alle)'.
-  gv_tdoku = 'Objektdokumentation'.
-  gv_tdet  = 'Details (Felder, Methoden)'.
-  gv_tsrc  = 'Quelltext ausgeben'.
-  gv_tmaxs = 'Max. Zeilen je Objekt'.
-  gv_tuse  = 'Verwendungsnachweis'.
-  gv_tmaxu = 'Max. Verwendungen je Objekt'.
-
-* Beschriftung der Select-Options. Bei ihnen greift der COMMENT-Trick nicht,
-* ihre Bezeichnung kommt aus dem Textpool. Ueber die generierten Felder
-* %_<name>_%_app_%-text laesst sie sich zur Laufzeit setzen und bleibt damit
-* wie alle uebrigen Texte im Quelltext.
-  %_s_objtyp_%_app_%-text = 'Objekttyp'.
-  %_s_objnam_%_app_%-text = 'Objektname'.
-  gv_txml  = 'XML erzeugen/ausgeben'.
-  gv_thtml = 'HTML erzeugen/anzeigen'.
-  gv_trt   = 'Roundtrip prüfen'.
-  gv_tdown = 'Download auf PC'.
-  gv_tpath = 'Verzeichnis'.
-  gv_tdsrv = 'Ablage Appl.-Server'.
-  gv_tsrv  = 'Verzeichnis'.
+* Screen labels live in the source, not in the text pool, so that a copied
+* report is readable in any system. English is the default; German is used
+* only when the user is logged on in German.
+  IF sy-langu = 'D'.
+    gv_blk1  = 'Startpaket'.
+    gv_blk2  = 'Umfang'.
+    gv_blk3  = 'Ausgabe'.
+    gv_tpack = 'Paket'.
+    gv_trec  = 'Unterpakete rekursiv'.
+    gv_tloc  = 'lokale Pakete einbeziehen'.
+    gv_tlang = 'Ausgabesprache'.
+    gv_tfalb = 'Ersatzsprache verwenden'.
+    gv_tflng = 'Ersatzsprache'.
+    gv_tmaxo = 'Max. Objekte (0 = alle)'.
+    gv_tdoku = 'Objektdokumentation'.
+    gv_tdet  = 'Details (Felder, Methoden)'.
+    gv_tsrc  = 'Quelltext ausgeben'.
+    gv_tmaxs = 'Max. Zeilen je Objekt'.
+    gv_tuse  = 'Verwendungsnachweis'.
+    gv_tcall = 'Ausgehende Aufrufe'.
+    gv_tmaxu = 'Max. Verwendungen je Objekt'.
+    gv_txml  = 'XML erzeugen/ausgeben'.
+    gv_thtml = 'HTML erzeugen/anzeigen'.
+    gv_trt   = 'Roundtrip prüfen'.
+    gv_tdown = 'Download auf PC'.
+    gv_tpath = 'Verzeichnis'.
+    gv_tdsrv = 'Ablage Appl.-Server'.
+    gv_tsrv  = 'Verzeichnis'.
+    %_s_objtyp_%_app_%-text = 'Objekttyp'.
+    %_s_objnam_%_app_%-text = 'Objektname'.
+  ELSE.
+    gv_blk1  = 'Start package'.
+    gv_blk2  = 'Scope'.
+    gv_blk3  = 'Output'.
+    gv_tpack = 'Package'.
+    gv_trec  = 'Include subpackages'.
+    gv_tloc  = 'Include local packages'.
+    gv_tlang = 'Output language'.
+    gv_tfalb = 'Use fallback language'.
+    gv_tflng = 'Fallback'.
+    gv_tmaxo = 'Max. objects (0 = all)'.
+    gv_tdoku = 'Object documentation'.
+    gv_tdet  = 'Details (fields, methods)'.
+    gv_tsrc  = 'Include source code'.
+    gv_tmaxs = 'Max. lines per object'.
+    gv_tuse  = 'Where-used list'.
+    gv_tcall = 'Outgoing references'.
+    gv_tmaxu = 'Max. entries per object'.
+    gv_txml  = 'Create/show XML'.
+    gv_thtml = 'Create/show HTML'.
+    gv_trt   = 'Check roundtrip'.
+    gv_tdown = 'Download to PC'.
+    gv_tpath = 'Directory'.
+    gv_tdsrv = 'Store on app server'.
+    gv_tsrv  = 'Directory'.
+* Select-options take their label from the text pool; the COMMENT approach
+* used for the other fields does not apply. The generated fields
+* %_<name>_%_app_%-text allow setting it at runtime.
+    %_s_objtyp_%_app_%-text = 'Object type'.
+    %_s_objnam_%_app_%-text = 'Object name'.
+  ENDIF.
 
 AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_path.
   PERFORM f4_verzeichnis.
@@ -950,7 +983,8 @@ CLASS lcl_collector_dev DEFINITION.
                 iv_used   TYPE abap_bool
                 iv_maxuse TYPE i
                 iv_falb   TYPE abap_bool
-                iv_flang  TYPE sy-langu.
+                iv_flang  TYPE sy-langu
+                iv_calls  TYPE abap_bool.
     METHODS get_stat_packages RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_objects  RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_total    RETURNING VALUE(rv) TYPE i.
@@ -958,6 +992,7 @@ CLASS lcl_collector_dev DEFINITION.
     METHODS get_stat_source   RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_usage    RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_fallback RETURNING VALUE(rv) TYPE i.
+    METHODS get_stat_calls    RETURNING VALUE(rv) TYPE i.
   PRIVATE SECTION.
     DATA mv_pack   TYPE devclass.
     DATA mv_recur  TYPE abap_bool.
@@ -970,12 +1005,14 @@ CLASS lcl_collector_dev DEFINITION.
     DATA mv_maxsrc TYPE i.
     DATA mv_used   TYPE abap_bool.
     DATA mv_maxuse TYPE i.
+    DATA mv_calls  TYPE abap_bool.
     DATA mv_falb   TYPE abap_bool.
     DATA mv_flang  TYPE sy-langu.
     DATA mv_n_falb TYPE i.
     DATA mv_last_lang TYPE sy-langu.
     DATA mv_note   TYPE string.
     DATA mv_n_use  TYPE i.
+    DATA mv_n_call TYPE i.
     DATA mv_n_src  TYPE i.
     DATA mv_n_pack TYPE i.
     DATA mv_n_obj  TYPE i.
@@ -1021,6 +1058,9 @@ CLASS lcl_collector_dev DEFINITION.
     METHODS add_usages
       IMPORTING iv_name    TYPE sobj_name
                 io_chapter TYPE REF TO lcl_chapter.
+    METHODS add_calls
+      IMPORTING iv_name    TYPE sobj_name
+                io_chapter TYPE REF TO lcl_chapter.
     METHODS pack_reason
       IMPORTING iv_subrc        TYPE sy-subrc
       RETURNING VALUE(rv_reason) TYPE string.
@@ -1039,6 +1079,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     mv_src    = iv_src.
     mv_maxsrc = iv_maxsrc.
     mv_used   = iv_used.
+    mv_calls  = iv_calls.
     mv_maxuse = iv_maxuse.
     mv_falb   = iv_falb.
     mv_flang  = iv_flang.
@@ -1321,6 +1362,85 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
   ENDMETHOD.
 
+  METHOD add_calls.
+
+    " Outgoing references - the counterpart to the where-used list. Neither
+    " CROSS nor WBCROSSGT carries a secondary index for this direction, so
+    " the read is a scan. On HANA that is acceptable for a column store, but
+    " it is the reason this option is switched off by default.
+
+    TYPES: BEGIN OF ty_call,
+             what TYPE string,
+             kind TYPE string,
+           END OF ty_call.
+
+    DATA lt_call TYPE STANDARD TABLE OF ty_call.
+    DATA ls_call TYPE ty_call.
+    DATA lv_max  TYPE i.
+
+    lv_max = mv_maxuse.
+    IF lv_max <= 0.
+      lv_max = 100000.
+    ENDIF.
+
+    DATA lv_prog TYPE cross-prog.
+    lv_prog = iv_name.
+    SELECT name, type FROM cross
+      WHERE prog = @lv_prog
+      INTO TABLE @DATA(lt_cr)
+      UP TO @lv_max ROWS.
+
+    LOOP AT lt_cr INTO DATA(ls_cr).
+      CLEAR ls_call.
+      ls_call-what = ls_cr-name.
+      ls_call-kind = |Verweis { ls_cr-type }|.
+      APPEND ls_call TO lt_call.
+    ENDLOOP.
+
+    " The includes of a class all start with the class name, so a prefix
+    " match yields the global types the class uses.
+    DATA lv_like TYPE string.
+    lv_like = |{ iv_name }%|.
+    SELECT name FROM wbcrossgt
+      WHERE otype = 'TY' AND include LIKE @lv_like
+      INTO TABLE @DATA(lt_gt)
+      UP TO @lv_max ROWS.
+
+    LOOP AT lt_gt INTO DATA(ls_gt).
+      CLEAR ls_call.
+      ls_call-what = ls_gt-name.
+      ls_call-kind = 'Typverwendung'.
+      APPEND ls_call TO lt_call.
+    ENDLOOP.
+
+    DELETE lt_call WHERE what = iv_name.
+    IF lt_call IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    SORT lt_call BY what kind.
+    DELETE ADJACENT DUPLICATES FROM lt_call COMPARING what.
+
+    DATA(lo_c) = NEW lcl_object( iv_type = 'CALLS'
+                                 iv_name = CONV string( iv_name ) ).
+    IF mv_maxuse > 0 AND lines( lt_call ) >= mv_maxuse.
+      lo_c->set_note( |Verwendete Objekte (bei { mv_maxuse } Eintraegen gekürzt)| ).
+      lo_c->set_truncated( abap_true ).
+    ELSE.
+      lo_c->set_note( 'Verwendete Objekte' ).
+    ENDIF.
+    lo_c->set_row_count( lines( lt_call ) ).
+
+    LOOP AT lt_call INTO ls_call.
+      lo_c->add_field( VALUE ty_field( name     = ls_call-what
+                                       rollname = ls_call-kind ) ).
+    ENDLOOP.
+
+    io_chapter->add_object( lo_c ).
+    mv_n_call = mv_n_call + 1.
+
+  ENDMETHOD.
+
   METHOD pack_reason.
     " Die Ausnahmen der Paket-API in Klartext. Eine nackte Nummer im
     " Dokument zwingt den Leser sonst in die Funktionsbibliothek.
@@ -1458,21 +1578,104 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         lo_o2->set_note( 'Komponenten' ).
         " Fortsetzung siehe unten
         LOOP AT lt_c INTO DATA(ls_c).
-          DATA lv_kind TYPE string.
+          DATA lv_tkind TYPE string.
           CASE ls_c-cmptype.
-            WHEN '0'. lv_kind = 'Attribut'.
-            WHEN '1'. lv_kind = 'Methode'.
-            WHEN '2'. lv_kind = 'Ereignis'.
-            WHEN '3'. lv_kind = 'Typ'.
-            WHEN OTHERS. lv_kind = |Typ { ls_c-cmptype }|.
+            WHEN '0'. lv_tkind = 'Attribut'.
+            WHEN '1'. lv_tkind = 'Methode'.
+            WHEN '2'. lv_tkind = 'Ereignis'.
+            WHEN '3'. lv_tkind = 'Typ'.
+            WHEN OTHERS. lv_tkind = |Typ { ls_c-cmptype }|.
           ENDCASE.
           lo_o2->add_field( VALUE ty_field( name     = ls_c-cmpname
-                                            rollname = lv_kind ) ).
+                                            rollname = lv_tkind ) ).
         ENDLOOP.
         io_chapter->add_object( lo_o2 ).
 
+      WHEN 'PROG'.
+        " Text elements carry the actual operating instructions of a report:
+        " title, selection texts, text symbols and list headings. READ
+        " TEXTPOOL fetches them in one kernel call without database access.
+        DATA lt_tp   TYPE STANDARD TABLE OF textpool.
+        DATA lv_prog TYPE syrepid.
+        lv_prog = iv_name.
+        READ TEXTPOOL lv_prog INTO lt_tp LANGUAGE mv_langu.
+        IF lt_tp IS INITIAL AND mv_falb = abap_true AND mv_flang <> mv_langu.
+          READ TEXTPOOL lv_prog INTO lt_tp LANGUAGE mv_flang.
+        ENDIF.
+        IF lt_tp IS INITIAL.
+          RETURN.
+        ENDIF.
+        DATA(lo_tp) = NEW lcl_object( iv_type = CONV string( iv_type )
+                                      iv_name = CONV string( iv_name ) ).
+        lo_tp->set_note( 'Textelemente' ).
+        LOOP AT lt_tp INTO DATA(ls_tp).
+          DATA lv_tpkind TYPE string.
+          CASE ls_tp-id.
+            WHEN 'R'. lv_tpkind = 'Titel'.
+            WHEN 'S'. lv_tpkind = 'Selektionstext'.
+            WHEN 'I'. lv_tpkind = 'Textsymbol'.
+            WHEN 'H'. lv_tpkind = 'Ueberschrift'.
+            WHEN OTHERS. lv_tpkind = CONV string( ls_tp-id ).
+          ENDCASE.
+          lo_tp->add_field( VALUE ty_field(
+            name     = |{ lv_tpkind } { ls_tp-key }|
+            rollname = ls_tp-entry ) ).
+        ENDLOOP.
+        io_chapter->add_object( lo_tp ).
+
+      WHEN 'DOMA'.
+        " For a domain with fixed values the value list is the documentation.
+        DATA lv_dom TYPE dd07t-domname.
+        lv_dom = iv_name.
+        SELECT domvalue_l, ddtext, valpos FROM dd07t
+          WHERE domname = @lv_dom AND ddlanguage = @mv_langu AND as4local = 'A'
+          ORDER BY valpos
+          INTO TABLE @DATA(lt_fix).
+        IF lt_fix IS INITIAL AND mv_falb = abap_true AND mv_flang <> mv_langu.
+          SELECT domvalue_l, ddtext, valpos FROM dd07t
+            WHERE domname = @lv_dom AND ddlanguage = @mv_flang AND as4local = 'A'
+            ORDER BY valpos
+            INTO TABLE @lt_fix.
+        ENDIF.
+        IF lt_fix IS INITIAL.
+          RETURN.
+        ENDIF.
+        DATA(lo_fix) = NEW lcl_object( iv_type = CONV string( iv_type )
+                                       iv_name = CONV string( iv_name ) ).
+        lo_fix->set_note( 'Festwerte' ).
+        LOOP AT lt_fix INTO DATA(ls_fix).
+          lo_fix->add_field( VALUE ty_field( name     = ls_fix-domvalue_l
+                                             rollname = ls_fix-ddtext ) ).
+        ENDLOOP.
+        io_chapter->add_object( lo_fix ).
+
+      WHEN 'DTEL'.
+        " Field labels are what the user sees on screen - often more
+        " meaningful than the technical description.
+        DATA lv_rol TYPE dd04t-rollname.
+        lv_rol = iv_name.
+        SELECT SINGLE scrtext_s, scrtext_m, scrtext_l, reptext FROM dd04t
+          WHERE rollname = @lv_rol AND ddlanguage = @mv_langu AND as4local = 'A'
+          INTO @DATA(ls_lab).
+        IF sy-subrc <> 0 AND mv_falb = abap_true AND mv_flang <> mv_langu.
+          SELECT SINGLE scrtext_s, scrtext_m, scrtext_l, reptext FROM dd04t
+            WHERE rollname = @lv_rol AND ddlanguage = @mv_flang AND as4local = 'A'
+            INTO @ls_lab.
+        ENDIF.
+        IF sy-subrc <> 0.
+          RETURN.
+        ENDIF.
+        DATA(lo_lab) = NEW lcl_object( iv_type = CONV string( iv_type )
+                                       iv_name = CONV string( iv_name ) ).
+        lo_lab->set_note( 'Feldbezeichner' ).
+        lo_lab->add_field( VALUE ty_field( name = 'kurz'      rollname = ls_lab-scrtext_s ) ).
+        lo_lab->add_field( VALUE ty_field( name = 'mittel'    rollname = ls_lab-scrtext_m ) ).
+        lo_lab->add_field( VALUE ty_field( name = 'lang'      rollname = ls_lab-scrtext_l ) ).
+        lo_lab->add_field( VALUE ty_field( name = 'Ueberschr' rollname = ls_lab-reptext ) ).
+        io_chapter->add_object( lo_lab ).
+
       WHEN 'DDLS'.
-        " Abhängigkeiten des CDS View - welche Objekte er verwendet
+        " Dependencies of the CDS view - the objects it consumes
         DATA lv_ddl TYPE ddldependency-ddlname.
         lv_ddl = iv_name.
         " Der View selbst steht ebenfalls in der Abhaengigkeitstabelle und
@@ -1662,6 +1865,11 @@ CLASS lcl_collector_dev IMPLEMENTATION.
                       io_chapter = lo_ochap ).
         ENDIF.
 
+        IF mv_calls = abap_true.
+          add_calls( iv_name    = ls_tadir-object_name
+                     io_chapter = lo_ochap ).
+        ENDIF.
+
         IF mv_src = abap_true.
           DATA(lv_source) = read_source( iv_type = ls_tadir-object_type
                                          iv_name = ls_tadir-object_name ).
@@ -1709,6 +1917,9 @@ CLASS lcl_collector_dev IMPLEMENTATION.
   ENDMETHOD.
   METHOD get_stat_fallback.
     rv = mv_n_falb.
+  ENDMETHOD.
+  METHOD get_stat_calls.
+    rv = mv_n_call.
   ENDMETHOD.
 
 ENDCLASS.
@@ -1838,7 +2049,8 @@ START-OF-SELECTION.
                                               iv_used   = p_used
                                               iv_maxuse = p_maxuse
                                               iv_falb   = p_falb
-                                              iv_flang  = p_flang ).
+                                              iv_flang  = p_flang
+                                              iv_calls  = p_calls ).
 
   DATA lo_coll TYPE REF TO lif_docu_collector.
   lo_coll = lo_collector.
@@ -1867,6 +2079,9 @@ START-OF-SELECTION.
   ENDIF.
   IF p_used = abap_true.
     WRITE: / 'mit Verwendungsnachweis          :', lo_collector->get_stat_usage( ).
+  ENDIF.
+  IF p_calls = abap_true.
+    WRITE: / 'mit ausgehenden Aufrufen         :', lo_collector->get_stat_calls( ).
   ENDIF.
   IF p_falb = abap_true.
     WRITE: / 'davon in Ersatzsprache           :', lo_collector->get_stat_fallback( ).

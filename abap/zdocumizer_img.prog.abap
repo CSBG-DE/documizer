@@ -857,7 +857,7 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE gv_blk2.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tfalb FOR FIELD p_falb.
     PARAMETERS p_falb AS CHECKBOX DEFAULT 'X'.
-    SELECTION-SCREEN COMMENT 35(12) gv_tflng FOR FIELD p_flang.
+    SELECTION-SCREEN COMMENT 35(14) gv_tflng FOR FIELD p_flang.
     PARAMETERS p_flang TYPE sy-langu DEFAULT 'E'.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
@@ -935,34 +935,68 @@ SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE gv_blk3.
 SELECTION-SCREEN END OF BLOCK b3.
 
 INITIALIZATION.
-  gv_blk1   = 'Auswahl der Struktur'.
-  gv_blk2   = 'Umfang'.
-  gv_blk3   = 'Ausgabe'.
-  gv_ttree  = 'Struktur-ID (GUID)'.
-  gv_tsrch  = 'oder Suchbegriff Wurzel'.
-  gv_tproj  = 'Projekt (Status/Memo)'.
-  gv_tonly  = 'nur Projektknoten'.
-  gv_tlang = 'Ausgabesprache'.
-  gv_tfalb = 'Ersatzsprache verwenden'.
-  gv_tflng = 'Ersatzsprache'.
-  gv_tdep = 'Max. Tiefe (0 = alle)'.
-  gv_tmaxn  = 'Max. Kapitel (0 = alle)'.
-  gv_tsubs  = 'Unterstrukturen auflösen'.
-  gv_tdoku  = 'Standarddokumentation'.
-  gv_tobj   = 'Objektzuordnung'.
-  gv_tdata  = 'Customizing-Inhalte lesen'.
-  gv_tcust  = 'nur kundeneigene Einträge'.
-  gv_tmaxr  = 'Max. Zeilen (0 = alle)'.
-  gv_thist  = 'Transport-Historie'.
-  gv_tpst   = 'Projektstatus ausgeben'.
-  gv_tpmem  = 'Projekt-Memo ausgeben'.
-  gv_txml   = 'XML erzeugen/ausgeben'.
-  gv_thtml  = 'HTML erzeugen/anzeigen'.
-  gv_trt    = 'Roundtrip prüfen'.
-  gv_tdown  = 'Download auf PC'.
-  gv_tpath  = 'Verzeichnis'.
-  gv_tdsrv  = 'Ablage Appl.-Server'.
-  gv_tsrv   = 'Verzeichnis'.
+* Screen labels live in the source, not in the text pool, so that a copied
+* report is readable in any system. English is the default; German is used
+* only when the user is logged on in German.
+  IF sy-langu = 'D'.
+    gv_blk1  = 'Auswahl der Struktur'.
+    gv_blk2  = 'Umfang'.
+    gv_blk3  = 'Ausgabe'.
+    gv_ttree = 'Struktur-ID (GUID)'.
+    gv_tsrch = 'oder Suchbegriff Wurzel'.
+    gv_tproj = 'Projekt (Status/Memo)'.
+    gv_tonly = 'nur Projektknoten'.
+    gv_tlang = 'Ausgabesprache'.
+    gv_tfalb = 'Ersatzsprache verwenden'.
+    gv_tflng = 'Ersatzsprache'.
+    gv_tdep  = 'Max. Tiefe (0 = alle)'.
+    gv_tmaxn = 'Max. Kapitel (0 = alle)'.
+    gv_tsubs = 'Unterstrukturen auflösen'.
+    gv_tdoku = 'Standarddokumentation'.
+    gv_tobj  = 'Objektzuordnung'.
+    gv_tdata = 'Customizing-Inhalte lesen'.
+    gv_tcust = 'nur kundeneigene Einträge'.
+    gv_tmaxr = 'Max. Zeilen (0 = alle)'.
+    gv_thist = 'Transport-Historie'.
+    gv_tpst  = 'Projektstatus ausgeben'.
+    gv_tpmem = 'Projekt-Memo ausgeben'.
+    gv_txml  = 'XML erzeugen/ausgeben'.
+    gv_thtml = 'HTML erzeugen/anzeigen'.
+    gv_trt   = 'Roundtrip prüfen'.
+    gv_tdown = 'Download auf PC'.
+    gv_tpath = 'Verzeichnis'.
+    gv_tdsrv = 'Ablage Appl.-Server'.
+    gv_tsrv  = 'Verzeichnis'.
+  ELSE.
+    gv_blk1  = 'Structure selection'.
+    gv_blk2  = 'Scope'.
+    gv_blk3  = 'Output'.
+    gv_ttree = 'Structure ID (GUID)'.
+    gv_tsrch = 'or search term for root'.
+    gv_tproj = 'Project (status/memo)'.
+    gv_tonly = 'Project nodes only'.
+    gv_tlang = 'Output language'.
+    gv_tfalb = 'Use fallback language'.
+    gv_tflng = 'Fallback'.
+    gv_tdep  = 'Max. depth (0 = all)'.
+    gv_tmaxn = 'Max. chapters (0 = all)'.
+    gv_tsubs = 'Resolve substructures'.
+    gv_tdoku = 'Standard documentation'.
+    gv_tobj  = 'Object assignment'.
+    gv_tdata = 'Read customizing data'.
+    gv_tcust = 'Customer entries only'.
+    gv_tmaxr = 'Max. rows (0 = all)'.
+    gv_thist = 'Transport history'.
+    gv_tpst  = 'Show project status'.
+    gv_tpmem = 'Show project memo'.
+    gv_txml  = 'Create/show XML'.
+    gv_thtml = 'Create/show HTML'.
+    gv_trt   = 'Check roundtrip'.
+    gv_tdown = 'Download to PC'.
+    gv_tpath = 'Directory'.
+    gv_tdsrv = 'Store on app server'.
+    gv_tsrv  = 'Directory'.
+  ENDIF.
 
 AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_path.
   PERFORM f4_verzeichnis.

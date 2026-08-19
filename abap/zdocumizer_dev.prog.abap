@@ -1594,13 +1594,16 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       lv_max = 100000.
     ENDIF.
 
-*   Function modules and reports are not in any index on many systems; the
-*   source is the only reliable place. They lead the list because a call is
-*   what the reader is looking for first.
+*   What the source says. It leads the list: a call and a table access are
+*   what the reader looks for first, and neither is reliably indexed.
     LOOP AT scan_source_calls( iv_type = iv_type iv_name = iv_name )
          INTO DATA(ls_sc).
       CLEAR ls_call.
-      ls_call-rank = 0.
+      CASE ls_sc-type.
+        WHEN 'FUNC' OR 'PROG'. ls_call-rank = 0.
+        WHEN 'TABL' OR 'VIEW'. ls_call-rank = 1.
+        WHEN OTHERS.           ls_call-rank = 3.
+      ENDCASE.
       ls_call-what = ls_sc-name.
       ls_call-kind = ls_sc-kind.
       APPEND ls_call TO lt_call.
@@ -2118,10 +2121,19 @@ CLASS lcl_collector_dev IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD scan_source_calls.
-*   Function modules are the blind spot of the cross-reference tables: they
-*   sit in CROSS, and on many S/4 systems that index is never built. The
-*   source itself always knows, so it is read once and scanned. The same
-*   pass picks up SUBMIT, which is not indexed anywhere either.
+*   What an object uses is written in its source, and the source is always
+*   there - unlike the cross-reference index. CROSS is empty on many S/4
+*   systems because SAPRSEUB was never run, and WBCROSSGT records only
+*   global types, methods and data objects. Four things are picked up here:
+*
+*     CALL FUNCTION   function modules - in no index at all
+*     SUBMIT          reports - likewise
+*     SELECT/UPDATE   the tables the object reads and writes
+*     =>, REF TO, NEW the classes and interfaces it uses
+*
+*   Every candidate is checked against the catalog afterwards. A name put
+*   together at runtime, a local class or a work area that happens to look
+*   like a table would otherwise end up in the document.
     DATA(lt_src) = source_lines( iv_type = iv_type iv_name = iv_name ).
     IF lt_src IS INITIAL.
       RETURN.
@@ -2130,26 +2142,29 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     DATA lv_up   TYPE string.
     DATA lv_hit  TYPE string.
     DATA ls_ref  TYPE ty_objref.
+    DATA lt_hits TYPE STANDARD TABLE OF string.
+    DATA lt_tab  TYPE STANDARD TABLE OF sobj_name.
+    DATA lt_cls  TYPE STANDARD TABLE OF sobj_name.
+    DATA lt_fun  TYPE STANDARD TABLE OF rs38l_fnam.
 
     LOOP AT lt_src INTO DATA(lv_line).
 
       lv_up = to_upper( lv_line ).
-      IF lv_up CA '*' AND lv_up CP '*'.
-      ENDIF.
+
+*     Comments are not code. A trailing quote also ends the statement, so
+*     everything behind it is dropped before the patterns run.
       SHIFT lv_up LEFT DELETING LEADING space.
       IF lv_up IS INITIAL OR lv_up(1) = '*'.
         CONTINUE.
+      ENDIF.
+      IF lv_up CS '"'.
+        SPLIT lv_up AT '"' INTO lv_up DATA(lv_rest).
       ENDIF.
 
       FIND FIRST OCCURRENCE OF PCRE `CALL\s+FUNCTION\s+'([A-Z0-9_/][^']*)'`
         IN lv_up SUBMATCHES lv_hit.
       IF sy-subrc = 0.
-        CLEAR ls_ref.
-        ls_ref-type = 'FUNC'.
-        ls_ref-name = lv_hit.
-        ls_ref-kind = lcl_t=>t( d = 'Funktionsbaustein' e = 'function module' ).
-        APPEND ls_ref TO rt_ref.
-        CONTINUE.
+        APPEND CONV rs38l_fnam( lv_hit ) TO lt_fun.
       ENDIF.
 
       FIND FIRST OCCURRENCE OF PCRE `^SUBMIT\s+([A-Z0-9_/]+)`
@@ -2162,19 +2177,94 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         APPEND ls_ref TO rt_ref.
       ENDIF.
 
+*     Table access. Dynamic forms - FROM (lv_name) - and internal tables
+*     - FROM @lt_x - do not match, the pattern insists on a letter.
+      CLEAR lt_hits.
+      FIND ALL OCCURRENCES OF PCRE
+        `\b(?:FROM|JOIN|UPDATE)\s+([A-Z][A-Z0-9_/]{2,29})\b`
+        IN lv_up RESULTS DATA(lt_r1).
+      LOOP AT lt_r1 INTO DATA(ls_r1).
+        DATA(ls_sub1) = ls_r1-submatches[ 1 ].
+        APPEND CONV sobj_name( lv_up+ls_sub1-offset(ls_sub1-length) ) TO lt_tab.
+      ENDLOOP.
+
+      FIND ALL OCCURRENCES OF PCRE
+        `^(?:INSERT|MODIFY|DELETE)\s+([A-Z][A-Z0-9_/]{2,29})\s+FROM\b`
+        IN lv_up RESULTS DATA(lt_r2).
+      LOOP AT lt_r2 INTO DATA(ls_r2).
+        DATA(ls_sub2) = ls_r2-submatches[ 1 ].
+        APPEND CONV sobj_name( lv_up+ls_sub2-offset(ls_sub2-length) ) TO lt_tab.
+      ENDLOOP.
+
+*     Classes and interfaces: static access, a reference variable, or NEW.
+      FIND ALL OCCURRENCES OF PCRE
+        `\b([A-Z/][A-Z0-9_/]{2,29})\s*=>`
+        IN lv_up RESULTS DATA(lt_r3).
+      LOOP AT lt_r3 INTO DATA(ls_r3).
+        DATA(ls_sub3) = ls_r3-submatches[ 1 ].
+        APPEND CONV sobj_name( lv_up+ls_sub3-offset(ls_sub3-length) ) TO lt_cls.
+      ENDLOOP.
+
+      FIND ALL OCCURRENCES OF PCRE
+        `\b(?:REF\s+TO|NEW)\s+([A-Z/][A-Z0-9_/]{2,29})\b`
+        IN lv_up RESULTS DATA(lt_r4).
+      LOOP AT lt_r4 INTO DATA(ls_r4).
+        DATA(ls_sub4) = ls_r4-submatches[ 1 ].
+        APPEND CONV sobj_name( lv_up+ls_sub4-offset(ls_sub4-length) ) TO lt_cls.
+      ENDLOOP.
+
     ENDLOOP.
 
-*   Only function modules that really exist - a name assembled at runtime
-*   would otherwise end up in the document.
-    LOOP AT rt_ref INTO ls_ref WHERE type = 'FUNC'.
-      SELECT SINGLE funcname FROM tfdir
-        WHERE funcname = @ls_ref-name
-        INTO @DATA(lv_fn).
-      IF sy-subrc <> 0.
-        DELETE rt_ref INDEX sy-tabix.
-      ENDIF.
-    ENDLOOP.
+*   Function modules against TFDIR, the rest against the object catalog.
+*   One query per kind instead of one per hit.
+    SORT lt_fun. DELETE ADJACENT DUPLICATES FROM lt_fun.
+    IF lt_fun IS NOT INITIAL.
+      SELECT funcname FROM tfdir
+        FOR ALL ENTRIES IN @lt_fun
+        WHERE funcname = @lt_fun-table_line
+        INTO TABLE @DATA(lt_fok).
+      LOOP AT lt_fok INTO DATA(ls_fok).
+        CLEAR ls_ref.
+        ls_ref-type = 'FUNC'.
+        ls_ref-name = ls_fok-funcname.
+        ls_ref-kind = lcl_t=>t( d = 'Funktionsbaustein' e = 'function module' ).
+        APPEND ls_ref TO rt_ref.
+      ENDLOOP.
+    ENDIF.
 
+    SORT lt_tab. DELETE ADJACENT DUPLICATES FROM lt_tab.
+    IF lt_tab IS NOT INITIAL.
+      SELECT object, obj_name FROM tadir
+        FOR ALL ENTRIES IN @lt_tab
+        WHERE pgmid = 'R3TR' AND object IN ( 'TABL', 'VIEW' )
+          AND obj_name = @lt_tab-table_line
+        INTO TABLE @DATA(lt_tok).
+      LOOP AT lt_tok INTO DATA(ls_tok).
+        CLEAR ls_ref.
+        ls_ref-type = ls_tok-object.
+        ls_ref-name = ls_tok-obj_name.
+        ls_ref-kind = lcl_t=>t( d = 'Tabellenzugriff' e = 'table access' ).
+        APPEND ls_ref TO rt_ref.
+      ENDLOOP.
+    ENDIF.
+
+    SORT lt_cls. DELETE ADJACENT DUPLICATES FROM lt_cls.
+    IF lt_cls IS NOT INITIAL.
+      SELECT object, obj_name FROM tadir
+        FOR ALL ENTRIES IN @lt_cls
+        WHERE pgmid = 'R3TR' AND object IN ( 'CLAS', 'INTF' )
+          AND obj_name = @lt_cls-table_line
+        INTO TABLE @DATA(lt_cok).
+      LOOP AT lt_cok INTO DATA(ls_cok).
+        CLEAR ls_ref.
+        ls_ref-type = ls_cok-object.
+        ls_ref-name = ls_cok-obj_name.
+        ls_ref-kind = lcl_t=>t( d = 'Klassenverwendung' e = 'class used' ).
+        APPEND ls_ref TO rt_ref.
+      ENDLOOP.
+    ENDIF.
+
+    DELETE rt_ref WHERE name = iv_name AND type = iv_type.
     SORT rt_ref BY type name.
     DELETE ADJACENT DUPLICATES FROM rt_ref COMPARING type name.
   ENDMETHOD.

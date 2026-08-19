@@ -942,6 +942,10 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE gv_blk2.
     SELECTION-SCREEN COMMENT 1(30) gv_thist FOR FIELD p_hist.
     PARAMETERS p_hist AS CHECKBOX.
   SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tcall FOR FIELD p_calls.
+    PARAMETERS p_calls AS CHECKBOX.
+  SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b2.
 
 SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE gv_blk3.
@@ -1004,6 +1008,7 @@ INITIALIZATION.
     gv_tcust = 'nur kundeneigene Einträge'.
     gv_tmaxr = 'Max. Zeilen (0 = alle)'.
     gv_thist = 'Transport-Historie'.
+    gv_tcall = 'Ausgehende Aufrufe'.
     gv_tpst  = 'Projektstatus ausgeben'.
     gv_tpmem = 'Projekt-Memo ausgeben'.
     gv_txml  = 'XML erzeugen/ausgeben'.
@@ -1033,6 +1038,7 @@ INITIALIZATION.
     gv_tcust = 'Customer entries only'.
     gv_tmaxr = 'Max. rows (0 = all)'.
     gv_thist = 'Transport history'.
+    gv_tcall = 'Outgoing references'.
     gv_tpst  = 'Show project status'.
     gv_tpmem = 'Show project memo'.
     gv_txml  = 'Create/show XML'.
@@ -1448,6 +1454,7 @@ CLASS lcl_collector_img DEFINITION.
                 iv_pmemo   TYPE abap_bool DEFAULT abap_true
                 iv_falb    TYPE abap_bool DEFAULT abap_false
                 iv_flang   TYPE sy-langu  DEFAULT 'E'
+                iv_calls   TYPE abap_bool DEFAULT abap_false
                 io_cust    TYPE REF TO lcl_cust OPTIONAL.
     METHODS get_stat_nodes      RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_activities RETURNING VALUE(rv) TYPE i.
@@ -1455,6 +1462,7 @@ CLASS lcl_collector_img DEFINITION.
     METHODS get_stat_objects    RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_project    RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_fallback   RETURNING VALUE(rv) TYPE i.
+    METHODS get_stat_calls      RETURNING VALUE(rv) TYPE i.
   PRIVATE SECTION.
     DATA mv_tree_id TYPE ttree-id.
     DATA mv_langu   TYPE sy-langu.
@@ -1485,9 +1493,22 @@ CLASS lcl_collector_img DEFINITION.
     DATA mv_n_act   TYPE i.
     DATA mv_n_docu  TYPE i.
     DATA mv_n_obj   TYPE i.
+    DATA mv_calls   TYPE abap_bool.
+    DATA mv_n_call  TYPE i.
     METHODS enrich_activity
       IMPORTING io_chapter  TYPE REF TO lcl_chapter
                 iv_activity TYPE string.
+    METHODS add_calls
+      IMPORTING it_tcode   TYPE string_table
+                io_chapter TYPE REF TO lcl_chapter.
+    METHODS tcode_program
+      IMPORTING iv_tcode       TYPE string
+      RETURNING VALUE(rv_prog) TYPE syrepid.
+    METHODS scan_program
+      IMPORTING iv_prog       TYPE syrepid
+      CHANGING  ct_fun        TYPE string_table
+                ct_tab        TYPE string_table
+                ct_cls        TYPE string_table.
     METHODS read_documentation
       IMPORTING iv_docu_id TYPE string
       EXPORTING ev_text    TYPE string
@@ -1519,6 +1540,7 @@ CLASS lcl_collector_img IMPLEMENTATION.
     mv_flang   = iv_flang.
     mv_doku    = iv_doku.
     mv_obj     = iv_obj.
+    mv_calls   = iv_calls.
   ENDMETHOD.
 
   METHOD lif_docu_collector~collect.
@@ -1813,7 +1835,9 @@ CLASS lcl_collector_img IMPLEMENTATION.
     ENDIF.
 
     " Assigned customizing objects - step 3 deliberately without contents
-    IF mv_obj = abap_true.
+    DATA lt_tcode TYPE string_table.
+
+    IF mv_obj = abap_true OR mv_calls = abap_true.
       DATA lv_actid TYPE cus_actobj-act_id.
       lv_actid = iv_activity.
       SELECT objecttype, objectname, tcode
@@ -1821,6 +1845,12 @@ CLASS lcl_collector_img IMPLEMENTATION.
         WHERE act_id = @lv_actid
         INTO TABLE @DATA(lt_obj).
       LOOP AT lt_obj INTO DATA(ls_obj).
+        IF ls_obj-tcode IS NOT INITIAL.
+          APPEND CONV string( ls_obj-tcode ) TO lt_tcode.
+        ENDIF.
+        IF mv_obj = abap_false.
+          CONTINUE.
+        ENDIF.
         IF mo_cust IS BOUND.
           " Step 4: resolve the object and read its contents
           LOOP AT mo_cust->build( iv_type  = CONV string( ls_obj-objecttype )
@@ -1838,6 +1868,245 @@ CLASS lcl_collector_img IMPLEMENTATION.
         ENDIF.
       ENDLOOP.
     ENDIF.
+
+*   Only the transactions of the assigned objects, never the one on the
+*   activity header. That one is a parameter transaction into the IMG
+*   framework (SAPLS_CUS_IMG_ACTIVITY) for most activities, and it would
+*   drag the whole framework - BM_*, CTO_*, DDIF_* - into every chapter.
+    IF mv_calls = abap_true.
+      SORT lt_tcode.
+      DELETE ADJACENT DUPLICATES FROM lt_tcode.
+      IF lt_tcode IS NOT INITIAL.
+        add_calls( it_tcode = lt_tcode io_chapter = io_chapter ).
+      ENDIF.
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD tcode_program.
+*   Behind an IMG activity sits a transaction, and behind the transaction a
+*   program. A parameter transaction has no program of its own; it points
+*   to another transaction in TSTCP-PARAM as /*<tcode>, which is followed
+*   once - a second hop is not worth the reading.
+    DATA lv_tc TYPE tstc-tcode.
+    lv_tc = iv_tcode.
+    IF lv_tc IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    SELECT SINGLE pgmna FROM tstc WHERE tcode = @lv_tc INTO @DATA(lv_pgm).
+    IF sy-subrc = 0 AND lv_pgm IS NOT INITIAL.
+      rv_prog = lv_pgm.
+      RETURN.
+    ENDIF.
+
+    SELECT SINGLE param FROM tstcp WHERE tcode = @lv_tc INTO @DATA(lv_par).
+    IF sy-subrc <> 0 OR lv_par IS INITIAL OR lv_par(2) <> '/*'.
+      RETURN.
+    ENDIF.
+
+    DATA lv_ref TYPE tstc-tcode.
+    lv_ref = lv_par+2.
+    IF lv_ref CS ' '.
+      SPLIT lv_ref AT space INTO DATA(lv_first) DATA(lv_rest2).
+      lv_ref = lv_first.
+    ENDIF.
+    SELECT SINGLE pgmna FROM tstc WHERE tcode = @lv_ref INTO @lv_pgm.
+    IF sy-subrc = 0.
+      rv_prog = lv_pgm.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD scan_program.
+*   Same reading as in the developer report: what a program uses is written
+*   in its source, and the source is always there. CROSS is empty on many
+*   S/4 systems, and WBCROSSGT knows nothing about a plain SELECT.
+    DATA lt_src  TYPE string_table.
+    DATA lt_incl TYPE STANDARD TABLE OF progname.
+    DATA lt_rep  TYPE string_table.
+    DATA lv_up   TYPE string.
+    DATA lv_hit  TYPE string.
+
+    IF iv_prog IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    CALL FUNCTION 'RS_GET_ALL_INCLUDES'
+      EXPORTING
+        program      = iv_prog
+      TABLES
+        includetab   = lt_incl
+      EXCEPTIONS
+        not_existent = 1
+        no_program   = 2
+        OTHERS       = 3.
+
+    READ REPORT iv_prog INTO lt_rep.
+    APPEND LINES OF lt_rep TO lt_src.
+    LOOP AT lt_incl INTO DATA(lv_inc).
+      CLEAR lt_rep.
+      READ REPORT lv_inc INTO lt_rep.
+      APPEND LINES OF lt_rep TO lt_src.
+    ENDLOOP.
+
+    LOOP AT lt_src INTO DATA(lv_line).
+
+      lv_up = to_upper( lv_line ).
+      SHIFT lv_up LEFT DELETING LEADING space.
+      IF lv_up IS INITIAL OR lv_up(1) = '*'.
+        CONTINUE.
+      ENDIF.
+      IF lv_up CS '"'.
+        SPLIT lv_up AT '"' INTO lv_up DATA(lv_rest).
+      ENDIF.
+
+      FIND FIRST OCCURRENCE OF PCRE `CALL\s+FUNCTION\s+'([A-Z0-9_/][^']*)'`
+        IN lv_up SUBMATCHES lv_hit.
+      IF sy-subrc = 0.
+        APPEND lv_hit TO ct_fun.
+      ENDIF.
+
+      FIND ALL OCCURRENCES OF PCRE
+        `\b(?:FROM|JOIN|UPDATE)\s+([A-Z][A-Z0-9_/]{2,29})\b`
+        IN lv_up RESULTS DATA(lt_r1).
+      LOOP AT lt_r1 INTO DATA(ls_r1).
+        DATA(ls_s1) = ls_r1-submatches[ 1 ].
+        APPEND lv_up+ls_s1-offset(ls_s1-length) TO ct_tab.
+      ENDLOOP.
+
+      FIND ALL OCCURRENCES OF PCRE
+        `^(?:INSERT|MODIFY|DELETE)\s+([A-Z][A-Z0-9_/]{2,29})\s+FROM\b`
+        IN lv_up RESULTS DATA(lt_r2).
+      LOOP AT lt_r2 INTO DATA(ls_r2).
+        DATA(ls_s2) = ls_r2-submatches[ 1 ].
+        APPEND lv_up+ls_s2-offset(ls_s2-length) TO ct_tab.
+      ENDLOOP.
+
+      FIND ALL OCCURRENCES OF PCRE
+        `\b([A-Z/][A-Z0-9_/]{2,29})\s*=>`
+        IN lv_up RESULTS DATA(lt_r3).
+      LOOP AT lt_r3 INTO DATA(ls_r3).
+        DATA(ls_s3) = ls_r3-submatches[ 1 ].
+        APPEND lv_up+ls_s3-offset(ls_s3-length) TO ct_cls.
+      ENDLOOP.
+
+      FIND ALL OCCURRENCES OF PCRE
+        `\b(?:REF\s+TO|NEW)\s+([A-Z/][A-Z0-9_/]{2,29})\b`
+        IN lv_up RESULTS DATA(lt_r4).
+      LOOP AT lt_r4 INTO DATA(ls_r4).
+        DATA(ls_s4) = ls_r4-submatches[ 1 ].
+        APPEND lv_up+ls_s4-offset(ls_s4-length) TO ct_cls.
+      ENDLOOP.
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD add_calls.
+*   The technical side of a Customizing activity: which function modules,
+*   tables and classes the program behind its transaction touches. Off by
+*   default - it reads the complete source of every activity, and in a
+*   functional document the detail is not always wanted.
+    DATA lt_fun TYPE string_table.
+    DATA lt_tab TYPE string_table.
+    DATA lt_cls TYPE string_table.
+    DATA lt_pro TYPE STANDARD TABLE OF syrepid.
+
+    LOOP AT it_tcode INTO DATA(lv_tc).
+      DATA(lv_prog) = tcode_program( lv_tc ).
+      IF lv_prog IS NOT INITIAL.
+        APPEND lv_prog TO lt_pro.
+      ENDIF.
+    ENDLOOP.
+
+    SORT lt_pro.
+    DELETE ADJACENT DUPLICATES FROM lt_pro.
+    IF lt_pro IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    LOOP AT lt_pro INTO DATA(lv_p).
+      scan_program( EXPORTING iv_prog = lv_p
+                    CHANGING  ct_fun  = lt_fun
+                              ct_tab  = lt_tab
+                              ct_cls  = lt_cls ).
+    ENDLOOP.
+
+    SORT lt_fun. DELETE ADJACENT DUPLICATES FROM lt_fun.
+    SORT lt_tab. DELETE ADJACENT DUPLICATES FROM lt_tab.
+    SORT lt_cls. DELETE ADJACENT DUPLICATES FROM lt_cls.
+
+    DATA(lo_c) = NEW lcl_object( iv_type = 'CALLS'
+                                 iv_name = |{ concat_lines_of( table = lt_pro sep = `, ` ) }| ).
+    lo_c->set_note( lcl_t=>t( d = 'Verwendete Objekte'
+                              e = 'Objects used' ) ).
+
+    DATA lv_any TYPE abap_bool.
+
+*   Every candidate is checked against the catalog. A name assembled at
+*   runtime or a work area that looks like a table would otherwise show up.
+    IF lt_fun IS NOT INITIAL.
+      DATA lt_fn TYPE STANDARD TABLE OF rs38l_fnam.
+      LOOP AT lt_fun INTO DATA(lv_f).
+        APPEND CONV rs38l_fnam( lv_f ) TO lt_fn.
+      ENDLOOP.
+      SELECT funcname FROM tfdir
+        FOR ALL ENTRIES IN @lt_fn
+        WHERE funcname = @lt_fn-table_line
+        INTO TABLE @DATA(lt_fok).
+      SORT lt_fok BY funcname.
+      LOOP AT lt_fok INTO DATA(ls_fok).
+        lo_c->add_field( VALUE ty_field(
+          name     = ls_fok-funcname
+          rollname = lcl_t=>t( d = 'Funktionsbaustein' e = 'function module' ) ) ).
+        lv_any = abap_true.
+      ENDLOOP.
+    ENDIF.
+
+    IF lt_tab IS NOT INITIAL.
+      DATA lt_tn TYPE STANDARD TABLE OF sobj_name.
+      LOOP AT lt_tab INTO DATA(lv_tn).
+        APPEND CONV sobj_name( lv_tn ) TO lt_tn.
+      ENDLOOP.
+      SELECT obj_name FROM tadir
+        FOR ALL ENTRIES IN @lt_tn
+        WHERE pgmid = 'R3TR' AND object IN ( 'TABL', 'VIEW' )
+          AND obj_name = @lt_tn-table_line
+        INTO TABLE @DATA(lt_tok).
+      SORT lt_tok BY obj_name.
+      LOOP AT lt_tok INTO DATA(ls_tok).
+        lo_c->add_field( VALUE ty_field(
+          name     = ls_tok-obj_name
+          rollname = lcl_t=>t( d = 'Tabellenzugriff' e = 'table access' ) ) ).
+        lv_any = abap_true.
+      ENDLOOP.
+    ENDIF.
+
+    IF lt_cls IS NOT INITIAL.
+      DATA lt_cn TYPE STANDARD TABLE OF sobj_name.
+      LOOP AT lt_cls INTO DATA(lv_cn).
+        APPEND CONV sobj_name( lv_cn ) TO lt_cn.
+      ENDLOOP.
+      SELECT obj_name FROM tadir
+        FOR ALL ENTRIES IN @lt_cn
+        WHERE pgmid = 'R3TR' AND object IN ( 'CLAS', 'INTF' )
+          AND obj_name = @lt_cn-table_line
+        INTO TABLE @DATA(lt_cok).
+      SORT lt_cok BY obj_name.
+      LOOP AT lt_cok INTO DATA(ls_cok).
+        lo_c->add_field( VALUE ty_field(
+          name     = ls_cok-obj_name
+          rollname = lcl_t=>t( d = 'Klassenverwendung' e = 'class used' ) ) ).
+        lv_any = abap_true.
+      ENDLOOP.
+    ENDIF.
+
+    IF lv_any = abap_false.
+      RETURN.
+    ENDIF.
+
+    io_chapter->add_object( lo_c ).
+    mv_n_call = mv_n_call + 1.
 
   ENDMETHOD.
 
@@ -1978,6 +2247,10 @@ CLASS lcl_collector_img IMPLEMENTATION.
 
   METHOD get_stat_fallback.
     rv = mv_n_falb.
+  ENDMETHOD.
+
+  METHOD get_stat_calls.
+    rv = mv_n_call.
   ENDMETHOD.
 
   METHOD get_stat_nodes.
@@ -2279,7 +2552,13 @@ CLASS lcl_renderer_html IMPLEMENTATION.
            | { esc( lo_obj->get_filter( ) ) }</p>| ).
 
       IF lo_obj->get_note( ) IS NOT INITIAL.
-        add( |<p class="warn">{ esc( lo_obj->get_note( ) ) }</p>| ).
+*       A note is a warning - except on the reference list, where it is
+*       just the heading of the table below it.
+        IF lo_obj->get_type( ) = 'CALLS'.
+          add( |<p class="ref">{ esc( lo_obj->get_note( ) ) }</p>| ).
+        ELSE.
+          add( |<p class="warn">{ esc( lo_obj->get_note( ) ) }</p>| ).
+        ENDIF.
       ENDIF.
 
       " Data contents
@@ -2662,6 +2941,7 @@ START-OF-SELECTION.
                                               iv_subs    = p_subs
                                               iv_doku    = p_doku
                                               iv_obj     = p_obj
+                                              iv_calls   = p_calls
                                               iv_proj    = p_proj
                                               iv_onlypr  = p_onlypr
                                               iv_pstat   = p_pstat
@@ -2708,6 +2988,9 @@ START-OF-SELECTION.
     WRITE: / lcl_t=>ui( d = `davon in Ersatzsprache           :` e = `of these in the fallback language:` ), lo_collector->get_stat_fallback( ).
   ENDIF.
   WRITE: / lcl_t=>ui( d = `zugeordnete Objekte              :` e = `assigned objects                 :` ), lo_collector->get_stat_objects( ).
+  IF p_calls = abap_true.
+    WRITE: / lcl_t=>ui( d = `mit ausgehenden Aufrufen         :` e = `with outgoing references         :` ), lo_collector->get_stat_calls( ).
+  ENDIF.
   IF p_proj IS NOT INITIAL.
     WRITE: / lcl_t=>ui( d = `Kapitel mit Projektdaten         :` e = `chapters with project data       :` ), lo_collector->get_stat_project( ).
     IF p_onlypr = abap_true AND p_maxnod > 0.

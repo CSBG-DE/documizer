@@ -106,6 +106,7 @@ TYPES: BEGIN OF ty_objref,
          deep TYPE abap_bool,   " references of this one were followed
        END OF ty_objref.
 TYPES ty_objrefs TYPE STANDARD TABLE OF ty_objref WITH EMPTY KEY.
+TYPES ty_names   TYPE STANDARD TABLE OF sobj_name WITH EMPTY KEY.
 
 * Entry point types offered on the selection screen.
 *
@@ -792,6 +793,10 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE gv_blk2.
     PARAMETERS p_rdep TYPE i DEFAULT 1.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tnsap FOR FIELD p_nosap.
+    PARAMETERS p_nosap AS CHECKBOX.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tmaxu FOR FIELD p_maxuse.
     PARAMETERS p_maxuse TYPE i DEFAULT 50.
   SELECTION-SCREEN END OF LINE.
@@ -848,6 +853,7 @@ INITIALIZATION.
     gv_tuse  = 'Verwendungsnachweis'.
     gv_tcall = 'Ausgehende Aufrufe'.
     gv_trdep = 'Verweistiefe (0 = keine)'.
+    gv_tnsap = 'SAP-Standard ausschliessen'.
     gv_tmaxu = 'Max. Verwendungen je Objekt'.
     gv_txml  = 'XML erzeugen/ausgeben'.
     gv_thtml = 'HTML erzeugen/anzeigen'.
@@ -877,6 +883,7 @@ INITIALIZATION.
     gv_tuse  = 'Where-used list'.
     gv_tcall = 'Outgoing references'.
     gv_trdep = 'Reference depth (0 = none)'.
+    gv_tnsap = 'Exclude SAP standard'.
     gv_tmaxu = 'Max. entries per object'.
     gv_txml  = 'Create/show XML'.
     gv_thtml = 'Create/show HTML'.
@@ -1092,7 +1099,8 @@ CLASS lcl_collector_dev DEFINITION.
                 iv_maxuse TYPE i
                 iv_falb   TYPE abap_bool
                 iv_flang  TYPE sy-langu
-                iv_calls  TYPE abap_bool.
+                iv_calls  TYPE abap_bool
+                iv_nosap  TYPE abap_bool.
     METHODS get_stat_packages RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_objects  RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_total    RETURNING VALUE(rv) TYPE i.
@@ -1117,6 +1125,7 @@ CLASS lcl_collector_dev DEFINITION.
     DATA mv_used   TYPE abap_bool.
     DATA mv_maxuse TYPE i.
     DATA mv_calls  TYPE abap_bool.
+    DATA mv_nosap  TYPE abap_bool.
     DATA mv_falb   TYPE abap_bool.
     DATA mv_flang  TYPE sy-langu.
     DATA mv_n_falb TYPE i.
@@ -1205,6 +1214,11 @@ CLASS lcl_collector_dev DEFINITION.
     METHODS base_name
       IMPORTING iv_name        TYPE string
       RETURNING VALUE(rv_base) TYPE sobj_name.
+    METHODS own_names
+      IMPORTING it_name       TYPE ty_names
+      RETURNING VALUE(rt_own) TYPE ty_names.
+    METHODS drop_sap
+      CHANGING ct_ref TYPE ty_objrefs.
     METHODS resolve_repo_object
       IMPORTING iv_name       TYPE string
       RETURNING VALUE(rs_ref) TYPE ty_objref.
@@ -1237,6 +1251,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     mv_maxsrc = iv_maxsrc.
     mv_used   = iv_used.
     mv_calls  = iv_calls.
+    mv_nosap  = iv_nosap.
     mv_maxuse = iv_maxuse.
     mv_falb   = iv_falb.
     mv_flang  = iv_flang.
@@ -1580,9 +1595,10 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     " it is the reason this option is switched off by default.
 
     TYPES: BEGIN OF ty_call,
-             rank TYPE i,
-             what TYPE string,
-             kind TYPE string,
+             rank  TYPE i,
+             what  TYPE string,
+             kind  TYPE string,
+             otype TYPE trobjtype,
            END OF ty_call.
 
     DATA lt_call TYPE STANDARD TABLE OF ty_call.
@@ -1604,8 +1620,9 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         WHEN 'TABL' OR 'VIEW'. ls_call-rank = 1.
         WHEN OTHERS.           ls_call-rank = 3.
       ENDCASE.
-      ls_call-what = ls_sc-name.
-      ls_call-kind = ls_sc-kind.
+      ls_call-what  = ls_sc-name.
+      ls_call-kind  = ls_sc-kind.
+      ls_call-otype = ls_sc-type.
       APPEND ls_call TO lt_call.
     ENDLOOP.
 
@@ -1682,6 +1699,31 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
     SORT lt_call BY what rank.
     DELETE ADJACENT DUPLICATES FROM lt_call COMPARING what.
+
+*   Without the SAP standard the list shows what the developer wrote and
+*   not the kernel of the system around it. The base name decides - a
+*   method call carries its class in front of the backslash.
+    IF mv_nosap = abap_true AND lt_call IS NOT INITIAL.
+      DATA lt_cref TYPE ty_objrefs.
+      LOOP AT lt_call INTO ls_call.
+        APPEND VALUE #( type = ls_call-otype
+                        name = base_name( ls_call-what ) ) TO lt_cref.
+      ENDLOOP.
+      drop_sap( CHANGING ct_ref = lt_cref ).
+      SORT lt_cref BY name.
+      DATA lt_keep TYPE STANDARD TABLE OF ty_call.
+      LOOP AT lt_call INTO ls_call.
+        READ TABLE lt_cref TRANSPORTING NO FIELDS
+             WITH KEY name = base_name( ls_call-what ) BINARY SEARCH.
+        IF sy-subrc = 0.
+          APPEND ls_call TO lt_keep.
+        ENDIF.
+      ENDLOOP.
+      lt_call = lt_keep.
+      IF lt_call IS INITIAL.
+        RETURN.
+      ENDIF.
+    ENDIF.
 
     " Order by kind: if the limit cuts, the calls should survive and not a
     " random slice of the type list.
@@ -2100,6 +2142,106 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     rv_base = lv_base.
   ENDMETHOD.
 
+  METHOD own_names.
+*   Which of these objects are this system's own development. The criterion
+*   is the delivery unit of the package: HOME and LOCAL were built here,
+*   everything else was shipped. That is the same line SAP itself draws,
+*   and unlike a name check it also catches customer objects living in a
+*   reserved namespace and SAP objects that start with a Z.
+*
+*   Whatever has no catalog entry is not returned and therefore counts as
+*   not-our-own: constants of a type group such as ABAP_TRUE, kernel types
+*   and the like. They would otherwise be the only thing left over in a
+*   filtered list.
+    IF it_name IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    SELECT obj_name, devclass FROM tadir
+      FOR ALL ENTRIES IN @it_name
+      WHERE pgmid = 'R3TR' AND obj_name = @it_name-table_line
+      INTO TABLE @DATA(lt_t).
+    IF lt_t IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    DATA lt_dev TYPE STANDARD TABLE OF devclass.
+    LOOP AT lt_t INTO DATA(ls_t).
+      APPEND ls_t-devclass TO lt_dev.
+    ENDLOOP.
+    SORT lt_dev.
+    DELETE ADJACENT DUPLICATES FROM lt_dev.
+
+    SELECT devclass, dlvunit FROM tdevc
+      FOR ALL ENTRIES IN @lt_dev
+      WHERE devclass = @lt_dev-table_line
+      INTO TABLE @DATA(lt_d).
+
+    LOOP AT lt_t INTO ls_t.
+      READ TABLE lt_d INTO DATA(ls_d) WITH KEY devclass = ls_t-devclass.
+      IF sy-subrc <> 0.
+        CONTINUE.
+      ENDIF.
+      IF ls_d-dlvunit IS INITIAL
+         OR ls_d-dlvunit = 'HOME' OR ls_d-dlvunit = 'LOCAL'.
+        APPEND ls_t-obj_name TO rt_own.
+      ENDIF.
+    ENDLOOP.
+
+    SORT rt_own BY table_line.
+    DELETE ADJACENT DUPLICATES FROM rt_own COMPARING table_line.
+  ENDMETHOD.
+
+  METHOD drop_sap.
+
+    IF mv_nosap = abap_false OR ct_ref IS INITIAL.
+      RETURN.
+    ENDIF.
+
+*   A function module has no catalog entry of its own; its function group
+*   decides where it belongs.
+    TYPES: BEGIN OF ty_map,
+             name TYPE sobj_name,
+             cat  TYPE sobj_name,
+           END OF ty_map.
+    DATA lt_map  TYPE STANDARD TABLE OF ty_map.
+    DATA lt_name TYPE ty_names.
+
+    LOOP AT ct_ref INTO DATA(ls_r).
+      DATA(ls_m) = VALUE ty_map( name = ls_r-name cat = ls_r-name ).
+      IF ls_r-type = 'FUNC'.
+        ls_m-cat = func_group( CONV rs38l_fnam( ls_r-name ) ).
+      ENDIF.
+      APPEND ls_m TO lt_map.
+      APPEND ls_m-cat TO lt_name.
+    ENDLOOP.
+
+    SORT lt_name BY table_line.
+    DELETE ADJACENT DUPLICATES FROM lt_name COMPARING table_line.
+    DATA(lt_own) = own_names( lt_name ).
+
+*   Building a new table instead of deleting inside the loop - DELETE
+*   shifts the index under the cursor.
+    DATA lt_keep TYPE ty_objrefs.
+    DATA lv_cat  TYPE sobj_name.
+
+    LOOP AT ct_ref INTO ls_r.
+      lv_cat = ls_r-name.
+      READ TABLE lt_map INTO ls_m WITH KEY name = ls_r-name.
+      IF sy-subrc = 0.
+        lv_cat = ls_m-cat.
+      ENDIF.
+      READ TABLE lt_own TRANSPORTING NO FIELDS
+           WITH KEY table_line = lv_cat BINARY SEARCH.
+      IF sy-subrc = 0.
+        APPEND ls_r TO lt_keep.
+      ENDIF.
+    ENDLOOP.
+
+    ct_ref = lt_keep.
+
+  ENDMETHOD.
+
   METHOD resolve_repo_object.
 
     DATA lv_obj_name TYPE sobj_name.
@@ -2373,6 +2515,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     DELETE rt_ref WHERE name IS INITIAL.
     SORT rt_ref BY type name.
     DELETE ADJACENT DUPLICATES FROM rt_ref COMPARING type name.
+    drop_sap( CHANGING ct_ref = rt_ref ).
   ENDMETHOD.
 
   METHOD document_object.
@@ -3121,7 +3264,8 @@ START-OF-SELECTION.
                                               iv_maxuse = p_maxuse
                                               iv_falb   = p_falb
                                               iv_flang  = p_flang
-                                              iv_calls  = p_calls ).
+                                              iv_calls  = p_calls
+                                              iv_nosap  = p_nosap ).
 
   DATA lo_coll TYPE REF TO lif_docu_collector.
   lo_coll = lo_collector.

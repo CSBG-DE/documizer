@@ -107,10 +107,15 @@ TYPES: BEGIN OF ty_objref,
        END OF ty_objref.
 TYPES ty_objrefs TYPE STANDARD TABLE OF ty_objref WITH EMPTY KEY.
 
-* Entry point types offered on the selection screen
+* Entry point types offered on the selection screen.
+*
+* Both components carry a data element on purpose. F4IF_INT_TABLE_VALUE_REQUEST
+* derives the column description from the value table itself, and it can only
+* do that when every field points to the dictionary. A plain C field or a
+* string ends in ASSIGN_CASTING_ILLEGAL_CAST inside the function module.
 TYPES: BEGIN OF ty_stype,
          code TYPE char2,
-         text TYPE c LENGTH 40,
+         text TYPE char40,
        END OF ty_stype.
 TYPES ty_stypes TYPE STANDARD TABLE OF ty_stype WITH EMPTY KEY.
 
@@ -830,7 +835,7 @@ INITIALIZATION.
     gv_blk3  = 'Ausgabe'.
     gv_tstyp = 'Typ'.
     gv_tsval = 'Name (Paket, Report, ...)'.
-    gv_trec  = 'Unterpakete rekursiv (nur Paket)'.
+    gv_trec  = 'Unterpakete rekursiv (Paket)'.
     gv_tloc  = 'lokale Pakete einbeziehen'.
     gv_tlang = 'Ausgabesprache'.
     gv_tfalb = 'Ersatzsprache verwenden'.
@@ -859,7 +864,7 @@ INITIALIZATION.
     gv_blk3  = 'Output'.
     gv_tstyp = 'Type'.
     gv_tsval = 'Name (package, report, ...)'.
-    gv_trec  = 'Include subpackages (package only)'.
+    gv_trec  = 'Include subpackages (package)'.
     gv_tloc  = 'Include local packages'.
     gv_tlang = 'Output language'.
     gv_tfalb = 'Use fallback language'.
@@ -2795,7 +2800,6 @@ ENDFORM.
 FORM f4_stype.
 
   DATA lt_list TYPE ty_stypes.
-  DATA lt_ret  TYPE STANDARD TABLE OF ddshretval.
 
   PERFORM stype_list CHANGING lt_list.
 
@@ -2808,7 +2812,6 @@ FORM f4_stype.
       value_org       = 'S'
     TABLES
       value_tab       = lt_list
-      return_tab      = lt_ret
     EXCEPTIONS
       parameter_error = 1
       no_values_found = 2
@@ -2820,13 +2823,13 @@ FORM f4_sval.
 
 *  The value help follows the type: a package is looked up in TDEVC, a
 *  function module in TFDIR, everything else in the object catalog.
+* Same rule as for the type list: dictionary types only, no string.
   TYPES: BEGIN OF ty_hit,
            name TYPE sobj_name,
-           text TYPE string,
+           text TYPE char60,
          END OF ty_hit.
 
   DATA lt_hit  TYPE STANDARD TABLE OF ty_hit.
-  DATA lt_ret  TYPE STANDARD TABLE OF ddshretval.
   DATA lv_like TYPE string.
   DATA lv_obj  TYPE tadir-object.
 
@@ -2890,7 +2893,6 @@ FORM f4_sval.
       value_org       = 'S'
     TABLES
       value_tab       = lt_hit
-      return_tab      = lt_ret
     EXCEPTIONS
       parameter_error = 1
       no_values_found = 2
@@ -3049,7 +3051,7 @@ START-OF-SELECTION.
   WRITE: / lcl_t=>ui( d = `Documizer - Entwicklerdokumentation` e = `Documizer - developer documentation` ).
   ULINE.
   PERFORM stype_text USING p_stype CHANGING gv_tstyt.
-  WRITE: / lcl_t=>ui( d = `Startpunkt                       :` e = `Start point                      :` ), gv_tstyt, p_sval.
+  WRITE: / lcl_t=>ui( d = `Startpunkt                       :` e = `Start point                      :` ), gv_tstyt(20), p_sval.
   IF p_stype = 'K'.
     WRITE: / lcl_t=>ui( d = `Pakete                           :` e = `Packages                         :` ), lo_collector->get_stat_packages( ).
   ENDIF.

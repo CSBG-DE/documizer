@@ -96,6 +96,24 @@ TYPES: BEGIN OF ty_reference,
          tcode    TYPE string,   " here: package
        END OF ty_reference.
 
+* A repository object the report can document. TYPE is the TADIR object
+* type, plus the pseudo type FUNC for a single function module - that one
+* has no TADIR entry of its own, it belongs to its function group.
+TYPES: BEGIN OF ty_objref,
+         type TYPE trobjtype,
+         name TYPE sobj_name,
+         kind TYPE string,
+         deep TYPE abap_bool,   " references of this one were followed
+       END OF ty_objref.
+TYPES ty_objrefs TYPE STANDARD TABLE OF ty_objref WITH EMPTY KEY.
+
+* Entry point types offered on the selection screen
+TYPES: BEGIN OF ty_stype,
+         code TYPE char2,
+         text TYPE c LENGTH 40,
+       END OF ty_stype.
+TYPES ty_stypes TYPE STANDARD TABLE OF ty_stype WITH EMPTY KEY.
+
 TYPES: BEGIN OF ty_meta,
          version    TYPE string,
          doc_type   TYPE string,
@@ -705,8 +723,13 @@ DATA gv_dummy_nam TYPE tadir-obj_name.
 
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE gv_blk1.
   SELECTION-SCREEN BEGIN OF LINE.
-    SELECTION-SCREEN COMMENT 1(30) gv_tpack FOR FIELD p_pack.
-    PARAMETERS p_pack TYPE tdevc-devclass OBLIGATORY.
+    SELECTION-SCREEN COMMENT 1(30) gv_tstyp FOR FIELD p_stype.
+    PARAMETERS p_stype TYPE char2 DEFAULT 'K' OBLIGATORY.
+    SELECTION-SCREEN COMMENT 38(40) gv_tstyt.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tsval FOR FIELD p_sval.
+    PARAMETERS p_sval TYPE tadir-obj_name OBLIGATORY.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_trec FOR FIELD p_recur.
@@ -760,6 +783,10 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE gv_blk2.
     PARAMETERS p_calls AS CHECKBOX.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_trdep FOR FIELD p_rdep.
+    PARAMETERS p_rdep TYPE i DEFAULT 1.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tmaxu FOR FIELD p_maxuse.
     PARAMETERS p_maxuse TYPE i DEFAULT 50.
   SELECTION-SCREEN END OF LINE.
@@ -798,11 +825,12 @@ INITIALIZATION.
 * report is readable in any system. English is the default; German is used
 * only when the user is logged on in German.
   IF sy-langu = 'D'.
-    gv_blk1  = 'Startpaket'.
+    gv_blk1  = 'Startpunkt'.
     gv_blk2  = 'Umfang'.
     gv_blk3  = 'Ausgabe'.
-    gv_tpack = 'Paket'.
-    gv_trec  = 'Unterpakete rekursiv'.
+    gv_tstyp = 'Typ'.
+    gv_tsval = 'Name (Paket, Report, ...)'.
+    gv_trec  = 'Unterpakete rekursiv (nur Paket)'.
     gv_tloc  = 'lokale Pakete einbeziehen'.
     gv_tlang = 'Ausgabesprache'.
     gv_tfalb = 'Ersatzsprache verwenden'.
@@ -814,6 +842,7 @@ INITIALIZATION.
     gv_tmaxs = 'Max. Zeilen je Objekt'.
     gv_tuse  = 'Verwendungsnachweis'.
     gv_tcall = 'Ausgehende Aufrufe'.
+    gv_trdep = 'Verweistiefe (0 = keine)'.
     gv_tmaxu = 'Max. Verwendungen je Objekt'.
     gv_txml  = 'XML erzeugen/ausgeben'.
     gv_thtml = 'HTML erzeugen/anzeigen'.
@@ -825,11 +854,12 @@ INITIALIZATION.
     %_s_objtyp_%_app_%-text = 'Objekttyp'.
     %_s_objnam_%_app_%-text = 'Objektname'.
   ELSE.
-    gv_blk1  = 'Start package'.
+    gv_blk1  = 'Start point'.
     gv_blk2  = 'Scope'.
     gv_blk3  = 'Output'.
-    gv_tpack = 'Package'.
-    gv_trec  = 'Include subpackages'.
+    gv_tstyp = 'Type'.
+    gv_tsval = 'Name (package, report, ...)'.
+    gv_trec  = 'Include subpackages (package only)'.
     gv_tloc  = 'Include local packages'.
     gv_tlang = 'Output language'.
     gv_tfalb = 'Use fallback language'.
@@ -841,6 +871,7 @@ INITIALIZATION.
     gv_tmaxs = 'Max. lines per object'.
     gv_tuse  = 'Where-used list'.
     gv_tcall = 'Outgoing references'.
+    gv_trdep = 'Reference depth (0 = none)'.
     gv_tmaxu = 'Max. entries per object'.
     gv_txml  = 'Create/show XML'.
     gv_thtml = 'Create/show HTML'.
@@ -858,6 +889,19 @@ INITIALIZATION.
 
 AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_path.
   PERFORM f4_verzeichnis.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_stype.
+  PERFORM f4_stype.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_sval.
+  PERFORM f4_sval.
+
+AT SELECTION-SCREEN OUTPUT.
+* The plain code says little; the text next to it says what was picked.
+  PERFORM stype_text USING p_stype CHANGING gv_tstyt.
+
+AT SELECTION-SCREEN.
+  PERFORM check_stype.
 
 *----------------------------------------------------------------------*
 * lcl_renderer_html
@@ -1028,7 +1072,9 @@ CLASS lcl_collector_dev DEFINITION.
   PUBLIC SECTION.
     INTERFACES lif_docu_collector.
     METHODS constructor
-      IMPORTING iv_pack   TYPE devclass
+      IMPORTING iv_stype  TYPE char2
+                iv_sval   TYPE string
+                iv_rdep   TYPE i
                 iv_recur  TYPE abap_bool
                 iv_local  TYPE abap_bool
                 iv_langu  TYPE sy-langu
@@ -1051,6 +1097,9 @@ CLASS lcl_collector_dev DEFINITION.
     METHODS get_stat_fallback RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_calls    RETURNING VALUE(rv) TYPE i.
   PRIVATE SECTION.
+    DATA mv_stype  TYPE char2.
+    DATA mv_sval   TYPE string.
+    DATA mv_rdep   TYPE i.
     DATA mv_pack   TYPE devclass.
     DATA mv_recur  TYPE abap_bool.
     DATA mv_local  TYPE abap_bool.
@@ -1109,6 +1158,10 @@ CLASS lcl_collector_dev DEFINITION.
       IMPORTING iv_type          TYPE trobjtype
                 iv_name          TYPE sobj_name
       RETURNING VALUE(rv_source) TYPE string.
+    METHODS source_lines
+      IMPORTING iv_type          TYPE trobjtype
+                iv_name          TYPE sobj_name
+      RETURNING VALUE(rt_source) TYPE string_table.
     METHODS append_report
       IMPORTING iv_prog   TYPE syrepid
       CHANGING  ct_source TYPE string_table.
@@ -1116,17 +1169,59 @@ CLASS lcl_collector_dev DEFINITION.
       IMPORTING iv_name    TYPE sobj_name
                 io_chapter TYPE REF TO lcl_chapter.
     METHODS add_calls
-      IMPORTING iv_name    TYPE sobj_name
+      IMPORTING iv_type    TYPE trobjtype
+                iv_name    TYPE sobj_name
                 io_chapter TYPE REF TO lcl_chapter.
     METHODS pack_reason
-      IMPORTING iv_subrc        TYPE sy-subrc
+      IMPORTING iv_subrc         TYPE sy-subrc
       RETURNING VALUE(rv_reason) TYPE string.
+
+*   Single-object entry point and reference expansion
+    METHODS func_include
+      IMPORTING iv_func           TYPE rs38l_fnam
+      RETURNING VALUE(rv_include) TYPE syrepid.
+    METHODS func_group
+      IMPORTING iv_func         TYPE rs38l_fnam
+      RETURNING VALUE(rv_group) TYPE rs38l_area.
+    METHODS cross_prefix
+      IMPORTING iv_type          TYPE trobjtype
+                iv_name          TYPE sobj_name
+      RETURNING VALUE(rv_prefix) TYPE string.
+    METHODS start_object
+      RETURNING VALUE(rs_obj) TYPE ty_objref.
+    METHODS collect_refs
+      IMPORTING iv_type       TYPE trobjtype
+                iv_name       TYPE sobj_name
+      RETURNING VALUE(rt_ref) TYPE ty_objrefs.
+    METHODS scan_source_calls
+      IMPORTING iv_type       TYPE trobjtype
+                iv_name       TYPE sobj_name
+      RETURNING VALUE(rt_ref) TYPE ty_objrefs.
+    METHODS base_name
+      IMPORTING iv_name        TYPE string
+      RETURNING VALUE(rv_base) TYPE sobj_name.
+    METHODS resolve_repo_object
+      IMPORTING iv_name       TYPE string
+      RETURNING VALUE(rs_ref) TYPE ty_objref.
+    METHODS document_object
+      IMPORTING iv_type           TYPE trobjtype
+                iv_name           TYPE sobj_name
+                iv_id             TYPE string
+                iv_level          TYPE i
+                iv_calls          TYPE abap_bool DEFAULT abap_false
+      RETURNING VALUE(ro_chapter) TYPE REF TO lcl_chapter.
+    METHODS collect_single
+      CHANGING co_document TYPE REF TO lcl_document
+               cv_trunc    TYPE abap_bool.
 ENDCLASS.
 
 CLASS lcl_collector_dev IMPLEMENTATION.
 
   METHOD constructor.
-    mv_pack   = iv_pack.
+    mv_stype  = iv_stype.
+    mv_sval   = to_upper( condense( iv_sval ) ).
+    mv_rdep   = iv_rdep.
+    mv_pack   = mv_sval.
     mv_recur  = iv_recur.
     mv_local  = iv_local.
     mv_langu  = iv_langu.
@@ -1171,6 +1266,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       WHEN 'ENQU'. rv_title = lcl_t=>t( d = 'Sperrobjekte' e = 'Lock objects' ).
       WHEN 'SHLP'. rv_title = lcl_t=>t( d = 'Suchhilfen' e = 'Search helps' ).
       WHEN 'DEVC'. rv_title = lcl_t=>t( d = 'Pakete' e = 'Packages' ).
+      WHEN 'FUNC'. rv_title = lcl_t=>t( d = 'Funktionsbausteine' e = 'Function modules' ).
       WHEN OTHERS. rv_title = |{ lcl_t=>t( d = `Objekttyp` e = `Object type` ) } { iv_type }|.
     ENDCASE.
   ENDMETHOD.
@@ -1272,6 +1368,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       WHEN 'PROG'. lv_id = 'RE'.
       WHEN 'TRAN'. lv_id = 'TR'.
       WHEN 'DTEL'. lv_id = 'DE'.
+      WHEN 'FUNC'. lv_id = 'FU'.
+      WHEN 'MSAG'. lv_id = 'NA'.
       WHEN OTHERS. RETURN.
     ENDCASE.
 
@@ -1322,7 +1420,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
   ENDMETHOD.
 
-  METHOD read_source.
+  METHOD source_lines.
 
     DATA lt_src  TYPE string_table.
     DATA lt_incl TYPE STANDARD TABLE OF progname.
@@ -1330,6 +1428,13 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     DATA lv_i    TYPE i.
 
     CASE iv_type.
+
+      WHEN 'FUNC'.
+        " A function module lives in exactly one include of its group.
+        lv_prog = func_include( CONV rs38l_fnam( iv_name ) ).
+        IF lv_prog IS NOT INITIAL.
+          append_report( EXPORTING iv_prog = lv_prog CHANGING ct_source = lt_src ).
+        ENDIF.
 
       WHEN 'PROG'.
         lv_prog = iv_name.
@@ -1397,6 +1502,13 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
     ENDCASE.
 
+    rt_source = lt_src.
+
+  ENDMETHOD.
+
+  METHOD read_source.
+
+    DATA(lt_src) = source_lines( iv_type = iv_type iv_name = iv_name ).
     IF lt_src IS INITIAL.
       RETURN.
     ENDIF.
@@ -1406,8 +1518,9 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       lv_n = lv_n + 1.
       IF mv_maxsrc > 0 AND lv_n > mv_maxsrc.
         rv_source = |{ rv_source }{ cl_abap_char_utilities=>newline }| &&
-                    |* ... gekürzt bei { mv_maxsrc } Zeilen, | &&
-                    |insgesamt { lines( lt_src ) } Zeilen|.
+                    |* ... { lcl_t=>t( d = `gekürzt bei` e = `truncated at` ) }| &&
+                    | { mv_maxsrc } { lcl_t=>t( d = `von` e = `of` ) }| &&
+                    | { lines( lt_src ) }|.
         EXIT.
       ENDIF.
       IF rv_source IS INITIAL.
@@ -1417,6 +1530,41 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       ENDIF.
     ENDLOOP.
 
+  ENDMETHOD.
+
+  METHOD func_include.
+*   The include of a function module is L<group>U<number>; TFDIR holds the
+*   frame program and the number.
+    SELECT SINGLE pname, include FROM tfdir
+      WHERE funcname = @iv_func
+      INTO @DATA(ls_fd).
+    IF sy-subrc <> 0 OR ls_fd-pname IS INITIAL.
+      RETURN.
+    ENDIF.
+    rv_include = |L{ ls_fd-pname+4 }U{ ls_fd-include }|.
+  ENDMETHOD.
+
+  METHOD func_group.
+    SELECT SINGLE pname FROM tfdir
+      WHERE funcname = @iv_func
+      INTO @DATA(lv_pname).
+    IF sy-subrc = 0 AND lv_pname IS NOT INITIAL.
+      rv_group = lv_pname+4.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD cross_prefix.
+*   WBCROSSGT records references under the include they appear in, not
+*   under the object name. For most types the include starts with the
+*   object name; a function module and a function group are the exceptions.
+    CASE iv_type.
+      WHEN 'FUNC'.
+        rv_prefix = func_include( CONV rs38l_fnam( iv_name ) ).
+      WHEN 'FUGR'.
+        rv_prefix = |L{ iv_name }|.
+      WHEN OTHERS.
+        rv_prefix = iv_name.
+    ENDCASE.
   ENDMETHOD.
 
   METHOD add_calls.
@@ -1441,8 +1589,20 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       lv_max = 100000.
     ENDIF.
 
+*   Function modules and reports are not in any index on many systems; the
+*   source is the only reliable place. They lead the list because a call is
+*   what the reader is looking for first.
+    LOOP AT scan_source_calls( iv_type = iv_type iv_name = iv_name )
+         INTO DATA(ls_sc).
+      CLEAR ls_call.
+      ls_call-rank = 0.
+      ls_call-what = ls_sc-name.
+      ls_call-kind = ls_sc-kind.
+      APPEND ls_call TO lt_call.
+    ENDLOOP.
+
     DATA lv_prog TYPE cross-prog.
-    lv_prog = iv_name.
+    lv_prog = cross_prefix( iv_type = iv_type iv_name = iv_name ).
     SELECT name, type FROM cross
       WHERE prog = @lv_prog
       INTO TABLE @DATA(lt_cr)
@@ -1472,7 +1632,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     DATA lt_one  TYPE STANDARD TABLE OF wbcrossgt.
     DATA lv_ot   TYPE wbcrossgt-otype.
 
-    lv_like = |{ iv_name }%|.
+    lv_like = |{ cross_prefix( iv_type = iv_type iv_name = iv_name ) }%|.
     LOOP AT VALUE string_table( ( `ME` ) ( `TY` ) ( `DA` ) ) INTO DATA(lv_type).
       lv_ot = lv_type.
       SELECT * FROM wbcrossgt
@@ -1797,6 +1957,66 @@ CLASS lcl_collector_dev IMPLEMENTATION.
                                            rollname = ls_lab-reptext ) ).
         io_chapter->add_object( lo_lab ).
 
+      WHEN 'FUNC'.
+        " The interface of a function module is its contract: what goes in,
+        " what comes out, and which exceptions the caller has to handle.
+        SELECT parameter, paramtype, structure, reference FROM fupararef
+          WHERE funcname = @iv_name
+          ORDER BY paramtype, pposition
+          INTO TABLE @DATA(lt_par).
+        IF lt_par IS INITIAL.
+          RETURN.
+        ENDIF.
+        DATA(lo_par) = NEW lcl_object( iv_type = CONV string( iv_type )
+                                       iv_name = CONV string( iv_name ) ).
+        lo_par->set_note( lcl_t=>t( d = 'Schnittstelle' e = 'Interface' ) ).
+        LOOP AT lt_par INTO DATA(ls_par).
+          DATA lv_pkind TYPE string.
+          CASE ls_par-paramtype.
+            WHEN 'I'. lv_pkind = lcl_t=>t( d = 'Import' e = 'importing' ).
+            WHEN 'E'. lv_pkind = lcl_t=>t( d = 'Export' e = 'exporting' ).
+            WHEN 'C'. lv_pkind = lcl_t=>t( d = 'Changing' e = 'changing' ).
+            WHEN 'T'. lv_pkind = lcl_t=>t( d = 'Tabelle' e = 'tables' ).
+            WHEN 'X'. lv_pkind = lcl_t=>t( d = 'Ausnahme' e = 'exception' ).
+            WHEN OTHERS. lv_pkind = ls_par-paramtype.
+          ENDCASE.
+          DATA(lv_ptype) = COND string(
+            WHEN ls_par-structure IS NOT INITIAL THEN ls_par-structure
+            ELSE ls_par-reference ).
+          lo_par->add_field( VALUE ty_field(
+            name     = |{ lv_pkind } { ls_par-parameter }|
+            rollname = lv_ptype ) ).
+        ENDLOOP.
+        io_chapter->add_object( lo_par ).
+
+      WHEN 'FUGR'.
+        " The module list is the table of contents of a function group.
+        DATA lv_pn TYPE tfdir-pname.
+        lv_pn = |SAPL{ iv_name }|.
+        SELECT funcname FROM tfdir
+          WHERE pname = @lv_pn
+          ORDER BY funcname
+          INTO TABLE @DATA(lt_fm).
+        IF lt_fm IS INITIAL.
+          RETURN.
+        ENDIF.
+        DATA(lo_fm) = NEW lcl_object( iv_type = CONV string( iv_type )
+                                      iv_name = CONV string( iv_name ) ).
+        lo_fm->set_note( lcl_t=>t( d = 'Funktionsbausteine' e = 'Function modules' ) ).
+        LOOP AT lt_fm INTO DATA(ls_fm).
+          SELECT SINGLE stext FROM tftit
+            WHERE spras = @mv_langu AND funcname = @ls_fm-funcname
+            INTO @DATA(lv_fmt).
+          IF sy-subrc <> 0 AND mv_falb = abap_true.
+            SELECT SINGLE stext FROM tftit
+              WHERE spras = @mv_flang AND funcname = @ls_fm-funcname
+              INTO @lv_fmt.
+          ENDIF.
+          lo_fm->add_field( VALUE ty_field( name     = ls_fm-funcname
+                                            rollname = lv_fmt ) ).
+        ENDLOOP.
+        io_chapter->add_object( lo_fm ).
+
       WHEN 'DDLS'.
         " Dependencies of the CDS view - the objects it consumes
         DATA lv_ddl TYPE ddldependency-ddlname.
@@ -1823,6 +2043,445 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
   ENDMETHOD.
 
+  METHOD start_object.
+*   The type codes follow the Object Navigator so that the field reads the
+*   same way it does in SE80.
+    DATA lv_name TYPE sobj_name.
+    lv_name = mv_sval.
+
+    CASE mv_stype.
+      WHEN 'K'.  rs_obj = VALUE #( type = 'DEVC' name = lv_name ).
+      WHEN 'P'.  rs_obj = VALUE #( type = 'PROG' name = lv_name ).
+      WHEN 'FF'. rs_obj = VALUE #( type = 'FUNC' name = lv_name ).
+      WHEN 'F'.  rs_obj = VALUE #( type = 'FUGR' name = lv_name ).
+      WHEN 'T'.  rs_obj = VALUE #( type = 'TABL' name = lv_name ).
+      WHEN 'V'.  rs_obj = VALUE #( type = 'VIEW' name = lv_name ).
+      WHEN 'D'.  rs_obj = VALUE #( type = 'DTEL' name = lv_name ).
+      WHEN 'DO'. rs_obj = VALUE #( type = 'DOMA' name = lv_name ).
+      WHEN 'W'.  rs_obj = VALUE #( type = 'DDLS' name = lv_name ).
+      WHEN 'C'.
+*       A class and an interface share one input field, as in SE80. Which
+*       of the two it is comes from the catalog.
+        SELECT SINGLE object FROM tadir
+          WHERE pgmid = 'R3TR' AND object IN ( 'CLAS', 'INTF' )
+            AND obj_name = @lv_name
+          INTO @DATA(lv_obj).
+        IF sy-subrc = 0.
+          rs_obj = VALUE #( type = lv_obj name = lv_name ).
+        ELSE.
+          rs_obj = VALUE #( type = 'CLAS' name = lv_name ).
+        ENDIF.
+      WHEN OTHERS.
+        rs_obj = VALUE #( type = 'DEVC' name = lv_name ).
+    ENDCASE.
+  ENDMETHOD.
+
+  METHOD base_name.
+*   A cross-reference entry carries a technical name such as
+*   CL_ABAP_BROWSER\ME:SHOW_HTML. Only the part before the first backslash
+*   is a repository object; the rest addresses a component inside it.
+    DATA lv_base TYPE string.
+    lv_base = iv_name.
+    IF lv_base CS '\'.
+      SPLIT lv_base AT '\' INTO lv_base DATA(lv_rest).
+    ENDIF.
+    CONDENSE lv_base.
+    IF lv_base IS INITIAL OR strlen( lv_base ) > 40.
+      RETURN.
+    ENDIF.
+    rv_base = lv_base.
+  ENDMETHOD.
+
+  METHOD resolve_repo_object.
+
+    DATA lv_obj_name TYPE sobj_name.
+    lv_obj_name = base_name( iv_name ).
+    IF lv_obj_name IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    SELECT SINGLE object FROM tadir
+      WHERE pgmid = 'R3TR'
+        AND object IN ( 'CLAS', 'INTF', 'TABL', 'VIEW', 'DTEL', 'DOMA',
+                        'TTYP', 'DDLS', 'PROG', 'FUGR', 'MSAG', 'SHLP',
+                        'ENQU' )
+        AND obj_name = @lv_obj_name
+      INTO @DATA(lv_type).
+    IF sy-subrc = 0.
+      rs_ref = VALUE #( type = lv_type name = lv_obj_name ).
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD scan_source_calls.
+*   Function modules are the blind spot of the cross-reference tables: they
+*   sit in CROSS, and on many S/4 systems that index is never built. The
+*   source itself always knows, so it is read once and scanned. The same
+*   pass picks up SUBMIT, which is not indexed anywhere either.
+    DATA(lt_src) = source_lines( iv_type = iv_type iv_name = iv_name ).
+    IF lt_src IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    DATA lv_up   TYPE string.
+    DATA lv_hit  TYPE string.
+    DATA ls_ref  TYPE ty_objref.
+
+    LOOP AT lt_src INTO DATA(lv_line).
+
+      lv_up = to_upper( lv_line ).
+      IF lv_up CA '*' AND lv_up CP '*'.
+      ENDIF.
+      SHIFT lv_up LEFT DELETING LEADING space.
+      IF lv_up IS INITIAL OR lv_up(1) = '*'.
+        CONTINUE.
+      ENDIF.
+
+      FIND FIRST OCCURRENCE OF PCRE `CALL\s+FUNCTION\s+'([A-Z0-9_/][^']*)'`
+        IN lv_up SUBMATCHES lv_hit.
+      IF sy-subrc = 0.
+        CLEAR ls_ref.
+        ls_ref-type = 'FUNC'.
+        ls_ref-name = lv_hit.
+        ls_ref-kind = lcl_t=>t( d = 'Funktionsbaustein' e = 'function module' ).
+        APPEND ls_ref TO rt_ref.
+        CONTINUE.
+      ENDIF.
+
+      FIND FIRST OCCURRENCE OF PCRE `^SUBMIT\s+([A-Z0-9_/]+)`
+        IN lv_up SUBMATCHES lv_hit.
+      IF sy-subrc = 0.
+        CLEAR ls_ref.
+        ls_ref-type = 'PROG'.
+        ls_ref-name = lv_hit.
+        ls_ref-kind = lcl_t=>t( d = 'Report-Aufruf' e = 'report call' ).
+        APPEND ls_ref TO rt_ref.
+      ENDIF.
+
+    ENDLOOP.
+
+*   Only function modules that really exist - a name assembled at runtime
+*   would otherwise end up in the document.
+    LOOP AT rt_ref INTO ls_ref WHERE type = 'FUNC'.
+      SELECT SINGLE funcname FROM tfdir
+        WHERE funcname = @ls_ref-name
+        INTO @DATA(lv_fn).
+      IF sy-subrc <> 0.
+        DELETE rt_ref INDEX sy-tabix.
+      ENDIF.
+    ENDLOOP.
+
+    SORT rt_ref BY type name.
+    DELETE ADJACENT DUPLICATES FROM rt_ref COMPARING type name.
+  ENDMETHOD.
+
+  METHOD collect_refs.
+*   Everything the object consumes, as far as the system can tell: the
+*   indexed references from WBCROSSGT, the function modules and reports
+*   from the source, and for DDIC objects the elements they are built from.
+    DATA ls_ref TYPE ty_objref.
+    DATA lv_max TYPE i.
+
+    lv_max = mv_maxuse.
+    IF lv_max <= 0.
+      lv_max = 1000.
+    ENDIF.
+
+    DATA(lv_like) = |{ cross_prefix( iv_type = iv_type iv_name = iv_name ) }%|.
+    IF lv_like <> '%'.
+      DATA lt_one TYPE STANDARD TABLE OF wbcrossgt.
+      SELECT * FROM wbcrossgt
+        WHERE otype IN ( 'ME', 'TY' ) AND include LIKE @lv_like
+        INTO TABLE @lt_one
+        UP TO @lv_max ROWS.
+
+*     The catalog is asked once for all names at a time. One SELECT SINGLE
+*     per reference would be several hundred round trips per object.
+      DATA lt_name TYPE STANDARD TABLE OF sobj_name.
+      LOOP AT lt_one INTO DATA(ls_gt).
+        DATA(lv_base) = base_name( CONV string( ls_gt-name ) ).
+        IF lv_base IS NOT INITIAL.
+          APPEND lv_base TO lt_name.
+        ENDIF.
+      ENDLOOP.
+      SORT lt_name.
+      DELETE ADJACENT DUPLICATES FROM lt_name.
+
+      IF lt_name IS NOT INITIAL.
+        SELECT object, obj_name FROM tadir
+          FOR ALL ENTRIES IN @lt_name
+          WHERE pgmid = 'R3TR'
+            AND object IN ( 'CLAS', 'INTF', 'TABL', 'VIEW', 'DTEL', 'DOMA',
+                            'TTYP', 'DDLS', 'PROG', 'FUGR', 'MSAG', 'SHLP',
+                            'ENQU' )
+            AND obj_name = @lt_name-table_line
+          INTO TABLE @DATA(lt_cat).
+        LOOP AT lt_cat INTO DATA(ls_cat).
+          APPEND VALUE #( type = ls_cat-object
+                          name = ls_cat-obj_name ) TO rt_ref.
+        ENDLOOP.
+      ENDIF.
+    ENDIF.
+
+    APPEND LINES OF scan_source_calls( iv_type = iv_type
+                                       iv_name = iv_name ) TO rt_ref.
+
+*   Data elements of a table or structure, and the domain of a data
+*   element - the chain the user actually wants to read through.
+    IF iv_type = 'TABL' OR iv_type = 'VIEW'.
+      DATA lv_tab TYPE dd03l-tabname.
+      lv_tab = iv_name.
+      SELECT DISTINCT rollname FROM dd03l
+        WHERE tabname = @lv_tab AND as4local = 'A' AND rollname <> ''
+        INTO TABLE @DATA(lt_rol)
+        UP TO @lv_max ROWS.
+      LOOP AT lt_rol INTO DATA(ls_rol).
+        APPEND VALUE #( type = 'DTEL' name = ls_rol-rollname ) TO rt_ref.
+      ENDLOOP.
+    ENDIF.
+
+    IF iv_type = 'DTEL'.
+      DATA lv_rol2 TYPE dd04l-rollname.
+      lv_rol2 = iv_name.
+      SELECT SINGLE domname FROM dd04l
+        WHERE rollname = @lv_rol2 AND as4local = 'A'
+        INTO @DATA(lv_dom).
+      IF sy-subrc = 0 AND lv_dom IS NOT INITIAL.
+        APPEND VALUE #( type = 'DOMA' name = lv_dom ) TO rt_ref.
+      ENDIF.
+    ENDIF.
+
+    IF iv_type = 'DDLS'.
+      DATA lv_ddl2 TYPE ddldependency-ddlname.
+      lv_ddl2 = iv_name.
+      SELECT objectname FROM ddldependency
+        WHERE ddlname = @lv_ddl2 AND state = 'A' AND objectname <> @lv_ddl2
+        INTO TABLE @DATA(lt_dep)
+        UP TO @lv_max ROWS.
+      LOOP AT lt_dep INTO DATA(ls_dep).
+        DATA(ls_res2) = resolve_repo_object( CONV string( ls_dep-objectname ) ).
+        IF ls_res2-name IS NOT INITIAL.
+          APPEND ls_res2 TO rt_ref.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+
+*   A function module belongs to its group; without the group the reader
+*   has no idea where it lives.
+    IF iv_type = 'FUNC'.
+      DATA(lv_grp) = func_group( CONV rs38l_fnam( iv_name ) ).
+      IF lv_grp IS NOT INITIAL.
+        APPEND VALUE #( type = 'FUGR' name = lv_grp ) TO rt_ref.
+      ENDIF.
+    ENDIF.
+
+    DELETE rt_ref WHERE name = iv_name AND type = iv_type.
+    DELETE rt_ref WHERE name IS INITIAL.
+    SORT rt_ref BY type name.
+    DELETE ADJACENT DUPLICATES FROM rt_ref COMPARING type name.
+  ENDMETHOD.
+
+  METHOD document_object.
+
+    DATA lv_short TYPE string.
+
+    IF iv_type = 'FUNC'.
+      SELECT SINGLE stext FROM tftit
+        WHERE spras = @mv_langu AND funcname = @iv_name
+        INTO @DATA(lv_ft).
+      IF sy-subrc <> 0 AND mv_falb = abap_true.
+        SELECT SINGLE stext FROM tftit
+          WHERE spras = @mv_flang AND funcname = @iv_name
+          INTO @lv_ft.
+      ENDIF.
+      lv_short = lv_ft.
+    ELSE.
+      lv_short = read_short_text( iv_type = iv_type iv_name = iv_name ).
+    ENDIF.
+
+    ro_chapter = NEW lcl_chapter(
+      iv_id    = iv_id
+      iv_level = iv_level
+      iv_type  = 'OBJECT'
+      iv_title = build_title( iv_name = CONV string( iv_name )
+                              iv_text = lv_short ) ).
+
+    DATA lv_pack TYPE devclass.
+    DATA lv_auth TYPE responsibl.
+    IF iv_type = 'FUNC'.
+      DATA(lv_g) = func_group( CONV rs38l_fnam( iv_name ) ).
+      SELECT SINGLE devclass, author FROM tadir
+        WHERE pgmid = 'R3TR' AND object = 'FUGR' AND obj_name = @lv_g
+        INTO ( @lv_pack, @lv_auth ).
+    ELSE.
+      SELECT SINGLE devclass, author FROM tadir
+        WHERE pgmid = 'R3TR' AND object = @iv_type AND obj_name = @iv_name
+        INTO ( @lv_pack, @lv_auth ).
+    ENDIF.
+
+    ro_chapter->set_reference( VALUE ty_reference(
+      activity = CONV string( iv_type )
+      docu_id  = CONV string( lv_auth )
+      tcode    = CONV string( lv_pack ) ) ).
+
+    IF mv_doku = abap_true.
+      DATA(lv_docu) = read_docu( iv_type = iv_type iv_name = iv_name ).
+      IF lv_docu IS NOT INITIAL.
+        ro_chapter->set_documentation( lv_docu ).
+        ro_chapter->set_doclang( CONV string( mv_last_lang ) ).
+        mv_n_docu = mv_n_docu + 1.
+        IF mv_last_lang <> mv_langu.
+          mv_n_falb = mv_n_falb + 1.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
+    IF mv_detail = abap_true.
+      add_details( iv_type = iv_type iv_name = iv_name io_chapter = ro_chapter ).
+    ENDIF.
+
+    IF mv_used = abap_true.
+      add_usages( iv_name = iv_name io_chapter = ro_chapter ).
+    ENDIF.
+
+*   The call list costs a scan of WBCROSSGT plus the source; it is only
+*   drawn for objects whose references were actually followed. For the
+*   leaves of the tree the list would be dead weight anyway.
+    IF mv_calls = abap_true AND iv_calls = abap_true.
+      add_calls( iv_type = iv_type iv_name = iv_name io_chapter = ro_chapter ).
+    ENDIF.
+
+    IF mv_src = abap_true.
+      DATA(lv_source) = read_source( iv_type = iv_type iv_name = iv_name ).
+      IF lv_source IS NOT INITIAL.
+        ro_chapter->set_source( lv_source ).
+        mv_n_src = mv_n_src + 1.
+      ENDIF.
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD collect_single.
+
+*   Chapter 1 is the object the user asked for. Everything it refers to
+*   follows in chapter 2, grouped by object type - the reader gets the
+*   entry point first and the surroundings afterwards.
+    DATA(ls_start) = start_object( ).
+
+    mv_n_tot = 1.
+    mv_n_obj = 1.
+    DATA(lo_root) = document_object( iv_type  = ls_start-type
+                                     iv_name  = ls_start-name
+                                     iv_id    = `1`
+                                     iv_level = 1
+                                     iv_calls = abap_true ).
+    co_document->add_chapter( lo_root ).
+
+    IF mv_calls = abap_false OR mv_rdep <= 0.
+      RETURN.
+    ENDIF.
+
+*   Breadth first, so that the direct neighbours of the start object are
+*   documented before anything further out.
+    DATA lt_queue TYPE ty_objrefs.
+    DATA lt_done  TYPE ty_objrefs.
+    DATA lt_open  TYPE ty_objrefs.
+    DATA lv_depth TYPE i.
+
+    APPEND VALUE #( type = ls_start-type name = ls_start-name ) TO lt_done.
+    lt_queue = collect_refs( iv_type = ls_start-type iv_name = ls_start-name ).
+    lv_depth = 1.
+
+    DATA(lo_refchap) = NEW lcl_chapter(
+      iv_id    = `2`
+      iv_level = 1
+      iv_type  = 'GROUP'
+      iv_title = lcl_t=>t( d = 'Verwendete Objekte'
+                           e = 'Objects used' ) ).
+
+    DATA lt_all TYPE ty_objrefs.
+
+    WHILE lt_queue IS NOT INITIAL AND lv_depth <= mv_rdep.
+
+      CLEAR lt_open.
+
+      LOOP AT lt_queue INTO DATA(ls_q).
+        READ TABLE lt_done TRANSPORTING NO FIELDS
+             WITH KEY type = ls_q-type name = ls_q-name.
+        IF sy-subrc = 0.
+          CONTINUE.
+        ENDIF.
+        ls_q-deep = boolc( lv_depth < mv_rdep ).
+        APPEND ls_q TO lt_done.
+        APPEND ls_q TO lt_all.
+        APPEND ls_q TO lt_open.
+      ENDLOOP.
+
+      CLEAR lt_queue.
+      lv_depth = lv_depth + 1.
+      IF lv_depth > mv_rdep.
+        EXIT.
+      ENDIF.
+
+      LOOP AT lt_open INTO DATA(ls_o).
+        APPEND LINES OF collect_refs( iv_type = ls_o-type
+                                      iv_name = ls_o-name ) TO lt_queue.
+      ENDLOOP.
+
+    ENDWHILE.
+
+    IF lt_all IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    co_document->add_chapter( lo_refchap ).
+
+    SORT lt_all BY type name.
+
+    DATA lv_last TYPE trobjtype.
+    DATA lo_tchap TYPE REF TO lcl_chapter.
+    DATA lv_tno TYPE i.
+    DATA lv_ono TYPE i.
+
+    LOOP AT lt_all INTO DATA(ls_a).
+
+      mv_n_tot = mv_n_tot + 1.
+
+      IF mv_maxobj > 0 AND mv_n_obj >= mv_maxobj.
+        cv_trunc = abap_true.
+        CONTINUE.
+      ENDIF.
+
+      IF s_objtyp[] IS NOT INITIAL AND ls_a-type NOT IN s_objtyp.
+        CONTINUE.
+      ENDIF.
+      IF s_objnam[] IS NOT INITIAL AND ls_a-name NOT IN s_objnam.
+        CONTINUE.
+      ENDIF.
+
+      IF ls_a-type <> lv_last.
+        lv_last = ls_a-type.
+        lv_tno = lv_tno + 1.
+        lv_ono = 0.
+        lo_tchap = NEW lcl_chapter( iv_id    = |2.{ lv_tno }|
+                                    iv_level = 2
+                                    iv_type  = 'GROUP'
+                                    iv_title = type_title( ls_a-type ) ).
+        lo_refchap->add_child( lo_tchap ).
+      ENDIF.
+
+      lv_ono = lv_ono + 1.
+      mv_n_obj = mv_n_obj + 1.
+
+      lo_tchap->add_child( document_object( iv_type  = ls_a-type
+                                            iv_name  = ls_a-name
+                                            iv_id    = |2.{ lv_tno }.{ lv_ono }|
+                                            iv_level = 3
+                                            iv_calls = ls_a-deep ) ).
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
   METHOD lif_docu_collector~collect.
 
     DATA lt_packages TYPE cl_pak_package_queries=>tt_subpackage_info.
@@ -1832,6 +2491,23 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     DATA lv_cnt      TYPE i.
 
     ro_document = NEW lcl_document( ).
+
+    IF mv_stype <> 'K'.
+      collect_single( CHANGING co_document = ro_document
+                               cv_trunc    = lv_trunc ).
+      ro_document->set_meta( VALUE ty_meta(
+        version    = gc_version
+        doc_type   = 'DEV'
+        system     = sy-sysid
+        client     = sy-mandt
+        created_by = sy-uname
+        created_at = |{ sy-datum DATE = ISO } { sy-uzeit TIME = ISO }|
+        language   = mv_langu
+        truncated  = lv_trunc
+        node_limit = mv_maxobj
+        node_total = mv_n_tot ) ).
+      RETURN.
+    ENDIF.
 
     APPEND mv_pack TO lt_all.
 
@@ -1990,7 +2666,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         ENDIF.
 
         IF mv_calls = abap_true.
-          add_calls( iv_name    = ls_tadir-object_name
+          add_calls( iv_type    = ls_tadir-object_type
+                     iv_name    = ls_tadir-object_name
                      io_chapter = lo_ochap ).
         ENDIF.
 
@@ -2047,6 +2724,179 @@ CLASS lcl_collector_dev IMPLEMENTATION.
   ENDMETHOD.
 
 ENDCLASS.
+
+*----------------------------------------------------------------------*
+* Start point: type and value
+*
+* The type codes are the ones the Object Navigator uses, so the field
+* reads the same way it does in SE80. Everything except K documents a
+* single object; K keeps the package run the report started out with.
+*----------------------------------------------------------------------*
+FORM stype_list CHANGING ct_list TYPE ty_stypes.
+
+  CLEAR ct_list.
+  IF sy-langu = 'D'.
+    ct_list = VALUE #(
+      ( code = 'K'  text = 'Paket' )
+      ( code = 'P'  text = 'Programm / Report' )
+      ( code = 'C'  text = 'Klasse / Interface' )
+      ( code = 'FF' text = 'Funktionsbaustein' )
+      ( code = 'F'  text = 'Funktionsgruppe' )
+      ( code = 'T'  text = 'Tabelle / Struktur' )
+      ( code = 'V'  text = 'View' )
+      ( code = 'D'  text = 'Datenelement' )
+      ( code = 'DO' text = 'Domäne' )
+      ( code = 'W'  text = 'CDS View' ) ).
+  ELSE.
+    ct_list = VALUE #(
+      ( code = 'K'  text = 'Package' )
+      ( code = 'P'  text = 'Program / report' )
+      ( code = 'C'  text = 'Class / interface' )
+      ( code = 'FF' text = 'Function module' )
+      ( code = 'F'  text = 'Function group' )
+      ( code = 'T'  text = 'Table / structure' )
+      ( code = 'V'  text = 'View' )
+      ( code = 'D'  text = 'Data element' )
+      ( code = 'DO' text = 'Domain' )
+      ( code = 'W'  text = 'CDS view' ) ).
+  ENDIF.
+
+ENDFORM.
+
+FORM stype_text USING iv_code TYPE char2
+                CHANGING cv_text TYPE clike.
+
+  DATA lt_list TYPE ty_stypes.
+  PERFORM stype_list CHANGING lt_list.
+
+  READ TABLE lt_list INTO DATA(ls_l) WITH KEY code = iv_code.
+  IF sy-subrc = 0.
+    cv_text = ls_l-text.
+  ELSE.
+    cv_text = lcl_t=>ui( d = `unbekannter Typ` e = `unknown type` ).
+  ENDIF.
+
+ENDFORM.
+
+FORM check_stype.
+
+  DATA lt_list TYPE ty_stypes.
+  PERFORM stype_list CHANGING lt_list.
+
+  READ TABLE lt_list TRANSPORTING NO FIELDS WITH KEY code = p_stype.
+  IF sy-subrc <> 0.
+    MESSAGE lcl_t=>ui( d = `Unbekannter Typ - F4 zeigt die moeglichen Werte.`
+                       e = `Unknown type - F4 shows the possible values.` )
+            TYPE 'E'.
+  ENDIF.
+
+ENDFORM.
+
+FORM f4_stype.
+
+  DATA lt_list TYPE ty_stypes.
+  DATA lt_ret  TYPE STANDARD TABLE OF ddshretval.
+
+  PERFORM stype_list CHANGING lt_list.
+
+  CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
+    EXPORTING
+      retfield        = 'CODE'
+      dynpprog        = sy-repid
+      dynpnr          = sy-dynnr
+      dynprofield     = 'P_STYPE'
+      value_org       = 'S'
+    TABLES
+      value_tab       = lt_list
+      return_tab      = lt_ret
+    EXCEPTIONS
+      parameter_error = 1
+      no_values_found = 2
+      OTHERS          = 3.
+
+ENDFORM.
+
+FORM f4_sval.
+
+*  The value help follows the type: a package is looked up in TDEVC, a
+*  function module in TFDIR, everything else in the object catalog.
+  TYPES: BEGIN OF ty_hit,
+           name TYPE sobj_name,
+           text TYPE string,
+         END OF ty_hit.
+
+  DATA lt_hit  TYPE STANDARD TABLE OF ty_hit.
+  DATA lt_ret  TYPE STANDARD TABLE OF ddshretval.
+  DATA lv_like TYPE string.
+  DATA lv_obj  TYPE tadir-object.
+
+  lv_like = to_upper( condense( CONV string( p_sval ) ) ).
+  IF lv_like IS INITIAL.
+    lv_like = '%'.
+  ELSE.
+    lv_like = |{ lv_like }%|.
+  ENDIF.
+
+  CASE p_stype.
+
+    WHEN 'K'.
+      SELECT d~devclass AS name, t~ctext AS text
+        FROM tdevc AS d
+        LEFT OUTER JOIN tdevct AS t
+          ON t~devclass = d~devclass AND t~spras = @sy-langu
+        WHERE d~devclass LIKE @lv_like
+        ORDER BY d~devclass
+        INTO CORRESPONDING FIELDS OF TABLE @lt_hit
+        UP TO 300 ROWS.
+
+    WHEN 'FF'.
+      SELECT f~funcname AS name, t~stext AS text
+        FROM tfdir AS f
+        LEFT OUTER JOIN tftit AS t
+          ON t~funcname = f~funcname AND t~spras = @sy-langu
+        WHERE f~funcname LIKE @lv_like
+        ORDER BY f~funcname
+        INTO CORRESPONDING FIELDS OF TABLE @lt_hit
+        UP TO 300 ROWS.
+
+    WHEN OTHERS.
+      CASE p_stype.
+        WHEN 'P'.  lv_obj = 'PROG'.
+        WHEN 'C'.  lv_obj = 'CLAS'.
+        WHEN 'F'.  lv_obj = 'FUGR'.
+        WHEN 'T'.  lv_obj = 'TABL'.
+        WHEN 'V'.  lv_obj = 'VIEW'.
+        WHEN 'D'.  lv_obj = 'DTEL'.
+        WHEN 'DO'. lv_obj = 'DOMA'.
+        WHEN 'W'.  lv_obj = 'DDLS'.
+        WHEN OTHERS. lv_obj = 'PROG'.
+      ENDCASE.
+      SELECT obj_name AS name, devclass AS text
+        FROM tadir
+        WHERE pgmid = 'R3TR' AND object = @lv_obj
+          AND obj_name LIKE @lv_like AND delflag = @abap_false
+        ORDER BY obj_name
+        INTO CORRESPONDING FIELDS OF TABLE @lt_hit
+        UP TO 300 ROWS.
+
+  ENDCASE.
+
+  CALL FUNCTION 'F4IF_INT_TABLE_VALUE_REQUEST'
+    EXPORTING
+      retfield        = 'NAME'
+      dynpprog        = sy-repid
+      dynpnr          = sy-dynnr
+      dynprofield     = 'P_SVAL'
+      value_org       = 'S'
+    TABLES
+      value_tab       = lt_hit
+      return_tab      = lt_ret
+    EXCEPTIONS
+      parameter_error = 1
+      no_values_found = 2
+      OTHERS          = 3.
+
+ENDFORM.
 
 *----------------------------------------------------------------------*
 * Output helper routines
@@ -2164,7 +3014,9 @@ START-OF-SELECTION.
 * The document speaks the output language, including its own headings.
   lcl_t=>set_lang( p_langu ).
 
-  DATA(lo_collector) = NEW lcl_collector_dev( iv_pack   = p_pack
+  DATA(lo_collector) = NEW lcl_collector_dev( iv_stype  = p_stype
+                                              iv_sval   = CONV string( p_sval )
+                                              iv_rdep   = p_rdep
                                               iv_recur  = p_recur
                                               iv_local  = p_local
                                               iv_langu  = p_langu
@@ -2196,8 +3048,11 @@ START-OF-SELECTION.
 
   WRITE: / lcl_t=>ui( d = `Documizer - Entwicklerdokumentation` e = `Documizer - developer documentation` ).
   ULINE.
-  WRITE: / lcl_t=>ui( d = `Startpaket                       :` e = `Start package                    :` ), p_pack.
-  WRITE: / lcl_t=>ui( d = `Pakete                           :` e = `Packages                         :` ), lo_collector->get_stat_packages( ).
+  PERFORM stype_text USING p_stype CHANGING gv_tstyt.
+  WRITE: / lcl_t=>ui( d = `Startpunkt                       :` e = `Start point                      :` ), gv_tstyt, p_sval.
+  IF p_stype = 'K'.
+    WRITE: / lcl_t=>ui( d = `Pakete                           :` e = `Packages                         :` ), lo_collector->get_stat_packages( ).
+  ENDIF.
   WRITE: / lcl_t=>ui( d = `Objekte aufgenommen              :` e = `Objects included                 :` ), lo_collector->get_stat_objects( ).
   WRITE: / lcl_t=>ui( d = `Objekte gefunden                 :` e = `Objects found                    :` ), lo_collector->get_stat_total( ).
   WRITE: / lcl_t=>ui( d = `mit Objektdokumentation          :` e = `with object documentation        :` ), lo_collector->get_stat_docu( ).

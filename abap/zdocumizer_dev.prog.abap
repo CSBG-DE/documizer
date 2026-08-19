@@ -1228,6 +1228,7 @@ CLASS lcl_collector_dev DEFINITION.
                 iv_id             TYPE string
                 iv_level          TYPE i
                 iv_calls          TYPE abap_bool DEFAULT abap_false
+                iv_root           TYPE abap_bool DEFAULT abap_false
       RETURNING VALUE(ro_chapter) TYPE REF TO lcl_chapter.
     METHODS collect_single
       CHANGING co_document TYPE REF TO lcl_document
@@ -1856,9 +1857,32 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     ENDIF.
     lo_u->set_row_count( lines( lt_use ) ).
 
+*   The index names the include, and an include says little on its own.
+*   The main program behind it is what the reader recognises: the report,
+*   the function group, the class pool.
+    DATA lt_inc TYPE STANDARD TABLE OF progname.
     LOOP AT lt_use INTO ls_use.
+      APPEND CONV progname( ls_use-where ) TO lt_inc.
+    ENDLOOP.
+    SORT lt_inc BY table_line.
+    DELETE ADJACENT DUPLICATES FROM lt_inc COMPARING table_line.
+
+    SELECT include, master FROM d010inc
+      FOR ALL ENTRIES IN @lt_inc
+      WHERE include = @lt_inc-table_line
+      INTO TABLE @DATA(lt_mast).
+    SORT lt_mast BY include.
+
+    LOOP AT lt_use INTO ls_use.
+      DATA(lv_kind) = ls_use-kind.
+      READ TABLE lt_mast INTO DATA(ls_mast)
+           WITH KEY include = ls_use-where BINARY SEARCH.
+      IF sy-subrc = 0 AND ls_mast-master IS NOT INITIAL
+         AND ls_mast-master <> ls_use-where.
+        lv_kind = |{ lv_kind } ({ ls_mast-master })|.
+      ENDIF.
       lo_u->add_field( VALUE ty_field( name     = ls_use-where
-                                       rollname = ls_use-kind ) ).
+                                       rollname = lv_kind ) ).
     ENDLOOP.
 
     io_chapter->add_object( lo_u ).
@@ -2577,7 +2601,11 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       add_details( iv_type = iv_type iv_name = iv_name io_chapter = ro_chapter ).
     ENDIF.
 
-    IF mv_used = abap_true.
+*   Only for the object the user asked about. The question "who uses this"
+*   is about the entry point, not about its neighbourhood - a data element
+*   like CHAR255 is used in thousands of SAP programs and would bury the
+*   document under its own where-used list.
+    IF mv_used = abap_true AND iv_root = abap_true.
       add_usages( iv_name = iv_name io_chapter = ro_chapter ).
     ENDIF.
 
@@ -2611,7 +2639,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
                                      iv_name  = ls_start-name
                                      iv_id    = `1`
                                      iv_level = 1
-                                     iv_calls = abap_true ).
+                                     iv_calls = abap_true
+                                     iv_root  = abap_true ).
     co_document->add_chapter( lo_root ).
 
     IF mv_calls = abap_false OR mv_rdep <= 0.

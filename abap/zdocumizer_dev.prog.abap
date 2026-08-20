@@ -1349,6 +1349,9 @@ CLASS lcl_collector_dev DEFINITION.
     METHODS main_program
       IMPORTING iv_include     TYPE progname
       RETURNING VALUE(rv_prog) TYPE progname.
+    METHODS obj_label
+      IMPORTING iv_type         TYPE trobjtype
+      RETURNING VALUE(rv_label) TYPE string.
     METHODS prog_kind
       IMPORTING iv_subc        TYPE trdir-subc
                 iv_prog        TYPE progname
@@ -1357,10 +1360,11 @@ CLASS lcl_collector_dev DEFINITION.
       IMPORTING iv_type       TYPE trobjtype
       RETURNING VALUE(rv_cls) TYPE euobj-id.
     METHODS crossref_users
-      IMPORTING iv_type TYPE trobjtype
-                iv_name TYPE sobj_name
-      EXPORTING et_name TYPE ty_names
-                ev_ok   TYPE abap_bool.
+      IMPORTING iv_type       TYPE trobjtype
+                iv_name       TYPE sobj_name
+                iv_with_encl  TYPE abap_bool DEFAULT abap_false
+      EXPORTING et_name       TYPE ty_names
+                ev_ok         TYPE abap_bool.
     METHODS usage_objects
       IMPORTING iv_type       TYPE trobjtype
                 iv_name       TYPE sobj_name
@@ -1995,35 +1999,60 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       lv_max = 100000.
     ENDIF.
 
-    DATA lv_name120 TYPE wbcrossgt-name.
-    lv_name120 = iv_name.
+*   Erst die Werkbank fragen. Sie kennt Stellen, die in keiner der
+*   Indextabellen stehen - allen voran DDL Sources. Ein CDS mit
+*   klassischem SQL-View steht in DD26S nur unter dem Namen dieses Views,
+*   eine CDS View Entity gar nicht.
+    crossref_users( EXPORTING iv_type = iv_type
+                              iv_name = iv_name
+                    IMPORTING et_name = DATA(lt_cru)
+                              ev_ok   = DATA(lv_cr_ok) ).
 
-    SELECT include FROM wbcrossgt
-      WHERE otype = 'TY' AND name = @lv_name120
-      INTO TABLE @DATA(lt_gt)
-      UP TO @lv_max ROWS.
+    IF lv_cr_ok = abap_true.
 
-    LOOP AT lt_gt INTO DATA(ls_gt).
-      CLEAR ls_use.
-      ls_use-where = ls_gt-include.
-      ls_use-kind  = lcl_t=>t( d = 'Typverwendung' e = 'Type usage' ).
-      APPEND ls_use TO lt_use.
-    ENDLOOP.
+      IF lines( lt_cru ) > lv_max.
+        DELETE lt_cru FROM lv_max + 1.
+      ENDIF.
+      LOOP AT lt_cru INTO DATA(lv_cru).
+        CLEAR ls_use.
+        ls_use-where = lv_cru.
+        ls_use-kind  = lcl_t=>t( d = 'Verwendung' e = 'usage' ).
+        APPEND ls_use TO lt_use.
+      ENDLOOP.
 
-    DATA lv_name_cr TYPE cross-name.
-    lv_name_cr = iv_name.
+    ELSE.
 
-    SELECT prog FROM cross
-      WHERE name = @lv_name_cr
-      INTO TABLE @DATA(lt_cr)
-      UP TO @lv_max ROWS.
+      DATA lv_name120 TYPE wbcrossgt-name.
+      lv_name120 = iv_name.
 
-    LOOP AT lt_cr INTO DATA(ls_cr).
-      CLEAR ls_use.
-      ls_use-where = ls_cr-prog.
-      ls_use-kind  = lcl_t=>t( d = 'Programmverwendung' e = 'Program usage' ).
-      APPEND ls_use TO lt_use.
-    ENDLOOP.
+      SELECT include FROM wbcrossgt
+        WHERE otype = 'TY' AND name = @lv_name120
+        INTO TABLE @DATA(lt_gt)
+        UP TO @lv_max ROWS.
+
+      LOOP AT lt_gt INTO DATA(ls_gt).
+        CLEAR ls_use.
+        ls_use-where = ls_gt-include.
+        ls_use-kind  = lcl_t=>t( d = 'Typverwendung' e = 'Type usage' ).
+        APPEND ls_use TO lt_use.
+      ENDLOOP.
+
+      DATA lv_name_cr TYPE cross-name.
+      lv_name_cr = iv_name.
+
+      SELECT prog FROM cross
+        WHERE name = @lv_name_cr
+        INTO TABLE @DATA(lt_cr)
+        UP TO @lv_max ROWS.
+
+      LOOP AT lt_cr INTO DATA(ls_cr).
+        CLEAR ls_use.
+        ls_use-where = ls_cr-prog.
+        ls_use-kind  = lcl_t=>t( d = 'Programmverwendung' e = 'Program usage' ).
+        APPEND ls_use TO lt_use.
+      ENDLOOP.
+
+    ENDIF.
 
 *   A table is not only used in code. Views and CDS views are built on it,
 *   and the cross-reference index does not know about either - the DDIC
@@ -2158,6 +2187,14 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       INTO TABLE @DATA(lt_dir).
     SORT lt_dir BY name.
 
+*   Was TRDIR nicht kennt, ist kein Programm: eine DDL Source, ein View,
+*   eine Tabelle. Der Katalog sagt, was es ist.
+    SELECT object, obj_name FROM tadir
+      FOR ALL ENTRIES IN @lt_prog
+      WHERE pgmid = 'R3TR' AND obj_name = @lt_prog-table_line
+      INTO TABLE @DATA(lt_tad).
+    SORT lt_tad BY obj_name.
+
 *   How a table is used only shows in the source: the index knows that it
 *   is used, not whether it is read or written. Done for the entry point
 *   only, and the entry limit caps how many programs are read.
@@ -2212,7 +2249,13 @@ CLASS lcl_collector_dev IMPLEMENTATION.
           lv_kind = |{ lv_kind } { lv_main }|.
         ENDIF.
       ELSE.
-        lv_kind = ls_use-kind.
+        READ TABLE lt_tad INTO DATA(ls_tad)
+             WITH KEY obj_name = lv_main BINARY SEARCH.
+        IF sy-subrc = 0.
+          lv_kind = obj_label( ls_tad-object ).
+        ELSE.
+          lv_kind = ls_use-kind.
+        ENDIF.
       ENDIF.
 
       READ TABLE lt_acc INTO DATA(ls_acc)
@@ -2342,7 +2385,9 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       IF ls_f-object IS NOT INITIAL.
         APPEND CONV sobj_name( ls_f-object ) TO et_name.
       ENDIF.
-      IF ls_f-encl_objec IS NOT INITIAL.
+*     Das umschliessende Objekt hilft beim Aufloesen auf ein
+*     Katalogobjekt, in der Trefferliste selbst waere es eine Dublette.
+      IF iv_with_encl = abap_true AND ls_f-encl_objec IS NOT INITIAL.
         APPEND CONV sobj_name( ls_f-encl_objec ) TO et_name.
       ENDIF.
     ENDLOOP.
@@ -2368,10 +2413,11 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     DATA lt_inc TYPE STANDARD TABLE OF progname.
 
 *   Zuerst die Werkbank fragen, erst bei Fehlschlag die Indextabellen.
-    crossref_users( EXPORTING iv_type = iv_type
-                              iv_name = iv_name
-                    IMPORTING et_name = DATA(lt_cr_name)
-                              ev_ok   = DATA(lv_ok) ).
+    crossref_users( EXPORTING iv_type      = iv_type
+                              iv_name      = iv_name
+                              iv_with_encl = abap_true
+                    IMPORTING et_name      = DATA(lt_cr_name)
+                              ev_ok        = DATA(lv_ok) ).
 
     IF lv_ok = abap_true.
       DATA lv_crp TYPE progname.
@@ -2484,6 +2530,28 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         rv_prog = ls_master-master.
       ENDIF.
     ENDIF.
+  ENDMETHOD.
+
+  METHOD obj_label.
+*   Einzahl, im Gegensatz zu type_title, das die Gruppenueberschrift
+*   liefert. Hier steht die Angabe hinter einem einzelnen Namen.
+    CASE iv_type.
+      WHEN 'DDLS'. rv_label = 'CDS View'.
+      WHEN 'VIEW'. rv_label = lcl_t=>t( d = 'View' e = 'view' ).
+      WHEN 'TABL'. rv_label = lcl_t=>t( d = 'Tabelle/Struktur' e = 'table/structure' ).
+      WHEN 'CLAS'. rv_label = lcl_t=>t( d = 'Klasse' e = 'class' ).
+      WHEN 'INTF'. rv_label = 'Interface'.
+      WHEN 'FUGR'. rv_label = lcl_t=>t( d = 'Funktionsgruppe' e = 'function group' ).
+      WHEN 'PROG'. rv_label = lcl_t=>t( d = 'Programm' e = 'program' ).
+      WHEN 'DTEL'. rv_label = lcl_t=>t( d = 'Datenelement' e = 'data element' ).
+      WHEN 'DOMA'. rv_label = lcl_t=>t( d = 'Domäne' e = 'domain' ).
+      WHEN 'TTYP'. rv_label = lcl_t=>t( d = 'Tabellentyp' e = 'table type' ).
+      WHEN 'SHLP'. rv_label = lcl_t=>t( d = 'Suchhilfe' e = 'search help' ).
+      WHEN 'ENQU'. rv_label = lcl_t=>t( d = 'Sperrobjekt' e = 'lock object' ).
+      WHEN 'MSAG'. rv_label = lcl_t=>t( d = 'Nachrichtenklasse' e = 'message class' ).
+      WHEN 'TRAN'. rv_label = lcl_t=>t( d = 'Transaktion' e = 'transaction' ).
+      WHEN OTHERS. rv_label = iv_type.
+    ENDCASE.
   ENDMETHOD.
 
   METHOD prog_kind.

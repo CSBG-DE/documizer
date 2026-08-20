@@ -167,8 +167,8 @@ Pakete im System S4H (Auftrag `S4HK901757`):
 
 **Block: Ausgabe**
 
-`P_XML`, `P_HTML`, `P_RTEST` (Roundtrip prüfen), `P_DOWN` + `P_PATH` (PC),
-`P_DSRV` + `P_SRV` (Applikationsserver).
+`P_XML`, `P_HTML`, `P_FOLD` (HTML einklappen ab Zeilen, 0 = nie), `P_RTEST` (Roundtrip prüfen),
+`P_DOWN` + `P_PATH` (PC), `P_DSRV` + `P_SRV` (Applikationsserver).
 
 ### 3.2 Ablauf
 
@@ -532,6 +532,13 @@ Die Datei soll auch in Jahren noch ohne Nacharbeit zu öffnen sein.
 
 Enthalten sind Inhaltsverzeichnis mit Sprungmarken (zwei Ebenen — sonst wird das Verzeichnis
 länger als das Dokument), nummerierte Kapitel, Datentabellen, Quelltext in Codeblöcken.
+
+**Große Blöcke einklappen.** Ein Quelltext von 2000 Zeilen oder eine Tabelle mit 800 Einträgen
+schiebt alles Übrige aus dem Blick. Blöcke oberhalb der Schwelle `P_FOLD` (Vorbelegung 100)
+stehen deshalb in `<details>` mit einer Kopfzeile aus Bezeichnung und Umfang — zugeklappt, per
+Klick aufzuklappen. `<details>` ist gewöhnliches HTML; das Dokument bleibt ohne JavaScript, und
+ein Anzeigeprogramm, das das Element nicht kennt, zeigt den Inhalt einfach ausgeklappt.
+`P_FOLD = 0` schaltet das Einklappen ab.
 
 **ITF-Umsetzung.** Die Dokumentation kommt als ITF. Abschnittsmarken wie `&DEFINITION&`,
 `&USE&` oder `&EXAMPLE&` werden zu Zwischenüberschriften, Auszeichnungen (`<ZH>`, `<LS>`,

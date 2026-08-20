@@ -120,6 +120,9 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'weiterverarbeitet wird.' ).
     a( iv_f = 'B1' iv_t = 'XML erzeugen/ausgeben: fuehrendes Format, wieder einlesbar. Fuer die' ).
     a( iv_f = '=' iv_t = 'Weitergabe und den spaeteren Reimport.' ).
+    a( iv_f = 'B1' iv_t = 'HTML einklappen ab Zeilen: laengere Tabellen und Quelltexte stehen im' ).
+    a( iv_f = '=' iv_t = 'HTML zugeklappt hinter einer Zeile mit Bezeichnung und Umfang und' ).
+    a( iv_f = '=' iv_t = 'lassen sich per Klick oeffnen. 0 schaltet das Einklappen ab.' ).
     a( iv_f = 'B1' iv_t = 'Projektstatus und Projekt-Memo sind einzeln abschaltbar.' ).
     a( iv_f = 'B1' iv_t = 'Roundtrip pruefen: serialisiert, liest wieder ein, serialisiert erneut' ).
     a( iv_f = '=' iv_t = 'und vergleicht. Dient der Pruefung des Importpfades und schreibt nichts' ).
@@ -211,6 +214,9 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'weiterverarbeitet wird.' ).
     a( iv_f = 'B1' iv_t = 'XML erzeugen/ausgeben: fuehrendes Format, wieder einlesbar. Fuer die' ).
     a( iv_f = '=' iv_t = 'Weitergabe und den spaeteren Reimport.' ).
+    a( iv_f = 'B1' iv_t = 'HTML einklappen ab Zeilen: laengere Feldlisten, Verweislisten und' ).
+    a( iv_f = '=' iv_t = 'Quelltexte stehen im HTML zugeklappt hinter einer Zeile mit' ).
+    a( iv_f = '=' iv_t = 'Bezeichnung und Umfang. 0 schaltet das Einklappen ab.' ).
     a( iv_f = 'B1' iv_t = 'Roundtrip pruefen: serialisiert, liest wieder ein, serialisiert erneut' ).
     a( iv_f = '=' iv_t = 'und vergleicht. Schreibt nichts in das System zurueck.' ).
     a( iv_f = 'B1' iv_t = 'Download auf PC und Ablage Appl.-Server schreiben dieselbe Datei in' ).

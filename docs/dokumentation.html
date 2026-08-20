@@ -775,6 +775,17 @@
           Das XML behält den unveränderten ITF-Text — dort zählt Verlustfreiheit,
           die Aufbereitung gehört in die Anzeige.
         </p>
+        <p>
+          <b>Große Blöcke stehen eingeklappt.</b> Ein Quelltext von 2000 Zeilen oder eine
+          Tabelle mit 800 Einträgen drängt alles Übrige aus dem Blick. Was länger ist als
+          <em>HTML einklappen ab Zeilen</em> (Vorbelegung 100), erscheint deshalb als
+          aufklappbare Zeile mit Bezeichnung und Umfang — etwa
+          <em>Verwendungsnachweis (312 Einträge)</em>. Ein Klick zeigt den Inhalt.
+          Dahinter steht das HTML-Element <code>&lt;details&gt;</code>, kein Skript: die Datei
+          bleibt frei von JavaScript, und ein Anzeigeprogramm, das das Element nicht kennt,
+          zeigt den Inhalt schlicht ausgeklappt. Der Wert <code>0</code> schaltet das
+          Einklappen ab.
+        </p>
 
         <h3>Ablage</h3>
         <div class="tablewrap">

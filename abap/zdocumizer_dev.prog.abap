@@ -836,6 +836,10 @@ SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE gv_blk3.
     PARAMETERS p_html AS CHECKBOX DEFAULT 'X'.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tfold FOR FIELD p_fold.
+    PARAMETERS p_fold TYPE i DEFAULT 100.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_trt FOR FIELD p_rtest.
     PARAMETERS p_rtest AS CHECKBOX DEFAULT 'X'.
   SELECTION-SCREEN END OF LINE.
@@ -884,6 +888,7 @@ INITIALIZATION.
     gv_tfsrc = 'Fundstellen im ganzen Quelltext'.
     gv_txml  = 'XML erzeugen/ausgeben'.
     gv_thtml = 'HTML erzeugen/anzeigen'.
+    gv_tfold = 'HTML einklappen ab Zeilen'.
     gv_trt   = 'Roundtrip prüfen'.
     gv_tdown = 'Download auf PC'.
     gv_tpath = 'Verzeichnis'.
@@ -917,6 +922,7 @@ INITIALIZATION.
     gv_tfsrc = 'Occurrences in full source'.
     gv_txml  = 'Create/show XML'.
     gv_thtml = 'Create/show HTML'.
+    gv_tfold = 'Collapse HTML from lines'.
     gv_trt   = 'Check roundtrip'.
     gv_tdown = 'Download to PC'.
     gv_tpath = 'Directory'.
@@ -951,8 +957,21 @@ AT SELECTION-SCREEN.
 CLASS lcl_renderer_html DEFINITION.
   PUBLIC SECTION.
     INTERFACES lif_docu_renderer.
+*   Blocks longer than this are wrapped in <details>; 0 switches the
+*   folding off. Set once from the selection screen.
+    CLASS-METHODS set_fold IMPORTING iv_fold TYPE i.
   PRIVATE SECTION.
+    CLASS-DATA gv_fold TYPE i.
     DATA mv_html TYPE string.
+*   Opens a block: folded away behind a summary line when it is long,
+*   otherwise just the note above it. rv_folded has to be handed back to
+*   close_block so that the tag is closed exactly when it was opened.
+    METHODS open_block
+      IMPORTING iv_label         TYPE string
+                iv_count         TYPE i
+                iv_unit          TYPE string OPTIONAL
+      RETURNING VALUE(rv_folded) TYPE abap_bool.
+    METHODS close_block IMPORTING iv_folded TYPE abap_bool.
     METHODS add IMPORTING iv_text TYPE string.
     METHODS esc IMPORTING iv_text TYPE string RETURNING VALUE(rv_text) TYPE string.
     METHODS write_chapter IMPORTING io_chapter TYPE REF TO lcl_chapter.
@@ -969,6 +988,44 @@ CLASS lcl_renderer_html IMPLEMENTATION.
 
   METHOD add.
     mv_html = |{ mv_html }{ iv_text }{ cl_abap_char_utilities=>newline }|.
+  ENDMETHOD.
+
+  METHOD set_fold.
+    gv_fold = iv_fold.
+  ENDMETHOD.
+
+  METHOD open_block.
+
+    DATA lv_unit TYPE string.
+
+    lv_unit = iv_unit.
+    IF lv_unit IS INITIAL.
+      lv_unit = lcl_t=>t( d = 'Zeilen' e = 'lines' ).
+    ENDIF.
+
+    DATA lv_label TYPE string.
+
+    lv_label = iv_label.
+    IF lv_label IS INITIAL.
+      lv_label = lcl_t=>t( d = 'Einzelheiten' e = 'Details' ).
+    ENDIF.
+
+    IF gv_fold > 0 AND iv_count > gv_fold.
+*     <details> is plain HTML - the file stays free of JavaScript, and a
+*     browser that does not know the element shows the content anyway.
+      rv_folded = abap_true.
+      add( |<details><summary>{ esc( lv_label ) } | &&
+           |<span class="cnt">({ iv_count } { lv_unit })</span></summary>| ).
+    ELSEIF iv_label IS NOT INITIAL.
+      add( |<p class="ref">{ esc( iv_label ) }</p>| ).
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD close_block.
+    IF iv_folded = abap_true.
+      add( '</details>' ).
+    ENDIF.
   ENDMETHOD.
 
   METHOD esc.
@@ -1004,6 +1061,11 @@ CLASS lcl_renderer_html IMPLEMENTATION.
     add( 'pre.src{background:#fbfbf5;border:1px solid #ddd;padding:8px;' &&
          'font-family:Consolas,monospace;font-size:11px;overflow-x:auto;' &&
          'white-space:pre}' ).
+    add( 'details{margin:4px 0}' ).
+    add( 'summary{color:#666;font-size:11px;cursor:pointer;' &&
+         'padding:2px 0;user-select:none}' ).
+    add( 'summary:hover{color:#000}' ).
+    add( 'span.cnt{color:#999}' ).
     add( '</style></head><body>' ).
 
     add( |<h1>{ lcl_t=>t( d = lcl_t=>ui( d = `Documizer - Entwicklerdokumentation` e = `Documizer - developer documentation` )
@@ -1189,17 +1251,21 @@ CLASS lcl_renderer_html IMPLEMENTATION.
     ENDIF.
 
     IF io_chapter->get_source( ) IS NOT INITIAL.
-      add( |<pre class="src">{ esc( io_chapter->get_source( ) ) }</pre>| ).
+      DATA(lv_src) = io_chapter->get_source( ).
+      DATA(lv_fold) = open_block(
+        iv_label = lcl_t=>t( d = 'Quelltext' e = 'Source code' )
+        iv_count = count( val = lv_src sub = cl_abap_char_utilities=>newline ) + 1 ).
+      add( |<pre class="src">{ esc( lv_src ) }</pre>| ).
+      close_block( lv_fold ).
     ENDIF.
 
     LOOP AT io_chapter->get_objects( ) INTO DATA(lo_obj).
-      IF lo_obj->get_note( ) IS NOT INITIAL.
-        add( |<p class="ref">{ esc( lo_obj->get_note( ) ) }</p>| ).
-      ENDIF.
+      DATA(lv_cnt) = lines( lo_obj->get_fields( ) ).
 
 *     Source hits belong in a code block, not in a field table: the line
 *     number in front, the statement behind it, in a fixed-width font.
       IF lo_obj->get_type( ) = 'SOURCE'.
+        lv_fold = open_block( iv_label = lo_obj->get_note( ) iv_count = lv_cnt ).
         add( '<pre class="src">' ).
         LOOP AT lo_obj->get_fields( ) INTO DATA(ls_hit).
           IF ls_hit-keyflag = abap_true.
@@ -1209,10 +1275,14 @@ CLASS lcl_renderer_html IMPLEMENTATION.
           ENDIF.
         ENDLOOP.
         add( '</pre>' ).
+        close_block( lv_fold ).
         CONTINUE.
       ENDIF.
 
-      IF lines( lo_obj->get_fields( ) ) > 0.
+      IF lv_cnt > 0.
+        lv_fold = open_block( iv_label = lo_obj->get_note( )
+                              iv_count = lv_cnt
+                              iv_unit  = lcl_t=>t( d = 'Einträge' e = 'entries' ) ).
         add( |<table><tr><th>Name</th>| &&
              |<th>{ lcl_t=>t( d = 'Typ / Datenelement'
                               e = 'Type / data element' ) }</th>| &&
@@ -1223,6 +1293,9 @@ CLASS lcl_renderer_html IMPLEMENTATION.
                |<td>{ COND string( WHEN ls_fs-keyflag = abap_true THEN 'X' ELSE '' ) }</td></tr>| ).
         ENDLOOP.
         add( '</table>' ).
+        close_block( lv_fold ).
+      ELSEIF lo_obj->get_note( ) IS NOT INITIAL.
+        add( |<p class="ref">{ esc( lo_obj->get_note( ) ) }</p>| ).
       ENDIF.
     ENDLOOP.
 
@@ -4284,6 +4357,7 @@ START-OF-SELECTION.
 
   IF p_html = abap_true.
     DATA lo_html TYPE REF TO lif_docu_renderer.
+    lcl_renderer_html=>set_fold( p_fold ).
     lo_html = NEW lcl_renderer_html( ).
     DATA(lv_html) = lo_html->render( lo_doc ).
     WRITE: / lcl_t=>ui( d = `HTML-Zeichen                     :` e = `HTML characters                  :` ), strlen( lv_html ).

@@ -102,6 +102,15 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = 'B1' iv_t = 'Max. Zeilen: Obergrenze je Tabelle. Die Gesamtzahl bleibt im Dokument' ).
     a( iv_f = '=' iv_t = 'vermerkt, ebenso die Kuerzung.' ).
     a( iv_f = 'B1' iv_t = 'Transport-Historie: fuehrt die Auftraege zur jeweiligen Tabelle auf.' ).
+    a( iv_f = 'B1' iv_t = 'Ausgabesprache und Ersatzsprache: alle Texte im Dokument folgen der' ).
+    a( iv_f = '=' iv_t = 'Ausgabesprache. Ist dort nichts gepflegt, wird die Ersatzsprache' ).
+    a( iv_f = '=' iv_t = 'versucht; welche Sprache geliefert hat, steht am Kapitel.' ).
+    a( iv_f = 'B1' iv_t = 'Ausgehende Aufrufe: durchsucht den Quelltext des Programms hinter der' ).
+    a( iv_f = '=' iv_t = 'Transaktion nach Bausteinen, Tabellenzugriffen und Klassen. Genommen' ).
+    a( iv_f = '=' iv_t = 'werden nur die Transaktionen der zugeordneten Objekte, nicht die des' ).
+    a( iv_f = '=' iv_t = 'Aktivitaetskopfes - diese fuehrt ins IMG-Rahmenwerk.' ).
+    a( iv_f = 'B1' iv_t = 'SAP-Standard ausschliessen: laesst in der Verweisliste nur Objekte der' ).
+    a( iv_f = '=' iv_t = 'Eigenentwicklung stehen.' ).
 
     a( iv_f = 'U1' iv_t = 'Ausgabe' ).
     a( iv_f = 'B1' iv_t = 'XML erzeugen/ausgeben: fuehrendes Format, wieder einlesbar.' ).
@@ -130,9 +139,10 @@ CLASS lcl_docu IMPLEMENTATION.
     CLEAR mt_line.
 
     a( iv_f = 'U1' iv_t = 'Verwendung' ).
-    a( iv_f = 'AS' iv_t = 'Der Report ermittelt ausgehend von einem Startpaket alle Unterpakete' ).
-    a( iv_f = '=' iv_t = 'und die darin enthaltenen Entwicklungsobjekte und erzeugt daraus eine' ).
-    a( iv_f = '=' iv_t = 'kapitelweise gegliederte Entwicklerdokumentation.' ).
+    a( iv_f = 'AS' iv_t = 'Der Report erzeugt eine kapitelweise gegliederte' ).
+    a( iv_f = '=' iv_t = 'Entwicklerdokumentation. Einstieg ist entweder ein Paket samt' ).
+    a( iv_f = '=' iv_t = 'Unterpaketen oder ein einzelnes Objekt - Report, Klasse,' ).
+    a( iv_f = '=' iv_t = 'Funktionsbaustein, Tabelle, View, CDS View und weitere.' ).
     a( iv_f = 'AS' iv_t = 'Je Objekt werden Kurztext, Typ, Autor und Paket aufgenommen, auf Wunsch' ).
     a( iv_f = '=' iv_t = 'ergaenzt um Objektdokumentation, Detailinformationen, Quelltext und' ).
     a( iv_f = '=' iv_t = 'Verwendungsnachweis.' ).
@@ -145,9 +155,16 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'Ablage auf dem Applikationsserver zur Verfuegung.' ).
 
     a( iv_f = 'U1' iv_t = 'Selektion' ).
-    a( iv_f = 'AS' iv_t = 'Startpaket' ).
-    a( iv_f = 'B1' iv_t = 'Paket: Einstiegspaket, Pflichtangabe.' ).
-    a( iv_f = 'B1' iv_t = 'Unterpakete rekursiv: bezieht den gesamten Unterbaum ein.' ).
+    a( iv_f = 'AS' iv_t = 'Startpunkt' ).
+    a( iv_f = 'B1' iv_t = 'Typ und Name bilden den Einstieg, wie im Object Navigator: K Paket,' ).
+    a( iv_f = '=' iv_t = 'P Programm, C Klasse oder Interface, FF Funktionsbaustein,' ).
+    a( iv_f = '=' iv_t = 'F Funktionsgruppe, T Tabelle, V View, D Datenelement, DO Domaene,' ).
+    a( iv_f = '=' iv_t = 'W CDS View. Beide Felder haben eine Wertehilfe.' ).
+    a( iv_f = 'B1' iv_t = 'Bei einem Paket entsteht die Gliederung Paket, Objekttyp, Objekt. Bei' ).
+    a( iv_f = '=' iv_t = 'einem Einzelobjekt steht dieses in Kapitel eins, die verwendeten' ).
+    a( iv_f = '=' iv_t = 'Objekte folgen in Kapitel zwei.' ).
+    a( iv_f = 'B1' iv_t = 'Unterpakete rekursiv: bezieht den gesamten Unterbaum ein, nur im' ).
+    a( iv_f = '=' iv_t = 'Paketmodus.' ).
     a( iv_f = 'B1' iv_t = 'Lokale Pakete einbeziehen: beruecksichtigt auch Pakete des' ).
     a( iv_f = '=' iv_t = 'Kurzzeitnamensraums.' ).
 
@@ -157,14 +174,29 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'Objekte bleibt im Dokument vermerkt.' ).
     a( iv_f = 'B1' iv_t = 'Objektdokumentation: liest die klassische Objektdokumentation fuer' ).
     a( iv_f = '=' iv_t = 'Programme, Transaktionen und Datenelemente.' ).
-    a( iv_f = 'B1' iv_t = 'Details: ergaenzt Feldlisten fuer Tabellen und Views, Komponenten fuer' ).
-    a( iv_f = '=' iv_t = 'Klassen und Interfaces sowie verwendete Objekte fuer CDS Views.' ).
+    a( iv_f = 'B1' iv_t = 'Details: ergaenzt Feldlisten fuer Tabellen, Basistabellen und' ).
+    a( iv_f = '=' iv_t = 'Verknuepfung fuer Views, Komponenten fuer Klassen und Interfaces,' ).
+    a( iv_f = '=' iv_t = 'Textelemente fuer Programme, Festwerte fuer Domaenen,' ).
+    a( iv_f = '=' iv_t = 'Feldbezeichner fuer Datenelemente, die Schnittstelle fuer' ).
+    a( iv_f = '=' iv_t = 'Funktionsbausteine und verwendete Objekte fuer CDS Views.' ).
     a( iv_f = 'B1' iv_t = 'Quelltext ausgeben: nimmt den Quelltext auf. Fuer Funktionsgruppen und' ).
     a( iv_f = '=' iv_t = 'Klassen werden alle zugehoerigen Includes gelesen.' ).
     a( iv_f = 'B1' iv_t = 'Max. Zeilen je Objekt begrenzt den Quelltext. Wird die Grenze' ).
     a( iv_f = '=' iv_t = 'erreicht, steht der Hinweis mit der Gesamtzahl im Quelltext selbst.' ).
-    a( iv_f = 'B1' iv_t = 'Verwendungsnachweis: wertet die Querverweistabellen der Workbench aus.' ).
-    a( iv_f = '=' iv_t = 'Die Fundstellen werden als Includes ausgewiesen.' ).
+    a( iv_f = 'B1' iv_t = 'Verwendungsnachweis: zeigt, wo das Startobjekt verwendet wird, mit' ).
+    a( iv_f = '=' iv_t = 'Programmart und - bei einer Tabelle - der Zugriffsart lesend oder' ).
+    a( iv_f = '=' iv_t = 'schreibend. Dazu die Fundstellen mit Zeilennummer. Zu einer Tabelle' ).
+    a( iv_f = '=' iv_t = 'werden auch die Views und CDS Views genannt, die auf ihr aufsetzen.' ).
+    a( iv_f = 'B1' iv_t = 'Ausgehende Aufrufe: die Gegenrichtung. Neben den Querverweistabellen' ).
+    a( iv_f = '=' iv_t = 'wird der Quelltext nach CALL FUNCTION, SUBMIT, Tabellenzugriffen und' ).
+    a( iv_f = '=' iv_t = 'Klassen durchsucht; Funktionsbausteine stehen in keinem Index.' ).
+    a( iv_f = 'B1' iv_t = 'Verweistiefe: wie weit die Verweise verfolgt werden. Null bedeutet' ).
+    a( iv_f = '=' iv_t = 'nicht verfolgen, eins die direkten Nachbarn dokumentieren.' ).
+    a( iv_f = 'B1' iv_t = 'SAP-Standard ausschliessen: laesst nur Objekte der Eigenentwicklung' ).
+    a( iv_f = '=' iv_t = 'stehen. Massstab ist die Auslieferungseinheit des Pakets.' ).
+    a( iv_f = 'B1' iv_t = 'Max. Fundstellen je Stelle begrenzt die Quelltextzeilen je Verwendung.' ).
+    a( iv_f = 'B1' iv_t = 'Fundstellen im ganzen Quelltext: gibt statt der Trefferzeilen das ganze' ).
+    a( iv_f = '=' iv_t = 'Listing aus und hebt die Trefferzeilen hervor.' ).
     a( iv_f = 'B1' iv_t = 'Max. Verwendungen je Objekt begrenzt den Nachweis getrennt von der' ).
     a( iv_f = '=' iv_t = 'Objektgrenze.' ).
 

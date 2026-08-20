@@ -318,11 +318,12 @@
     <h1>Documizer</h1>
     <p class="lede">
       Zwei ABAP-Reports, die aus dem laufenden System heraus Dokumentation erzeugen:
-      einmal aus dem Einführungsleitfaden samt Customizing, einmal aus der Paketstruktur
-      der Eigenentwicklung. Beide schreiben dasselbe XML-Format, das sich wieder einlesen lässt.
+      einmal aus dem Einführungsleitfaden samt Customizing, einmal ab einem Paket, Report,
+      Baustein oder DDIC-Objekt der Eigenentwicklung. Beide schreiben dasselbe XML-Format,
+      das sich wieder einlesen lässt.
     </p>
     <div class="factbar">
-      <span><b>Stand</b> 13.08.2026</span>
+      <span><b>Stand</b> 20.08.2026</span>
       <span><b>System</b> S4H · SAP_BASIS 758</span>
       <span><b>Pakete</b> ZCONS_DOCUMIZER</span>
       <span><b>Transport</b> S4HK901757</span>
@@ -369,9 +370,10 @@
           <div class="card">
             <span class="rep">ZDOCUMIZER_DEV</span>
             <h4>Entwicklerdokumentation</h4>
-            <p>Ermittelt ab einem Startpaket rekursiv alle Unterpakete, listet die
-               Entwicklungsobjekte, ergänzt Kurztexte, Feldlisten, Klassenkomponenten,
-               Quelltext und Verwendungsnachweis.</p>
+            <p>Startet an einem Paket oder an einem einzelnen Objekt — Report, Klasse,
+               Funktionsbaustein, Tabelle, View, CDS. Ergänzt Kurztexte, Feldlisten,
+               Komponenten, Textelemente, Quelltext, Verwendungsnachweis und die
+               Objekte, die verwendet werden.</p>
           </div>
         </div>
 
@@ -478,6 +480,9 @@
               <tr><td>nur kundeneigene Einträge</td><td class="num">an</td><td>Siehe unten</td></tr>
               <tr><td>Max. Zeilen</td><td class="num">500</td><td>Je Tabelle; 0 = alle</td></tr>
               <tr><td>Transport-Historie</td><td class="num">aus</td><td>Aufträge zur Tabelle aus <code>E071K</code>/<code>E070</code>/<code>E07T</code></td></tr>
+              <tr><td>Ersatzsprache verwenden</td><td class="num">an</td><td>Rückfall auf EN, wenn in der Ausgabesprache kein Text gepflegt ist</td></tr>
+              <tr><td>Ausgehende Aufrufe</td><td class="num">aus</td><td>Quelltext des Programms hinter der Transaktion — siehe <a href="#dev">Development-Report</a></td></tr>
+              <tr><td>SAP-Standard ausschliessen</td><td class="num">aus</td><td>filtert die Verweisliste auf Eigenentwicklung</td></tr>
             </tbody>
           </table>
         </div>
@@ -563,28 +568,128 @@
       <section id="dev">
         <h2>Development-Report</h2>
         <p class="sec-note">
-          <span class="mono">ZDOCUMIZER_DEV</span> — Eingabe ist ein Startpaket.
-          Kapitelaufbau: Paket → Gruppe je Objekttyp → Objekt.
+          <span class="mono">ZDOCUMIZER_DEV</span> — der Einstieg ist ein Paar aus Typ und Wert,
+          wie im Object Navigator. Ein Paket ergibt Paket → Gruppe je Objekttyp → Objekt,
+          ein Einzelobjekt ergibt Objekt → verwendete Objekte.
+        </p>
+
+        <h3>Startpunkt</h3>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Code</th><th>Startpunkt</th><th>Code</th><th>Startpunkt</th></tr></thead>
+            <tbody>
+              <tr><td><code>K</code></td><td>Paket <span class="mono">(Vorbelegung)</span></td><td><code>T</code></td><td>Tabelle / Struktur</td></tr>
+              <tr><td><code>P</code></td><td>Programm / Report</td><td><code>V</code></td><td>View</td></tr>
+              <tr><td><code>C</code></td><td>Klasse / Interface</td><td><code>D</code></td><td>Datenelement</td></tr>
+              <tr><td><code>FF</code></td><td>Funktionsbaustein</td><td><code>DO</code></td><td>Domäne</td></tr>
+              <tr><td><code>F</code></td><td>Funktionsgruppe</td><td><code>W</code></td><td>CDS View</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          F4 auf beiden Feldern; der Klartext zum Code steht daneben. Bei <code>C</code>
+          entscheidet der Katalog, ob es eine Klasse oder ein Interface ist — ein Feld für
+          beides, wie in SE80. Ein Funktionsbaustein hat keinen eigenen <code>TADIR</code>-Satz
+          und läuft deshalb unter dem Pseudotyp <code>FUNC</code>: Kurztext aus
+          <code>TFTIT</code>, Doku über Dokuklasse <code>FU</code>, Schnittstelle aus
+          <code>FUPARAREF</code>, Quelltext aus seinem Include.
         </p>
 
         <div class="tablewrap">
           <table>
             <thead><tr><th>Feld</th><th class="num">Vorbelegung</th><th>Wirkung</th></tr></thead>
             <tbody>
-              <tr><td>Paket</td><td class="num">—</td><td>Startpaket, Pflichtfeld</td></tr>
-              <tr><td>Unterpakete rekursiv</td><td class="num">an</td><td><code>GET_ALL_SUBPACKAGES</code></td></tr>
+              <tr><td>Typ / Name</td><td class="num">K</td><td>Startpunkt, beide Pflichtfelder</td></tr>
+              <tr><td>Unterpakete rekursiv</td><td class="num">an</td><td><code>GET_ALL_SUBPACKAGES</code>, nur im Paketmodus</td></tr>
               <tr><td>lokale Pakete einbeziehen</td><td class="num">aus</td><td>bezieht <code>$</code>-Pakete mit ein</td></tr>
               <tr><td>Objekttyp / Objektname</td><td class="num">leer</td><td>Select-Options als Filter</td></tr>
+              <tr><td>Ausgabesprache</td><td class="num">Anmeldesprache</td><td>steuert alle Texte im Dokument</td></tr>
+              <tr><td>Ersatzsprache verwenden</td><td class="num">an</td><td>Rückfall auf EN, wenn kein Text gepflegt ist</td></tr>
               <tr><td>Max. Objekte</td><td class="num">2000</td><td>0 = alle</td></tr>
-              <tr><td>Objektdokumentation</td><td class="num">an</td><td><code>DOCU_GET</code> für PROG, TRAN, DTEL</td></tr>
-              <tr><td>Details</td><td class="num">an</td><td>Feldlisten, Klassenkomponenten, CDS-Abhängigkeiten</td></tr>
+              <tr><td>Objektdokumentation</td><td class="num">an</td><td><code>DOCU_GET</code> für PROG, TRAN, DTEL, FUNC, MSAG</td></tr>
+              <tr><td>Details</td><td class="num">an</td><td>Feldlisten, Komponenten, Textelemente, Festwerte, Feldbezeichner, Basistabellen</td></tr>
               <tr><td>Quelltext ausgeben</td><td class="num">aus</td><td>siehe unten</td></tr>
               <tr><td>Max. Zeilen je Objekt</td><td class="num">300</td><td>Kürzungshinweis steht im Quelltext selbst</td></tr>
-              <tr><td>Verwendungsnachweis</td><td class="num">aus</td><td><code>WBCROSSGT</code> und <code>CROSS</code></td></tr>
+              <tr><td>Verwendungsnachweis</td><td class="num">aus</td><td>nur zum Startobjekt — siehe unten</td></tr>
+              <tr><td>Ausgehende Aufrufe</td><td class="num">aus</td><td>Index plus Quelltext-Scan — siehe unten</td></tr>
+              <tr><td>Verweistiefe</td><td class="num">1</td><td>0 = keine; 1 = die direkten Nachbarn dokumentieren</td></tr>
+              <tr><td>SAP-Standard ausschliessen</td><td class="num">aus</td><td>siehe unten</td></tr>
               <tr><td>Max. Verwendungen je Objekt</td><td class="num">50</td><td>eigene Grenze, getrennt von der Objektgrenze</td></tr>
+              <tr><td>Max. Fundstellen je Stelle</td><td class="num">40</td><td>begrenzt die Quelltextzeilen je Verwendung</td></tr>
+              <tr><td>Fundstellen im ganzen Quelltext</td><td class="num">aus</td><td>ganzes Listing, Trefferzeilen fett</td></tr>
             </tbody>
           </table>
         </div>
+
+        <h3>Ausgehende Aufrufe</h3>
+        <p>
+          Was ein Objekt verwendet, steht in zwei Quellen — und beide sind für sich
+          unvollständig:
+        </p>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Quelle</th><th>Liefert</th><th>Lücke</th></tr></thead>
+            <tbody>
+              <tr><td><code>WBCROSSGT</code></td><td>Methodenaufrufe, globale Typen, Datenobjekte</td><td>kennt keine Bausteine, keinen <code>SELECT</code></td></tr>
+              <tr><td><code>CROSS</code></td><td>klassische Verweise</td><td>auf S/4 ohne <code>SAPRSEUB</code>-Lauf <b>leer</b></td></tr>
+              <tr><td>Quelltext</td><td><code>CALL FUNCTION</code>, <code>SUBMIT</code>, Tabellenzugriffe, Klassen</td><td>Laufzeitnamen nicht auflösbar</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Deshalb wird zusätzlich der Quelltext gescannt. Jeder Treffer wird gegen den Katalog
+          geprüft, bevor er ins Dokument kommt — Bausteine gegen <code>TFDIR</code>, Tabellen
+          und Klassen gegen <code>TADIR</code>. Lokale Klassen, Arbeitsbereiche und zur Laufzeit
+          zusammengesetzte Namen fallen damit heraus; dynamische Zugriffe wie
+          <code>FROM (lv_tab)</code> passen nicht auf das Muster. Die Liste ist nach Art
+          sortiert: Bausteine und Reports, Tabellenzugriffe, Methodenaufrufe, Typen,
+          Datenobjekte. Greift die Mengengrenze, bleibt oben stehen, was zuerst gesucht wird.
+        </p>
+        <div class="note">
+          <p>Querverweise stehen unter dem <b>Include</b>, nicht unter dem Objektnamen. Für einen
+          Baustein (<code>L&lt;gruppe&gt;U&lt;nn&gt;</code>) und eine Funktionsgruppe
+          (<code>L&lt;gruppe&gt;</code>) ist das nicht dasselbe.</p>
+        </div>
+
+        <h3>Verwendungsnachweis</h3>
+        <p>
+          Nur für das Startobjekt. Die Frage „wer benutzt das" gilt dem Einstiegspunkt, nicht
+          seiner Nachbarschaft — ein Datenelement wie <code>CHAR255</code> wird in tausenden
+          SAP-Programmen verwendet und würde das Dokument unter seiner eigenen
+          Verwendungsliste begraben. Im Paketmodus bleibt es beim Nachweis je Objekt, dort ist
+          jedes Objekt selbst Gegenstand des Dokuments.
+        </p>
+        <p>Je Treffer steht:</p>
+        <ul>
+          <li>die <b>Programmart</b> aus <code>TRDIR-SUBC</code> — Report, Funktionsgruppe,
+              Klassenpool, Modulpool. Bei einer Funktionsgruppe mit ihrem Namen, der sagt mehr
+              als das Rahmenprogramm <code>SAPL&lt;gruppe&gt;</code>.</li>
+          <li>bei einer Tabelle die <b>Zugriffsart</b>: lesend, schreibend oder beides. Der
+              Index weiß nur, <i>dass</i> die Tabelle vorkommt.</li>
+          <li>die <b>Fundstellen</b> mit Zeilennummer und Anweisung, wie SE11 sie neben seiner
+              Trefferliste zeigt.</li>
+        </ul>
+        <p>
+          Zu einer Tabelle kommen die <b>Views und CDS Views</b> hinzu, die auf ihr aufsetzen.
+          Der Querverweisindex weiß davon nichts, das DDIC schon: <code>DD26S</code> nennt die
+          Basistabellen eines Views, <code>DDLDEPENDENCY</code> die Objekte hinter einem CDS
+          View. Umgekehrt stehen zu einem View die Basistabellen mit Reihenfolge und dem
+          Fremdschlüssel, über den verknüpft wird.
+        </p>
+
+        <h3>SAP-Standard ausschliessen</h3>
+        <p>
+          Maßstab ist die <b>Auslieferungseinheit des Pakets</b> (<code>TDEVC-DLVUNIT</code>):
+          <code>HOME</code> und <code>LOCAL</code> sind Eigenentwicklung, alles andere wurde
+          ausgeliefert. Das ist die Linie, die SAP selbst zieht, und sie trifft anders als eine
+          Namensprüfung auf Z/Y auch Kundenobjekte in reservierten Namensräumen und SAP-Objekte,
+          die mit Z anfangen. Bei einem Funktionsbaustein entscheidet seine Funktionsgruppe.
+        </p>
+        <p>
+          Was keinen Katalogeintrag hat, gilt als nicht eigen — Konstanten einer Typgruppe wie
+          <code>ABAP_TRUE</code>, Kernel-Typen. Sonst wären genau die das einzige, was in einer
+          gefilterten Liste übrig bleibt.
+        </p>
 
         <h3>Quelltext je Objekttyp</h3>
         <div class="tablewrap">
@@ -661,9 +766,12 @@
         </p>
         <p>
           Die ITF-Auszeichnungen der SAP-Dokumentation werden dabei aufgelöst:
-          Abschnittsmarken wie <code>&amp;USE&amp;</code> werden zu Zwischenüberschriften
-          (<em>Verwendung</em>, <em>Voraussetzungen</em>, <em>Standardeinstellungen</em>,
-          <em>Vorgehen</em>, <em>Beispiel</em>), Hervorhebungen und Querverweise zu Fettdruck.
+          Abschnittsmarken wie <code>&amp;USE&amp;</code>, <code>&amp;DEFINITION&amp;</code>
+          oder <code>&amp;EXAMPLE&amp;</code> werden zu Zwischenüberschriften
+          (<em>Verwendung</em>, <em>Definition</em>, <em>Voraussetzungen</em>,
+          <em>Standardeinstellungen</em>, <em>Vorgehen</em>, <em>Beispiel</em>),
+          Hervorhebungen und Querverweise zu Fettdruck. Beide Reports verwenden dieselbe
+          Umsetzung, damit sich die Dokumente gleich lesen.
           Das XML behält den unveränderten ITF-Text — dort zählt Verlustfreiheit,
           die Aufbereitung gehört in die Anzeige.
         </p>
@@ -827,7 +935,9 @@
               <tr><td>Anwendungsprotokoll (BAL)</td><td>offen: gelesene Knoten, übersprungene wegen Berechtigung, abgeschnittene Tabellen, Laufzeit</td></tr>
               <tr><td><code>S_DEVELOP</code>-Prüfung im DEV-Report</td><td>offen; der IMG-Report prüft bereits <code>S_TABU_NAM</code></td></tr>
               <tr><td>Reimport ins System</td><td>Phase 2 über BC-Sets und abapGit — der Documizer schreibt bewusst nicht selbst</td></tr>
-              <tr><td>Verwendungsnachweis: Include → Objekt</td><td>Fundstellen sind Includes, keine Objektnamen. Auflösung kostet eine weitere Abfrage je Fundstelle</td></tr>
+              <tr><td>Reimport-Report (Phase 1)</td><td>offen; der XML-Parser existiert bereits, es fehlt der Report, der eine Datei einliest und rendert</td></tr>
+              <tr><td>Bausteine im Verwendungsnachweis</td><td>für die Richtung „welcher Baustein wird von wem gerufen" gibt es keinen Index; ein Scan über alle Programme wäre zu teuer</td></tr>
+              <tr><td>Mandantenabhängiges Customizing</td><td>der Export bezieht sich auf den Anmeldemandanten; mandantenübergreifendes Customizing ist nicht gesondert gekennzeichnet</td></tr>
               <tr><td>Tabs Mitarbeiter und Stichwörter</td><td>liegen in Nachbartabellen von <code>CUSSTAT</code>, mit demselben Muster anbindbar</td></tr>
             </tbody>
           </table>

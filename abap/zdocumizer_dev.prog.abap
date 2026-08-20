@@ -811,6 +811,10 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE gv_blk2.
     PARAMETERS p_maxuse TYPE i DEFAULT 50.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tudep FOR FIELD p_udep.
+    PARAMETERS p_udep TYPE i DEFAULT 0.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tmaxh FOR FIELD p_maxhit.
     PARAMETERS p_maxhit TYPE i DEFAULT 40.
   SELECTION-SCREEN END OF LINE.
@@ -873,6 +877,7 @@ INITIALIZATION.
     gv_trdep = 'Verweistiefe (0 = keine)'.
     gv_tnsap = 'SAP-Standard ausschliessen'.
     gv_tmaxu = 'Max. Verwendungen je Objekt'.
+    gv_tudep = 'Verwendungstiefe (0 = keine)'.
     gv_tmaxh = 'Max. Fundstellen je Stelle'.
     gv_tfsrc = 'Fundstellen im ganzen Quelltext'.
     gv_txml  = 'XML erzeugen/ausgeben'.
@@ -905,6 +910,7 @@ INITIALIZATION.
     gv_trdep = 'Reference depth (0 = none)'.
     gv_tnsap = 'Exclude SAP standard'.
     gv_tmaxu = 'Max. entries per object'.
+    gv_tudep = 'Usage depth (0 = none)'.
     gv_tmaxh = 'Max. occurrences per place'.
     gv_tfsrc = 'Occurrences in full source'.
     gv_txml  = 'Create/show XML'.
@@ -1251,7 +1257,8 @@ CLASS lcl_collector_dev DEFINITION.
                 iv_calls  TYPE abap_bool
                 iv_nosap  TYPE abap_bool
                 iv_maxhit TYPE i
-                iv_fsrc   TYPE abap_bool.
+                iv_fsrc   TYPE abap_bool
+                iv_udep   TYPE i.
     METHODS get_stat_packages RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_objects  RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_total    RETURNING VALUE(rv) TYPE i.
@@ -1278,6 +1285,7 @@ CLASS lcl_collector_dev DEFINITION.
     DATA mv_calls  TYPE abap_bool.
     DATA mv_nosap  TYPE abap_bool.
     DATA mv_maxhit TYPE i.
+    DATA mv_udep   TYPE i.
     DATA mv_fsrc   TYPE abap_bool.
     DATA mv_falb   TYPE abap_bool.
     DATA mv_flang  TYPE sy-langu.
@@ -1343,6 +1351,18 @@ CLASS lcl_collector_dev DEFINITION.
       IMPORTING iv_subc        TYPE trdir-subc
                 iv_prog        TYPE progname
       RETURNING VALUE(rv_kind) TYPE string.
+    METHODS find_obj_cls
+      IMPORTING iv_type       TYPE trobjtype
+      RETURNING VALUE(rv_cls) TYPE euobj-id.
+    METHODS crossref_users
+      IMPORTING iv_type TYPE trobjtype
+                iv_name TYPE sobj_name
+      EXPORTING et_name TYPE ty_names
+                ev_ok   TYPE abap_bool.
+    METHODS usage_objects
+      IMPORTING iv_type       TYPE trobjtype
+                iv_name       TYPE sobj_name
+      RETURNING VALUE(rt_obj) TYPE ty_objrefs.
     METHODS usage_scan
       IMPORTING iv_prog   TYPE progname
                 iv_name   TYPE sobj_name
@@ -1422,6 +1442,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     mv_nosap  = iv_nosap.
     mv_maxhit = iv_maxhit.
     mv_fsrc   = iv_fsrc.
+    mv_udep   = iv_udep.
     mv_maxuse = iv_maxuse.
     mv_falb   = iv_falb.
     mv_flang  = iv_flang.
@@ -2014,21 +2035,47 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         WHERE tabname = @lv_tabname AND as4local = 'A'
         INTO TABLE @DATA(lt_vw)
         UP TO @lv_max ROWS.
+
+*     Ein CDS mit klassischem SQL-View steht hier unter dem Namen dieses
+*     Views - ZBWDICOMPANY2VH statt ZBWD_I_COMPANY2_VH. Fuer den Leser
+*     zaehlt die DDL Source, und genau die zeigt auch SE11. DDLDEPENDENCY
+*     bildet SQL-View auf DDL Source ab.
+      DATA lt_vn TYPE STANDARD TABLE OF ddldependency-objectname.
       LOOP AT lt_vw INTO DATA(ls_vw).
+        APPEND ls_vw-viewname TO lt_vn.
+      ENDLOOP.
+      IF lt_vn IS NOT INITIAL.
+        SELECT ddlname, objectname FROM ddldependency
+          FOR ALL ENTRIES IN @lt_vn
+          WHERE objectname = @lt_vn-table_line AND objecttype = 'VIEW'
+          INTO TABLE @DATA(lt_ddl).
+        SORT lt_ddl BY objectname.
+      ENDIF.
+
+      LOOP AT lt_vw INTO ls_vw.
         IF ls_vw-viewname = iv_name.
           CONTINUE.
         ENDIF.
         CLEAR ls_use.
-        ls_use-where = ls_vw-viewname.
-        ls_use-kind  = lcl_t=>t( d = 'View' e = 'view' ).
-        ls_use-ddic  = abap_true.
+        READ TABLE lt_ddl INTO DATA(ls_ddl)
+             WITH KEY objectname = ls_vw-viewname BINARY SEARCH.
+        IF sy-subrc = 0 AND ls_ddl-ddlname IS NOT INITIAL.
+          ls_use-where = ls_ddl-ddlname.
+          ls_use-kind  = 'CDS View'.
+        ELSE.
+          ls_use-where = ls_vw-viewname.
+          ls_use-kind  = lcl_t=>t( d = 'View' e = 'view' ).
+        ENDIF.
+        ls_use-ddic = abap_true.
         APPEND ls_use TO lt_use.
       ENDLOOP.
 
+*     Eine CDS View Entity hat keinen SQL-View und steht deshalb in DD26S
+*     nicht. Sie bleibt hier unsichtbar; siehe offene Punkte.
       DATA lv_objname TYPE ddldependency-objectname.
       lv_objname = iv_name.
       SELECT DISTINCT ddlname FROM ddldependency
-        WHERE objectname = @lv_objname AND state = 'A'
+        WHERE objectname = @lv_objname AND objecttype <> 'VIEW'
         INTO TABLE @DATA(lt_cds)
         UP TO @lv_max ROWS.
       LOOP AT lt_cds INTO DATA(ls_cds).
@@ -2041,6 +2088,9 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         ls_use-ddic  = abap_true.
         APPEND ls_use TO lt_use.
       ENDLOOP.
+
+      SORT lt_use BY where.
+      DELETE ADJACENT DUPLICATES FROM lt_use COMPARING where.
 
     ENDIF.
 
@@ -2211,6 +2261,206 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
     ENDLOOP.
 
+  ENDMETHOD.
+
+  METHOD find_obj_cls.
+*   Die Objektklasse, unter der die Werkbank ein Objekt sucht. Sie ist
+*   nicht durchgaengig der TADIR-Typ: ein Funktionsbaustein heisst hier
+*   FUNC, sein TADIR-Satz gehoert der Gruppe.
+    CASE iv_type.
+      WHEN 'TABL' OR 'VIEW' OR 'DTEL' OR 'DOMA' OR 'TTYP' OR 'SHLP'
+        OR 'ENQU' OR 'PROG' OR 'CLAS' OR 'INTF' OR 'FUGR' OR 'MSAG'
+        OR 'TRAN' OR 'DDLS'.
+        rv_cls = iv_type.
+      WHEN 'FUNC'.
+        rv_cls = 'FUNC'.
+      WHEN OTHERS.
+        CLEAR rv_cls.
+    ENDCASE.
+  ENDMETHOD.
+
+  METHOD crossref_users.
+*   Der Verwendungsnachweis der Werkbank - derselbe Baustein, den SE11
+*   ruft. Er kennt Quellen, die in keiner der Indextabellen stehen, allen
+*   voran DDL Sources: ein CDS mit klassischem SQL-View taucht in DD26S
+*   nur unter dem Namen dieses Views auf, eine CDS View Entity gar nicht.
+*
+*   Der Baustein arbeitet mit klassischen Ausnahmen und kann bei grossem
+*   Umfang auf Batch ausweichen. Beides wird abgefangen; der Aufrufer
+*   faellt dann auf die Indextabellen zurueck.
+    CLEAR: et_name, ev_ok.
+
+    DATA(lv_cls) = find_obj_cls( iv_type ).
+    IF lv_cls IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    DATA lt_find  TYPE STANDARD TABLE OF rsfind.
+    DATA lt_found TYPE STANDARD TABLE OF rsfindlst.
+
+    APPEND VALUE rsfind( object = iv_name ) TO lt_find.
+
+    CALL FUNCTION 'RS_EU_CROSSREF'
+      EXPORTING
+        i_find_obj_cls           = lv_cls
+        no_dialog                = 'X'
+        without_text             = 'X'
+      TABLES
+        i_findstrings            = lt_find
+        o_founds                 = lt_found
+      EXCEPTIONS
+        not_executed             = 1
+        not_found                = 2
+        illegal_object           = 3
+        no_cross_for_this_object = 4
+        batch                    = 5
+        batchjob_error           = 6
+        wrong_type               = 7
+        object_not_exist         = 8
+        OTHERS                   = 9.
+
+*   NOT_FOUND und NO_CROSS_FOR_THIS_OBJECT sind Ergebnisse, keine Fehler:
+*   das Objekt wird nirgends verwendet. Alles andere heisst, der Baustein
+*   hat nicht geantwortet - dann greift der Rueckfall.
+    CASE sy-subrc.
+      WHEN 0.
+        ev_ok = abap_true.
+      WHEN 2 OR 4.
+        ev_ok = abap_true.
+        RETURN.
+      WHEN OTHERS.
+        RETURN.
+    ENDCASE.
+
+*   Zurueck kommen Namen mit der Objektklasse der Werkbank - DV, P, FF -
+*   nicht mit dem TADIR-Typ, und Includes statt der Objekte dahinter.
+*   Deshalb nur die Namen uebernehmen; die Einordnung macht der Aufrufer
+*   mit derselben Aufloesung wie beim Rueckfall.
+    LOOP AT lt_found INTO DATA(ls_f).
+      IF ls_f-object IS NOT INITIAL.
+        APPEND CONV sobj_name( ls_f-object ) TO et_name.
+      ENDIF.
+      IF ls_f-encl_objec IS NOT INITIAL.
+        APPEND CONV sobj_name( ls_f-encl_objec ) TO et_name.
+      ENDIF.
+    ENDLOOP.
+
+    SORT et_name BY table_line.
+    DELETE ADJACENT DUPLICATES FROM et_name COMPARING table_line.
+  ENDMETHOD.
+
+  METHOD usage_objects.
+*   Die Objekte hinter einem Verwendungsnachweis, dokumentierbar gemacht.
+*   Der Index nennt Includes; dokumentiert wird das Repository-Objekt
+*   dahinter - der Report, die Funktionsgruppe, der Klassenpool.
+*
+*   Bewusst ohne Quelltext-Scan und ohne Fundstellen: hier zaehlt nur, wer
+*   das Objekt verwendet, nicht wie. Das macht die Ausweitung bezahlbar.
+*
+    DATA lv_max TYPE i.
+    lv_max = mv_maxuse.
+    IF lv_max <= 0.
+      lv_max = 1000.
+    ENDIF.
+
+    DATA lt_inc TYPE STANDARD TABLE OF progname.
+
+*   Zuerst die Werkbank fragen, erst bei Fehlschlag die Indextabellen.
+    crossref_users( EXPORTING iv_type = iv_type
+                              iv_name = iv_name
+                    IMPORTING et_name = DATA(lt_cr_name)
+                              ev_ok   = DATA(lv_ok) ).
+
+    IF lv_ok = abap_true.
+      DATA lv_crp TYPE progname.
+      LOOP AT lt_cr_name INTO DATA(lv_crn).
+        lv_crp = lv_crn.
+        APPEND lv_crp TO lt_inc.
+      ENDLOOP.
+    ELSE.
+
+      DATA lv_n120 TYPE wbcrossgt-name.
+      lv_n120 = iv_name.
+      SELECT include FROM wbcrossgt
+        WHERE otype = 'TY' AND name = @lv_n120
+        INTO TABLE @DATA(lt_g)
+        UP TO @lv_max ROWS.
+      LOOP AT lt_g INTO DATA(ls_g).
+        APPEND ls_g-include TO lt_inc.
+      ENDLOOP.
+
+      DATA lv_ncr TYPE cross-name.
+      lv_ncr = iv_name.
+      SELECT prog FROM cross
+        WHERE name = @lv_ncr
+        INTO TABLE @DATA(lt_c)
+        UP TO @lv_max ROWS.
+      LOOP AT lt_c INTO DATA(ls_c).
+        APPEND ls_c-prog TO lt_inc.
+      ENDLOOP.
+
+    ENDIF.
+
+    DELETE lt_inc WHERE table_line IS INITIAL.
+    SORT lt_inc BY table_line.
+    DELETE ADJACENT DUPLICATES FROM lt_inc COMPARING table_line.
+
+*   Die Werkbank kennt keine Mengengrenze; ein viel benutztes Datenelement
+*   brachte sonst tausende Stellen mit.
+    IF lines( lt_inc ) > lv_max.
+      DELETE lt_inc FROM lv_max + 1.
+    ENDIF.
+
+*   Include auf sein Rahmenprogramm und dieses auf das Katalogobjekt.
+    DATA lt_obj TYPE STANDARD TABLE OF sobj_name.
+    LOOP AT lt_inc INTO DATA(lv_inc).
+      DATA(lv_main) = main_program( lv_inc ).
+      DATA lv_obj TYPE sobj_name.
+      lv_obj = lv_main.
+      IF strlen( lv_main ) > 4 AND lv_main(4) = 'SAPL'.
+        lv_obj = lv_main+4.
+      ELSEIF lv_main CS '='.
+        SPLIT lv_main AT '=' INTO DATA(lv_head) DATA(lv_tail).
+        lv_obj = lv_head.
+      ENDIF.
+      APPEND lv_obj TO lt_obj.
+    ENDLOOP.
+
+    IF iv_type = 'TABL' OR iv_type = 'VIEW'.
+      DATA lv_tn TYPE dd26s-tabname.
+      lv_tn = iv_name.
+      SELECT DISTINCT viewname FROM dd26s
+        WHERE tabname = @lv_tn AND as4local = 'A'
+        INTO TABLE @DATA(lt_v)
+        UP TO @lv_max ROWS.
+      LOOP AT lt_v INTO DATA(ls_v).
+        APPEND ls_v-viewname TO lt_obj.
+      ENDLOOP.
+    ENDIF.
+
+    DELETE lt_obj WHERE table_line IS INITIAL OR table_line = iv_name.
+    SORT lt_obj BY table_line.
+    DELETE ADJACENT DUPLICATES FROM lt_obj COMPARING table_line.
+    IF lt_obj IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    SELECT object, obj_name FROM tadir
+      FOR ALL ENTRIES IN @lt_obj
+      WHERE pgmid = 'R3TR'
+        AND object IN ( 'PROG', 'FUGR', 'CLAS', 'INTF', 'TABL', 'VIEW',
+                        'DDLS', 'MSAG' )
+        AND obj_name = @lt_obj-table_line
+      INTO TABLE @DATA(lt_cat).
+
+    LOOP AT lt_cat INTO DATA(ls_cat).
+      APPEND VALUE #( type = ls_cat-object
+                      name = ls_cat-obj_name ) TO rt_obj.
+    ENDLOOP.
+
+    SORT rt_obj BY type name.
+    DELETE ADJACENT DUPLICATES FROM rt_obj COMPARING type name.
+    drop_sap( CHANGING ct_ref = rt_obj ).
   ENDMETHOD.
 
   METHOD main_program.
@@ -3134,10 +3384,6 @@ CLASS lcl_collector_dev IMPLEMENTATION.
                                      iv_root  = abap_true ).
     co_document->add_chapter( lo_root ).
 
-    IF mv_calls = abap_false OR mv_rdep <= 0.
-      RETURN.
-    ENDIF.
-
 *   Breadth first, so that the direct neighbours of the start object are
 *   documented before anything further out.
     DATA lt_queue TYPE ty_objrefs.
@@ -3146,8 +3392,6 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     DATA lv_depth TYPE i.
 
     APPEND VALUE #( type = ls_start-type name = ls_start-name ) TO lt_done.
-    lt_queue = collect_refs( iv_type = ls_start-type iv_name = ls_start-name ).
-    lv_depth = 1.
 
     DATA(lo_refchap) = NEW lcl_chapter(
       iv_id    = `2`
@@ -3157,6 +3401,15 @@ CLASS lcl_collector_dev IMPLEMENTATION.
                            e = 'Objects used' ) ).
 
     DATA lt_all TYPE ty_objrefs.
+
+*   Die beiden Richtungen sind unabhaengig voneinander schaltbar: die
+*   verwendeten Objekte haengen an "Ausgehende Aufrufe" und der
+*   Verweistiefe, die verwendenden an "Verwendungsnachweis" und der
+*   Verwendungstiefe.
+    IF mv_calls = abap_true AND mv_rdep > 0.
+      lt_queue = collect_refs( iv_type = ls_start-type iv_name = ls_start-name ).
+    ENDIF.
+    lv_depth = 1.
 
     WHILE lt_queue IS NOT INITIAL AND lv_depth <= mv_rdep.
 
@@ -3187,11 +3440,56 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
     ENDWHILE.
 
-    IF lt_all IS INITIAL.
+*   Kapitel 3: die Gegenrichtung. Wer das Startobjekt verwendet, wird bis
+*   zur eingestellten Tiefe ebenfalls dokumentiert.
+    DATA lt_users TYPE ty_objrefs.
+
+    IF mv_used = abap_true AND mv_udep > 0.
+
+      DATA lt_uq   TYPE ty_objrefs.
+      DATA lt_uo   TYPE ty_objrefs.
+      DATA lv_ud   TYPE i.
+
+      lt_uq = usage_objects( iv_type = ls_start-type
+                             iv_name = ls_start-name ).
+      lv_ud = 1.
+
+      WHILE lt_uq IS NOT INITIAL AND lv_ud <= mv_udep.
+
+        CLEAR lt_uo.
+        LOOP AT lt_uq INTO DATA(ls_u).
+          READ TABLE lt_done TRANSPORTING NO FIELDS
+               WITH KEY type = ls_u-type name = ls_u-name.
+          IF sy-subrc = 0.
+            CONTINUE.
+          ENDIF.
+          APPEND ls_u TO lt_done.
+          APPEND ls_u TO lt_users.
+          APPEND ls_u TO lt_uo.
+        ENDLOOP.
+
+        CLEAR lt_uq.
+        lv_ud = lv_ud + 1.
+        IF lv_ud > mv_udep.
+          EXIT.
+        ENDIF.
+
+        LOOP AT lt_uo INTO DATA(ls_u2).
+          APPEND LINES OF usage_objects( iv_type = ls_u2-type
+                                         iv_name = ls_u2-name ) TO lt_uq.
+        ENDLOOP.
+
+      ENDWHILE.
+
+    ENDIF.
+
+    IF lt_all IS INITIAL AND lt_users IS INITIAL.
       RETURN.
     ENDIF.
 
-    co_document->add_chapter( lo_refchap ).
+    IF lt_all IS NOT INITIAL.
+      co_document->add_chapter( lo_refchap ).
+    ENDIF.
 
     SORT lt_all BY type name.
 
@@ -3235,6 +3533,60 @@ CLASS lcl_collector_dev IMPLEMENTATION.
                                             iv_id    = |2.{ lv_tno }.{ lv_ono }|
                                             iv_level = 3
                                             iv_calls = ls_a-deep ) ).
+
+    ENDLOOP.
+
+*   Kapitel 3: die verwendenden Objekte, gleiche Gliederung wie Kapitel 2.
+    IF lt_users IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    DATA(lo_usechap) = NEW lcl_chapter(
+      iv_id    = `3`
+      iv_level = 1
+      iv_type  = 'GROUP'
+      iv_title = lcl_t=>t( d = 'Verwendende Objekte'
+                           e = 'Objects using this' ) ).
+    co_document->add_chapter( lo_usechap ).
+
+    SORT lt_users BY type name.
+
+    CLEAR: lv_last, lo_tchap, lv_tno, lv_ono.
+
+    LOOP AT lt_users INTO DATA(ls_us).
+
+      mv_n_tot = mv_n_tot + 1.
+
+      IF mv_maxobj > 0 AND mv_n_obj >= mv_maxobj.
+        cv_trunc = abap_true.
+        CONTINUE.
+      ENDIF.
+
+      IF s_objtyp[] IS NOT INITIAL AND ls_us-type NOT IN s_objtyp.
+        CONTINUE.
+      ENDIF.
+      IF s_objnam[] IS NOT INITIAL AND ls_us-name NOT IN s_objnam.
+        CONTINUE.
+      ENDIF.
+
+      IF ls_us-type <> lv_last.
+        lv_last = ls_us-type.
+        lv_tno = lv_tno + 1.
+        lv_ono = 0.
+        lo_tchap = NEW lcl_chapter( iv_id    = |3.{ lv_tno }|
+                                    iv_level = 2
+                                    iv_type  = 'GROUP'
+                                    iv_title = type_title( ls_us-type ) ).
+        lo_usechap->add_child( lo_tchap ).
+      ENDIF.
+
+      lv_ono = lv_ono + 1.
+      mv_n_obj = mv_n_obj + 1.
+
+      lo_tchap->add_child( document_object( iv_type  = ls_us-type
+                                            iv_name  = ls_us-name
+                                            iv_id    = |3.{ lv_tno }.{ lv_ono }|
+                                            iv_level = 3 ) ).
 
     ENDLOOP.
 
@@ -3788,7 +4140,8 @@ START-OF-SELECTION.
                                               iv_calls  = p_calls
                                               iv_nosap  = p_nosap
                                               iv_maxhit = p_maxhit
-                                              iv_fsrc   = p_fsrc ).
+                                              iv_fsrc   = p_fsrc
+                                              iv_udep   = p_udep ).
 
   DATA lo_coll TYPE REF TO lif_docu_collector.
   lo_coll = lo_collector.

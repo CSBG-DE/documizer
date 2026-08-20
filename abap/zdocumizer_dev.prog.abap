@@ -949,6 +949,12 @@ CLASS lcl_renderer_html DEFINITION.
     METHODS esc IMPORTING iv_text TYPE string RETURNING VALUE(rv_text) TYPE string.
     METHODS write_chapter IMPORTING io_chapter TYPE REF TO lcl_chapter.
     METHODS write_toc     IMPORTING io_chapter TYPE REF TO lcl_chapter.
+    METHODS itf_section
+      IMPORTING iv_marker       TYPE string
+      RETURNING VALUE(rv_label) TYPE string.
+    METHODS itf_to_html
+      IMPORTING iv_text        TYPE string
+      RETURNING VALUE(rv_html) TYPE string.
 ENDCLASS.
 
 CLASS lcl_renderer_html IMPLEMENTATION.
@@ -982,6 +988,8 @@ CLASS lcl_renderer_html IMPLEMENTATION.
     add( 'th{background:#eee}' ).
     add( 'div.doc{background:#f7f7f7;border-left:3px solid #bbb;padding:8px;' &&
          'margin:6px 0;line-height:1.45}' ).
+    add( 'p.sec{font-weight:bold;margin:10px 0 4px 0;color:#444}' ).
+    add( 'div.doc p{margin:0 0 6px 0}' ).
     add( '.ref{color:#666;font-size:11px;margin:2px 0}' ).
     add( '.warn{color:#a00;font-weight:bold}' ).
     add( 'ul.toc{line-height:1.6}' ).
@@ -1031,6 +1039,109 @@ CLASS lcl_renderer_html IMPLEMENTATION.
 
   ENDMETHOD.
 
+  METHOD itf_section.
+*   Object documentation is divided into fixed sections that appear in the
+*   ITF text as &NAME&. They become subheadings; the raw markers said
+*   nothing to the reader.
+    CASE iv_marker.
+      WHEN 'DEFINITION'.     rv_label = lcl_t=>t( d = 'Definition' e = 'Definition' ).
+      WHEN 'DESCRIPTION'.    rv_label = lcl_t=>t( d = 'Beschreibung' e = 'Description' ).
+      WHEN 'SHORTTEXT'.      rv_label = lcl_t=>t( d = 'Kurztext' e = 'Short text' ).
+      WHEN 'USE'.            rv_label = lcl_t=>t( d = 'Verwendung' e = 'Use' ).
+      WHEN 'DEPENDENCIES'.   rv_label = lcl_t=>t( d = 'Abhängigkeiten' e = 'Dependencies' ).
+      WHEN 'PRECONDITIONS'.  rv_label = lcl_t=>t( d = 'Voraussetzungen' e = 'Prerequisites' ).
+      WHEN 'STANDARD_SETUP'. rv_label = lcl_t=>t( d = 'Standardeinstellungen' e = 'Standard settings' ).
+      WHEN 'ACTIVITY'.       rv_label = lcl_t=>t( d = 'Vorgehen' e = 'Activities' ).
+      WHEN 'EXAMPLE'.        rv_label = lcl_t=>t( d = 'Beispiel' e = 'Example' ).
+      WHEN 'RECOMMENDATION'. rv_label = lcl_t=>t( d = 'Empfehlung' e = 'Recommendation' ).
+      WHEN 'CAUTION'.        rv_label = lcl_t=>t( d = 'Achtung' e = 'Caution' ).
+      WHEN 'FUNCTIONALITY'.  rv_label = lcl_t=>t( d = 'Funktionsumfang' e = 'Functionality' ).
+      WHEN 'PARAMETERS'.     rv_label = lcl_t=>t( d = 'Parameter' e = 'Parameters' ).
+      WHEN 'HINTS'.          rv_label = lcl_t=>t( d = 'Hinweise' e = 'Notes' ).
+      WHEN OTHERS.           rv_label = iv_marker.
+    ENDCASE.
+  ENDMETHOD.
+
+  METHOD itf_to_html.
+*   The documentation arrives as ITF. Section markers become headings,
+*   the markup becomes bold - the same conversion the IMG report does, so
+*   both documents read alike.
+    DATA lt_lines TYPE STANDARD TABLE OF string.
+    DATA lv_line  TYPE string.
+    DATA lv_len   TYPE i.
+
+    SPLIT iv_text AT cl_abap_char_utilities=>newline INTO TABLE lt_lines.
+
+    rv_html = '<div class="doc">'.
+
+    LOOP AT lt_lines INTO lv_line.
+
+      CONDENSE lv_line.
+
+*     SAPscript control statement, no content
+      IF lv_line = 'RESET N1'.
+        CONTINUE.
+      ENDIF.
+
+      IF lv_line IS INITIAL.
+        rv_html = |{ rv_html }<p></p>|.
+        CONTINUE.
+      ENDIF.
+
+*     A marker may sit alone on its line or lead the text that follows.
+      lv_len = strlen( lv_line ).
+      FIND PCRE '^&[A-Z0-9_]+&$' IN lv_line.
+      IF sy-subrc = 0.
+        rv_html = |{ rv_html }<p class="sec">{ esc(
+                    itf_section( substring( val = lv_line off = 1 len = lv_len - 2 ) ) ) }</p>|.
+        CONTINUE.
+      ENDIF.
+
+      DATA lv_mark TYPE string.
+      FIND FIRST OCCURRENCE OF PCRE '^&([A-Z0-9_]+)&\s*' IN lv_line
+           SUBMATCHES lv_mark.
+      IF sy-subrc = 0.
+        REPLACE FIRST OCCURRENCE OF PCRE '^&[A-Z0-9_]+&\s*' IN lv_line WITH ''.
+        rv_html = |{ rv_html }<p class="sec">{ esc( itf_section( lv_mark ) ) }</p>|.
+        IF lv_line IS INITIAL.
+          CONTINUE.
+        ENDIF.
+      ENDIF.
+
+      lv_line = esc( lv_line ).
+
+*     ITF markup. All two- to three-character markers are handled
+*     generically, cross references <DS:...> come along; the closing
+*     marker </> applies to every one of them.
+      REPLACE ALL OCCURRENCES OF PCRE '&lt;DS:[^&]+&gt;' IN lv_line WITH '<b>'.
+      REPLACE ALL OCCURRENCES OF '&lt;/&gt;' IN lv_line WITH '</b>'.
+      REPLACE ALL OCCURRENCES OF PCRE '&lt;[A-Z0-9]{2,3}&gt;' IN lv_line WITH '<b>'.
+
+*     Balance per line, otherwise an open marker styles the rest of the
+*     document.
+      DATA(lv_open)  = count( val = lv_line sub = '<b>' ).
+      DATA(lv_close) = count( val = lv_line sub = '</b>' ).
+      IF lv_open > lv_close.
+        DO lv_open - lv_close TIMES.
+          lv_line = |{ lv_line }</b>|.
+        ENDDO.
+      ELSEIF lv_close > lv_open.
+        DO lv_close - lv_open TIMES.
+          REPLACE FIRST OCCURRENCE OF '</b>' IN lv_line WITH ''.
+        ENDDO.
+      ENDIF.
+
+*     Tabs of the ITF storage format
+      REPLACE ALL OCCURRENCES OF ',,' IN lv_line WITH ' '.
+
+      rv_html = |{ rv_html }{ lv_line }<br>|.
+
+    ENDLOOP.
+
+    rv_html = |{ rv_html }</div>|.
+
+  ENDMETHOD.
+
   METHOD write_toc.
     IF io_chapter->get_level( ) > 2.
       RETURN.
@@ -1066,7 +1177,7 @@ CLASS lcl_renderer_html IMPLEMENTATION.
     ENDIF.
 
     IF io_chapter->get_documentation( ) IS NOT INITIAL.
-      add( |<div class="doc">{ esc( io_chapter->get_documentation( ) ) }</div>| ).
+      add( itf_to_html( io_chapter->get_documentation( ) ) ).
     ENDIF.
 
     IF io_chapter->get_source( ) IS NOT INITIAL.
@@ -1848,6 +1959,9 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     TYPES: BEGIN OF ty_use,
              where TYPE string,
              kind  TYPE string,
+*            A view or a CDS view is a repository object, not an include.
+*            It has no source to scan and no frame program behind it.
+             ddic  TYPE abap_bool,
            END OF ty_use.
     DATA lt_use TYPE STANDARD TABLE OF ty_use.
     DATA ls_use TYPE ty_use.
@@ -1888,6 +2002,48 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       APPEND ls_use TO lt_use.
     ENDLOOP.
 
+*   A table is not only used in code. Views and CDS views are built on it,
+*   and the cross-reference index does not know about either - the DDIC
+*   does: DD26S names the base tables of a view, DDLDEPENDENCY the objects
+*   a CDS view reads.
+    IF iv_type = 'TABL' OR iv_type = 'VIEW'.
+
+      DATA lv_tabname TYPE dd26s-tabname.
+      lv_tabname = iv_name.
+      SELECT DISTINCT viewname FROM dd26s
+        WHERE tabname = @lv_tabname AND as4local = 'A'
+        INTO TABLE @DATA(lt_vw)
+        UP TO @lv_max ROWS.
+      LOOP AT lt_vw INTO DATA(ls_vw).
+        IF ls_vw-viewname = iv_name.
+          CONTINUE.
+        ENDIF.
+        CLEAR ls_use.
+        ls_use-where = ls_vw-viewname.
+        ls_use-kind  = lcl_t=>t( d = 'View' e = 'view' ).
+        ls_use-ddic  = abap_true.
+        APPEND ls_use TO lt_use.
+      ENDLOOP.
+
+      DATA lv_objname TYPE ddldependency-objectname.
+      lv_objname = iv_name.
+      SELECT DISTINCT ddlname FROM ddldependency
+        WHERE objectname = @lv_objname AND state = 'A'
+        INTO TABLE @DATA(lt_cds)
+        UP TO @lv_max ROWS.
+      LOOP AT lt_cds INTO DATA(ls_cds).
+        IF ls_cds-ddlname = iv_name.
+          CONTINUE.
+        ENDIF.
+        CLEAR ls_use.
+        ls_use-where = ls_cds-ddlname.
+        ls_use-kind  = 'CDS View'.
+        ls_use-ddic  = abap_true.
+        APPEND ls_use TO lt_use.
+      ENDLOOP.
+
+    ENDIF.
+
     IF lt_use IS INITIAL.
       RETURN.
     ENDIF.
@@ -1919,9 +2075,12 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *   Behind it stands a report, a function group or a class pool - that is
 *   what the reader recognises, and TRDIR-SUBC says which of the three.
     DATA lt_inc TYPE STANDARD TABLE OF progname.
-    LOOP AT lt_use INTO ls_use.
+    LOOP AT lt_use INTO ls_use WHERE ddic = abap_false.
       APPEND CONV progname( ls_use-where ) TO lt_inc.
     ENDLOOP.
+    IF lt_inc IS INITIAL.
+      APPEND INITIAL LINE TO lt_inc.
+    ENDIF.
     SORT lt_inc BY table_line.
     DELETE ADJACENT DUPLICATES FROM lt_inc COMPARING table_line.
 
@@ -1932,9 +2091,12 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     SORT lt_mast BY include.
 
     DATA lt_prog TYPE STANDARD TABLE OF progname.
-    LOOP AT lt_use INTO ls_use.
+    LOOP AT lt_use INTO ls_use WHERE ddic = abap_false.
       APPEND main_program( CONV progname( ls_use-where ) ) TO lt_prog.
     ENDLOOP.
+    IF lt_prog IS INITIAL.
+      APPEND INITIAL LINE TO lt_prog.
+    ENDIF.
     SORT lt_prog BY table_line.
     DELETE ADJACENT DUPLICATES FROM lt_prog COMPARING table_line.
 
@@ -1977,8 +2139,16 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
     LOOP AT lt_use INTO ls_use.
 
-      DATA(lv_main) = main_program( CONV progname( ls_use-where ) ).
       DATA lv_kind TYPE string.
+
+*     A DDIC object stands for itself - no include, no frame program.
+      IF ls_use-ddic = abap_true.
+        lo_u->add_field( VALUE ty_field( name     = ls_use-where
+                                         rollname = ls_use-kind ) ).
+        CONTINUE.
+      ENDIF.
+
+      DATA(lv_main) = main_program( CONV progname( ls_use-where ) ).
 
       READ TABLE lt_dir INTO DATA(ls_dir)
            WITH KEY name = lv_main BINARY SEARCH.
@@ -2009,7 +2179,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *   The hit lines follow the list, one block per place of use. The list
 *   answers "where", the block answers "how" - and that is the question
 *   the reader has next.
-    LOOP AT lt_use INTO ls_use.
+    LOOP AT lt_use INTO ls_use WHERE ddic = abap_false.
 
       READ TABLE lt_acc INTO DATA(ls_h)
            WITH KEY prog = ls_use-where BINARY SEARCH.
@@ -2044,15 +2214,23 @@ CLASS lcl_collector_dev IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD main_program.
-*   The include belongs to a frame program. D010INC knows it; if the entry
-*   is missing the include is its own main program.
-    SELECT SINGLE master FROM d010inc
-      WHERE include = @iv_include
-      INTO @DATA(lv_master).
-    IF sy-subrc = 0 AND lv_master IS NOT INITIAL.
-      rv_prog = lv_master.
-    ELSE.
-      rv_prog = iv_include.
+*   The include belongs to a frame program - but not always to exactly
+*   one. A shared include is listed in D010INC under every program that
+*   includes it, and naming one of them would be a guess presented as a
+*   fact. Only an unambiguous frame program is reported; otherwise the
+*   include stands for itself.
+    rv_prog = iv_include.
+
+    SELECT DISTINCT master FROM d010inc
+      WHERE include = @iv_include AND master <> @iv_include
+      INTO TABLE @DATA(lt_master)
+      UP TO 2 ROWS.
+
+    IF lines( lt_master ) = 1.
+      READ TABLE lt_master INTO DATA(ls_master) INDEX 1.
+      IF ls_master-master IS NOT INITIAL.
+        rv_prog = ls_master-master.
+      ENDIF.
     ENDIF.
   ENDMETHOD.
 
@@ -2194,6 +2372,41 @@ CLASS lcl_collector_dev IMPLEMENTATION.
             keyflag  = COND #( WHEN ls_f-keyflag = 'X' THEN abap_true ELSE abap_false ) ) ).
         ENDLOOP.
         io_chapter->add_object( lo_o1 ).
+
+*       A view is built on tables, and which ones - joined how - is the
+*       first thing a reader wants. DD26S holds the base tables in their
+*       order and names the foreign key the join runs over.
+        IF iv_type = 'VIEW'.
+          DATA lv_vw TYPE dd26s-viewname.
+          lv_vw = iv_name.
+          SELECT tabpos, tabname, fortabname, forfield FROM dd26s
+            WHERE viewname = @lv_vw AND as4local = 'A'
+            ORDER BY tabpos
+            INTO TABLE @DATA(lt_bt).
+          IF lt_bt IS NOT INITIAL.
+            DATA(lo_bt) = NEW lcl_object( iv_type = CONV string( iv_type )
+                                          iv_name = CONV string( iv_name ) ).
+            lo_bt->set_note( lcl_t=>t( d = 'Basistabellen und Verknüpfung'
+                                       e = 'Base tables and join' ) ).
+            LOOP AT lt_bt INTO DATA(ls_bt).
+              DATA(lv_join) = |{ lcl_t=>t( d = `Position` e = `position` ) }| &&
+                              | { ls_bt-tabpos }|.
+              IF ls_bt-fortabname IS NOT INITIAL
+                 AND ls_bt-fortabname <> ls_bt-tabname.
+                lv_join = |{ lv_join }, { lcl_t=>t( d = `verknüpft mit`
+                                                    e = `joined to` ) }| &&
+                          | { ls_bt-fortabname }|.
+                IF ls_bt-forfield IS NOT INITIAL.
+                  lv_join = |{ lv_join } { lcl_t=>t( d = `über` e = `via` ) }| &&
+                            | { ls_bt-forfield }|.
+                ENDIF.
+              ENDIF.
+              lo_bt->add_field( VALUE ty_field( name     = ls_bt-tabname
+                                                rollname = lv_join ) ).
+            ENDLOOP.
+            io_chapter->add_object( lo_bt ).
+          ENDIF.
+        ENDIF.
 
       WHEN 'CLAS' OR 'INTF'.
         lv_cls = iv_name.

@@ -1,11 +1,12 @@
 REPORT zdocumizer_dev.
 
 ************************************************************************
-* Documizer - step 5: ABAP package / developer documentation
+* consiness Documizer - ABAP package / developer documentation
 *
-* The second pillar next to the IMG report. The input is a start package;
-* from there all subpackages are determined recursively, the development
-* objects they contain are read and arranged into chapters.
+* The input is a start point: either a package - from there all
+* subpackages are determined recursively - or a single object such as a
+* report, class, function module, table, view or CDS view. The objects
+* are read and arranged into chapters.
 *
 * Chapter model, interfaces, XML renderer and parser are identical to
 * ZDOCUMIZER_IMG - the price for keeping every report runnable after a
@@ -15,8 +16,9 @@ REPORT zdocumizer_dev.
 * Standard interfaces used:
 *   CL_PAK_PACKAGE_QUERIES=>GET_ALL_SUBPACKAGES        packages recursively
 *   CL_PAK_PACKAGE_QUERIES=>GET_DEV_OBJECT_TADIR_KEYS  objects per package
+*   RS_EU_CROSSREF                                     where-used list
 *   DOCU_GET                                           object documentation
-*   DD03L, SEOCOMPO                                    detail information
+*   DD03L, SEOCOMPO, FUPARAREF                         detail information
 ************************************************************************
 
 CLASS lcl_chapter  DEFINITION DEFERRED.

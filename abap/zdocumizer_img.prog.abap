@@ -1,27 +1,25 @@
 REPORT zdocumizer_img.
 
 ************************************************************************
-* Documizer - step 3: IMG collector without data contents
+* consiness Documizer - IMG / customizing documentation
 *
 * Reads an IMG structure tree, assigns the IMG activities to the nodes,
-* takes over the SAP standard documentation and writes the result as XML.
-* Deliberately still WITHOUT customizing contents - that is step 4. The
-* assigned objects are listed with type and name, but without a field
-* list and without data.
+* takes over the SAP standard documentation and reads the assigned
+* customizing down to the table contents. On request the nodes are
+* overlaid with status and memo from an IMG project.
 *
-* Like its predecessor it keeps everything in one report so that it runs
-* after a copy/paste into SE38 on any system: chapter model, interfaces,
-* XML renderer and parser are identical to ZDOCUMIZER_CORE_DEMO. In the
-* target design they live as global classes in ZCONS_DOCUMIZER_CORE; the
-* duplication is the price for being transportable through the
-* clipboard.
+* Everything sits in one report so that it runs after a copy/paste into
+* SE38 on any system: chapter model, interfaces, XML renderer and parser
+* are identical to ZDOCUMIZER_DEV. In the target design they live as
+* global classes in ZCONS_DOCUMIZER_CORE; the duplication is the price
+* for being transportable through the clipboard.
 *
 * Standard interfaces used:
-*   STREE_HIERARCHY_READ  structure, texts and node references
-*   DOCU_GET              standard documentation, doc class HY
-*   CUS_IMGACH            header record of the IMG activity
-*   CUS_IMGACT            language-dependent title
-*   CUS_ACTOBJ            assigned customizing objects
+*   STREE_HIERARCHY_READ_ALL_SUBS  structure, texts and node references
+*   DOCU_GET                       standard documentation, doc class HY
+*   CUS_IMGACH                     header record of the IMG activity
+*   CUS_IMGACT                     language-dependent title
+*   CUS_ACTOBJ                     assigned customizing objects
 *
 * The node reference sits in HIER_REF with REF_TYPE = 'COBJ';
 * REF_OBJECT is the IMG activity.

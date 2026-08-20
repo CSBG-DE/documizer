@@ -1,6 +1,8 @@
 REPORT zdocumizer_docu.
 
 ************************************************************************
+* consiness Documizer - Reportdokumentation erzeugen
+*
 * Legt die SAP-Reportdokumentation zu ZDOCUMIZER_IMG und ZDOCUMIZER_DEV
 * an. Dokumentationsobjekte sind eigene Repository-Objekte und kommen beim
 * Kopieren des Quelltextes nicht mit; dieser Report erzeugt sie im

@@ -1,7 +1,7 @@
 REPORT zdocumizer_core_demo.
 
 ************************************************************************
-* Documizer - Schritt 1 und 2 des Umsetzungsplans
+* consiness Documizer - Kernmodell und Selbsttest
 *
 * Enthaelt vollstaendig in einem Report, damit er per Copy/Paste in SE38
 * auf einem beliebigen System lauffaehig ist:

@@ -113,8 +113,11 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'Eigenentwicklung stehen.' ).
 
     a( iv_f = 'U1' iv_t = 'Ausgabe' ).
-    a( iv_f = 'B1' iv_t = 'XML erzeugen/ausgeben: fuehrendes Format, wieder einlesbar.' ).
     a( iv_f = 'B1' iv_t = 'HTML erzeugen/anzeigen: lesbare Fassung mit Inhaltsverzeichnis.' ).
+    a( iv_f = '=' iv_t = 'Vorbelegung, weil das Dokument in aller Regel gelesen und nicht' ).
+    a( iv_f = '=' iv_t = 'weiterverarbeitet wird.' ).
+    a( iv_f = 'B1' iv_t = 'XML erzeugen/ausgeben: fuehrendes Format, wieder einlesbar. Fuer die' ).
+    a( iv_f = '=' iv_t = 'Weitergabe und den spaeteren Reimport.' ).
     a( iv_f = 'B1' iv_t = 'Projektstatus und Projekt-Memo sind einzeln abschaltbar.' ).
     a( iv_f = 'B1' iv_t = 'Roundtrip pruefen: serialisiert, liest wieder ein, serialisiert erneut' ).
     a( iv_f = '=' iv_t = 'und vergleicht. Dient der Pruefung des Importpfades und schreibt nichts' ).
@@ -201,8 +204,11 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'Objektgrenze.' ).
 
     a( iv_f = 'U1' iv_t = 'Ausgabe' ).
-    a( iv_f = 'B1' iv_t = 'XML erzeugen/ausgeben: fuehrendes Format, wieder einlesbar.' ).
     a( iv_f = 'B1' iv_t = 'HTML erzeugen/anzeigen: lesbare Fassung mit Inhaltsverzeichnis.' ).
+    a( iv_f = '=' iv_t = 'Vorbelegung, weil das Dokument in aller Regel gelesen und nicht' ).
+    a( iv_f = '=' iv_t = 'weiterverarbeitet wird.' ).
+    a( iv_f = 'B1' iv_t = 'XML erzeugen/ausgeben: fuehrendes Format, wieder einlesbar. Fuer die' ).
+    a( iv_f = '=' iv_t = 'Weitergabe und den spaeteren Reimport.' ).
     a( iv_f = 'B1' iv_t = 'Roundtrip pruefen: serialisiert, liest wieder ein, serialisiert erneut' ).
     a( iv_f = '=' iv_t = 'und vergleicht. Schreibt nichts in das System zurueck.' ).
     a( iv_f = 'B1' iv_t = 'Download auf PC und Ablage Appl.-Server schreiben dieselbe Datei in' ).

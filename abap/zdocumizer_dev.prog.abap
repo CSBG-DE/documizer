@@ -1180,8 +1180,20 @@ CLASS lcl_collector_dev DEFINITION.
       IMPORTING iv_prog   TYPE syrepid
       CHANGING  ct_source TYPE string_table.
     METHODS add_usages
-      IMPORTING iv_name    TYPE sobj_name
+      IMPORTING iv_type    TYPE trobjtype
+                iv_name    TYPE sobj_name
                 io_chapter TYPE REF TO lcl_chapter.
+    METHODS main_program
+      IMPORTING iv_include     TYPE progname
+      RETURNING VALUE(rv_prog) TYPE progname.
+    METHODS prog_kind
+      IMPORTING iv_subc        TYPE trdir-subc
+                iv_prog        TYPE progname
+      RETURNING VALUE(rv_kind) TYPE string.
+    METHODS table_access
+      IMPORTING iv_prog        TYPE progname
+                iv_table       TYPE sobj_name
+      RETURNING VALUE(rv_kind) TYPE string.
     METHODS add_calls
       IMPORTING iv_type    TYPE trobjtype
                 iv_name    TYPE sobj_name
@@ -1858,8 +1870,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     lo_u->set_row_count( lines( lt_use ) ).
 
 *   The index names the include, and an include says little on its own.
-*   The main program behind it is what the reader recognises: the report,
-*   the function group, the class pool.
+*   Behind it stands a report, a function group or a class pool - that is
+*   what the reader recognises, and TRDIR-SUBC says which of the three.
     DATA lt_inc TYPE STANDARD TABLE OF progname.
     LOOP AT lt_use INTO ls_use.
       APPEND CONV progname( ls_use-where ) TO lt_inc.
@@ -1873,14 +1885,65 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       INTO TABLE @DATA(lt_mast).
     SORT lt_mast BY include.
 
+    DATA lt_prog TYPE STANDARD TABLE OF progname.
     LOOP AT lt_use INTO ls_use.
-      DATA(lv_kind) = ls_use-kind.
-      READ TABLE lt_mast INTO DATA(ls_mast)
-           WITH KEY include = ls_use-where BINARY SEARCH.
-      IF sy-subrc = 0 AND ls_mast-master IS NOT INITIAL
-         AND ls_mast-master <> ls_use-where.
-        lv_kind = |{ lv_kind } ({ ls_mast-master })|.
+      APPEND main_program( CONV progname( ls_use-where ) ) TO lt_prog.
+    ENDLOOP.
+    SORT lt_prog BY table_line.
+    DELETE ADJACENT DUPLICATES FROM lt_prog COMPARING table_line.
+
+    SELECT name, subc FROM trdir
+      FOR ALL ENTRIES IN @lt_prog
+      WHERE name = @lt_prog-table_line
+      INTO TABLE @DATA(lt_dir).
+    SORT lt_dir BY name.
+
+*   How a table is used only shows in the source: the index knows that it
+*   is used, not whether it is read or written. Done for the entry point
+*   only, and the entry limit caps how many programs are read.
+*   Scanned is the include the index points at, not its frame program. In a
+*   function group the SELECT sits in LZ..U01 or LZ..F00, and SAPL<group>
+*   holds nothing but the include list.
+    TYPES: BEGIN OF ty_acc,
+             prog TYPE progname,
+             acc  TYPE string,
+           END OF ty_acc.
+    DATA lt_acc TYPE STANDARD TABLE OF ty_acc.
+
+    IF iv_type = 'TABL' OR iv_type = 'VIEW'.
+      LOOP AT lt_inc INTO DATA(lv_pr).
+        APPEND VALUE ty_acc( prog = lv_pr
+                             acc  = table_access( iv_prog  = lv_pr
+                                                  iv_table = iv_name ) )
+               TO lt_acc.
+      ENDLOOP.
+      SORT lt_acc BY prog.
+    ENDIF.
+
+    LOOP AT lt_use INTO ls_use.
+
+      DATA(lv_main) = main_program( CONV progname( ls_use-where ) ).
+      DATA lv_kind TYPE string.
+
+      READ TABLE lt_dir INTO DATA(ls_dir)
+           WITH KEY name = lv_main BINARY SEARCH.
+      IF sy-subrc = 0.
+        lv_kind = prog_kind( iv_subc = ls_dir-subc iv_prog = lv_main ).
+*       For a function group the kind already carries the group name;
+*       repeating SAPL<group> behind it says nothing new.
+        IF ls_dir-subc <> 'F' AND lv_main <> ls_use-where.
+          lv_kind = |{ lv_kind } { lv_main }|.
+        ENDIF.
+      ELSE.
+        lv_kind = ls_use-kind.
       ENDIF.
+
+      READ TABLE lt_acc INTO DATA(ls_acc)
+           WITH KEY prog = ls_use-where BINARY SEARCH.
+      IF sy-subrc = 0 AND ls_acc-acc IS NOT INITIAL.
+        lv_kind = |{ lv_kind } - { ls_acc-acc }|.
+      ENDIF.
+
       lo_u->add_field( VALUE ty_field( name     = ls_use-where
                                        rollname = lv_kind ) ).
     ENDLOOP.
@@ -1888,6 +1951,92 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     io_chapter->add_object( lo_u ).
     mv_n_use = mv_n_use + 1.
 
+  ENDMETHOD.
+
+  METHOD main_program.
+*   The include belongs to a frame program. D010INC knows it; if the entry
+*   is missing the include is its own main program.
+    SELECT SINGLE master FROM d010inc
+      WHERE include = @iv_include
+      INTO @DATA(lv_master).
+    IF sy-subrc = 0 AND lv_master IS NOT INITIAL.
+      rv_prog = lv_master.
+    ELSE.
+      rv_prog = iv_include.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD prog_kind.
+*   TRDIR-SUBC says what kind of program it is. The name of a function
+*   group is more telling than its frame program SAPL<group>.
+    CASE iv_subc.
+      WHEN '1'. rv_kind = lcl_t=>t( d = 'Report' e = 'report' ).
+      WHEN 'F'.
+        rv_kind = lcl_t=>t( d = 'Funktionsgruppe' e = 'function group' ).
+        IF strlen( iv_prog ) > 4 AND iv_prog(4) = 'SAPL'.
+          rv_kind = |{ rv_kind } { iv_prog+4 }|.
+        ENDIF.
+      WHEN 'K'. rv_kind = lcl_t=>t( d = 'Klassenpool' e = 'class pool' ).
+      WHEN 'J'. rv_kind = lcl_t=>t( d = 'Interfacepool' e = 'interface pool' ).
+      WHEN 'M'. rv_kind = lcl_t=>t( d = 'Modulpool' e = 'module pool' ).
+      WHEN 'S'. rv_kind = lcl_t=>t( d = 'Unterprogrammpool' e = 'subroutine pool' ).
+      WHEN 'I'. rv_kind = 'Include'.
+      WHEN 'T'. rv_kind = lcl_t=>t( d = 'Typgruppe' e = 'type pool' ).
+      WHEN OTHERS. rv_kind = lcl_t=>t( d = 'Programm' e = 'program' ).
+    ENDCASE.
+  ENDMETHOD.
+
+  METHOD table_access.
+*   Read or written. The write forms are checked first because DELETE FROM
+*   would otherwise be counted as a read.
+    DATA(lt_src) = source_lines( iv_type = 'PROG' iv_name = iv_prog ).
+    IF lt_src IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    DATA lv_read  TYPE abap_bool.
+    DATA lv_write TYPE abap_bool.
+    DATA lv_up    TYPE string.
+    DATA(lv_tab)  = to_upper( CONV string( iv_table ) ).
+
+    LOOP AT lt_src INTO DATA(lv_line).
+
+      lv_up = to_upper( lv_line ).
+      SHIFT lv_up LEFT DELETING LEADING space.
+      IF lv_up IS INITIAL OR lv_up(1) = '*'.
+        CONTINUE.
+      ENDIF.
+      IF lv_up CS '"'.
+        SPLIT lv_up AT '"' INTO lv_up DATA(lv_rest).
+      ENDIF.
+      IF NOT lv_up CS lv_tab.
+        CONTINUE.
+      ENDIF.
+
+      FIND FIRST OCCURRENCE OF PCRE
+        |^(?:INSERT\\s+(?:INTO\\s+)?\| \|UPDATE\\s+\| \|MODIFY\\s+\| \|DELETE\\s+(?:FROM\\s+)?)| &&
+        |{ lv_tab }\\b|
+        IN lv_up.
+      IF sy-subrc = 0.
+        lv_write = abap_true.
+        CONTINUE.
+      ENDIF.
+
+      FIND FIRST OCCURRENCE OF PCRE |\\b(?:FROM\|JOIN)\\s+{ lv_tab }\\b|
+        IN lv_up.
+      IF sy-subrc = 0.
+        lv_read = abap_true.
+      ENDIF.
+
+    ENDLOOP.
+
+    IF lv_read = abap_true AND lv_write = abap_true.
+      rv_kind = lcl_t=>t( d = 'lesend und schreibend' e = 'read and written' ).
+    ELSEIF lv_write = abap_true.
+      rv_kind = lcl_t=>t( d = 'schreibend' e = 'written' ).
+    ELSEIF lv_read = abap_true.
+      rv_kind = lcl_t=>t( d = 'lesend' e = 'read' ).
+    ENDIF.
   ENDMETHOD.
 
   METHOD add_details.
@@ -2606,7 +2755,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *   like CHAR255 is used in thousands of SAP programs and would bury the
 *   document under its own where-used list.
     IF mv_used = abap_true AND iv_root = abap_true.
-      add_usages( iv_name = iv_name io_chapter = ro_chapter ).
+      add_usages( iv_type = iv_type iv_name = iv_name io_chapter = ro_chapter ).
     ENDIF.
 
 *   The call list costs a scan of WBCROSSGT plus the source; it is only
@@ -2928,7 +3077,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         ENDIF.
 
         IF mv_used = abap_true.
-          add_usages( iv_name    = ls_tadir-object_name
+          add_usages( iv_type    = ls_tadir-object_type
+                      iv_name    = ls_tadir-object_name
                       io_chapter = lo_ochap ).
         ENDIF.
 

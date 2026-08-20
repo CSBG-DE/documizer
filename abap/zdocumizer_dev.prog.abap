@@ -108,10 +108,13 @@ TYPES: BEGIN OF ty_objref,
 TYPES ty_objrefs TYPE STANDARD TABLE OF ty_objref WITH EMPTY KEY.
 TYPES ty_names   TYPE STANDARD TABLE OF sobj_name WITH EMPTY KEY.
 
-* A line of source in which the documented object appears
+* A line of source at a place of use. With the full-source option every
+* line is collected and HIT marks the ones the object appears in;
+* otherwise only the hits are collected and HIT is always set.
  TYPES: BEGIN OF ty_hit,
          line TYPE i,
          text TYPE string,
+         hit  TYPE abap_bool,
        END OF ty_hit.
  TYPES ty_hits TYPE STANDARD TABLE OF ty_hit WITH EMPTY KEY.
 
@@ -807,6 +810,14 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE gv_blk2.
     SELECTION-SCREEN COMMENT 1(30) gv_tmaxu FOR FIELD p_maxuse.
     PARAMETERS p_maxuse TYPE i DEFAULT 50.
   SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tmaxh FOR FIELD p_maxhit.
+    PARAMETERS p_maxhit TYPE i DEFAULT 40.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tfsrc FOR FIELD p_fsrc.
+    PARAMETERS p_fsrc AS CHECKBOX.
+  SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b2.
 
 SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE gv_blk3.
@@ -862,6 +873,8 @@ INITIALIZATION.
     gv_trdep = 'Verweistiefe (0 = keine)'.
     gv_tnsap = 'SAP-Standard ausschliessen'.
     gv_tmaxu = 'Max. Verwendungen je Objekt'.
+    gv_tmaxh = 'Max. Fundstellen je Stelle'.
+    gv_tfsrc = 'Fundstellen im ganzen Quelltext'.
     gv_txml  = 'XML erzeugen/ausgeben'.
     gv_thtml = 'HTML erzeugen/anzeigen'.
     gv_trt   = 'Roundtrip prüfen'.
@@ -892,6 +905,8 @@ INITIALIZATION.
     gv_trdep = 'Reference depth (0 = none)'.
     gv_tnsap = 'Exclude SAP standard'.
     gv_tmaxu = 'Max. entries per object'.
+    gv_tmaxh = 'Max. occurrences per place'.
+    gv_tfsrc = 'Occurrences in full source'.
     gv_txml  = 'Create/show XML'.
     gv_thtml = 'Create/show HTML'.
     gv_trt   = 'Check roundtrip'.
@@ -1068,7 +1083,11 @@ CLASS lcl_renderer_html IMPLEMENTATION.
       IF lo_obj->get_type( ) = 'SOURCE'.
         add( '<pre class="src">' ).
         LOOP AT lo_obj->get_fields( ) INTO DATA(ls_hit).
-          add( |{ esc( ls_hit-name ) }  { esc( ls_hit-rollname ) }| ).
+          IF ls_hit-keyflag = abap_true.
+            add( |<b>{ esc( ls_hit-name ) }  { esc( ls_hit-rollname ) }</b>| ).
+          ELSE.
+            add( |{ esc( ls_hit-name ) }  { esc( ls_hit-rollname ) }| ).
+          ENDIF.
         ENDLOOP.
         add( '</pre>' ).
         CONTINUE.
@@ -1119,7 +1138,9 @@ CLASS lcl_collector_dev DEFINITION.
                 iv_falb   TYPE abap_bool
                 iv_flang  TYPE sy-langu
                 iv_calls  TYPE abap_bool
-                iv_nosap  TYPE abap_bool.
+                iv_nosap  TYPE abap_bool
+                iv_maxhit TYPE i
+                iv_fsrc   TYPE abap_bool.
     METHODS get_stat_packages RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_objects  RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_total    RETURNING VALUE(rv) TYPE i.
@@ -1145,7 +1166,8 @@ CLASS lcl_collector_dev DEFINITION.
     DATA mv_maxuse TYPE i.
     DATA mv_calls  TYPE abap_bool.
     DATA mv_nosap  TYPE abap_bool.
-    DATA mv_maxhit TYPE i VALUE 40.
+    DATA mv_maxhit TYPE i.
+    DATA mv_fsrc   TYPE abap_bool.
     DATA mv_falb   TYPE abap_bool.
     DATA mv_flang  TYPE sy-langu.
     DATA mv_n_falb TYPE i.
@@ -1287,6 +1309,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     mv_used   = iv_used.
     mv_calls  = iv_calls.
     mv_nosap  = iv_nosap.
+    mv_maxhit = iv_maxhit.
+    mv_fsrc   = iv_fsrc.
     mv_maxuse = iv_maxuse.
     mv_falb   = iv_falb.
     mv_flang  = iv_flang.
@@ -1995,12 +2019,23 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
       DATA(lo_s) = NEW lcl_object( iv_type = 'SOURCE'
                                    iv_name = ls_use-where ).
-      lo_s->set_note( |{ lcl_t=>t( d = `Fundstellen in` e = `Occurrences in` ) }| &&
+      lo_s->set_note( |{ COND string(
+          WHEN mv_fsrc = abap_true
+          THEN lcl_t=>t( d = `Quelltext mit Fundstellen`
+                         e = `Source with occurrences` )
+          ELSE lcl_t=>t( d = `Fundstellen in` e = `Occurrences in` ) ) }| &&
                       | { ls_use-where }| ).
+*     KEYFLAG marks the hit line. The field carries no key here - it is
+*     the one flag the model already round-trips through the XML, and a
+*     new attribute would break every document written so far.
+*     Marked only in the full listing. In the pure hit list every line is
+*     a hit, and marking all of them says nothing.
       LOOP AT ls_h-hits INTO DATA(ls_hit).
         lo_s->add_field( VALUE ty_field(
           name     = |{ ls_hit-line WIDTH = 6 ALIGN = RIGHT }|
-          rollname = ls_hit-text ) ).
+          rollname = ls_hit-text
+          keyflag  = COND #( WHEN mv_fsrc = abap_true THEN ls_hit-hit
+                             ELSE abap_false ) ) ).
       ENDLOOP.
       io_chapter->add_object( lo_s ).
 
@@ -2060,36 +2095,50 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     DATA lv_cnt   TYPE i.
     DATA(lv_tab)  = to_upper( CONV string( iv_name ) ).
 
+*   With the full-source option the whole listing is kept and capped by
+*   the source limit; otherwise only the hits, capped by their own limit.
+    DATA(lv_cap) = COND i( WHEN mv_fsrc = abap_true THEN mv_maxsrc
+                           ELSE mv_maxhit ).
+
     LOOP AT lt_src INTO DATA(lv_line).
 
       lv_no = sy-tabix.
       lv_up = to_upper( lv_line ).
       SHIFT lv_up LEFT DELETING LEADING space.
-      IF lv_up IS INITIAL OR lv_up(1) = '*'.
-        CONTINUE.
-      ENDIF.
-      IF lv_up CS '"'.
-        SPLIT lv_up AT '"' INTO lv_up DATA(lv_rest).
+
+      DATA lv_ishit TYPE abap_bool.
+      CLEAR lv_ishit.
+
+      IF lv_up IS NOT INITIAL AND lv_up(1) <> '*'.
+        DATA(lv_code) = lv_up.
+        IF lv_code CS '"'.
+          SPLIT lv_code AT '"' INTO lv_code DATA(lv_rest).
+        ENDIF.
+*       Whole word only. Without the boundary ZSCANTEST would also match
+*       ZSCANTEST_OLD.
+        FIND FIRST OCCURRENCE OF PCRE |\\b{ lv_tab }\\b| IN lv_code.
+        IF sy-subrc = 0.
+          lv_ishit = abap_true.
+        ENDIF.
       ENDIF.
 
-*     Whole word only. Without the boundary ZSCANTEST would also match
-*     ZSCANTEST_OLD.
-      FIND FIRST OCCURRENCE OF PCRE |\\b{ lv_tab }\\b| IN lv_up.
-      IF sy-subrc <> 0.
+      IF lv_ishit = abap_false AND mv_fsrc = abap_false.
         CONTINUE.
       ENDIF.
 
-      IF mv_maxhit <= 0 OR lv_cnt < mv_maxhit.
+      IF lv_cap <= 0 OR lv_cnt < lv_cap.
         lv_cnt = lv_cnt + 1.
         APPEND VALUE ty_hit( line = lv_no
+                             hit  = lv_ishit
                              text = condense( val = lv_line
                                               del = cl_abap_char_utilities=>horizontal_tab ) )
                TO et_hits.
       ENDIF.
 
-      IF iv_access = abap_false.
+      IF iv_access = abap_false OR lv_ishit = abap_false.
         CONTINUE.
       ENDIF.
+      lv_up = lv_code.
 
 *     The write forms are checked first - DELETE FROM would otherwise be
 *     counted as a read.
@@ -3524,7 +3573,9 @@ START-OF-SELECTION.
                                               iv_falb   = p_falb
                                               iv_flang  = p_flang
                                               iv_calls  = p_calls
-                                              iv_nosap  = p_nosap ).
+                                              iv_nosap  = p_nosap
+                                              iv_maxhit = p_maxhit
+                                              iv_fsrc   = p_fsrc ).
 
   DATA lo_coll TYPE REF TO lif_docu_collector.
   lo_coll = lo_collector.

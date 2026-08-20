@@ -1349,9 +1349,6 @@ CLASS lcl_collector_dev DEFINITION.
     METHODS main_program
       IMPORTING iv_include     TYPE progname
       RETURNING VALUE(rv_prog) TYPE progname.
-    METHODS obj_label
-      IMPORTING iv_type         TYPE trobjtype
-      RETURNING VALUE(rv_label) TYPE string.
     METHODS prog_kind
       IMPORTING iv_subc        TYPE trdir-subc
                 iv_prog        TYPE progname
@@ -1363,7 +1360,7 @@ CLASS lcl_collector_dev DEFINITION.
       IMPORTING iv_type       TYPE trobjtype
                 iv_name       TYPE sobj_name
                 iv_with_encl  TYPE abap_bool DEFAULT abap_false
-      EXPORTING et_name       TYPE ty_names
+      EXPORTING et_hit        TYPE ty_objrefs
                 ev_ok         TYPE abap_bool.
     METHODS usage_objects
       IMPORTING iv_type       TYPE trobjtype
@@ -1989,6 +1986,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *            A view or a CDS view is a repository object, not an include.
 *            It has no source to scan and no frame program behind it.
              ddic  TYPE abap_bool,
+             cls   TYPE c LENGTH 4,
            END OF ty_use.
     DATA lt_use TYPE STANDARD TABLE OF ty_use.
     DATA ls_use TYPE ty_use.
@@ -2005,7 +2003,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *   eine CDS View Entity gar nicht.
     crossref_users( EXPORTING iv_type = iv_type
                               iv_name = iv_name
-                    IMPORTING et_name = DATA(lt_cru)
+                    IMPORTING et_hit  = DATA(lt_cru)
                               ev_ok   = DATA(lv_cr_ok) ).
 
     IF lv_cr_ok = abap_true.
@@ -2013,9 +2011,10 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       IF lines( lt_cru ) > lv_max.
         DELETE lt_cru FROM lv_max + 1.
       ENDIF.
-      LOOP AT lt_cru INTO DATA(lv_cru).
+      LOOP AT lt_cru INTO DATA(ls_cru).
         CLEAR ls_use.
-        ls_use-where = lv_cru.
+        ls_use-where = ls_cru-name.
+        ls_use-cls   = ls_cru-type.
         ls_use-kind  = lcl_t=>t( d = 'Verwendung' e = 'usage' ).
         APPEND ls_use TO lt_use.
       ENDLOOP.
@@ -2187,13 +2186,34 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       INTO TABLE @DATA(lt_dir).
     SORT lt_dir BY name.
 
-*   Was TRDIR nicht kennt, ist kein Programm: eine DDL Source, ein View,
-*   eine Tabelle. Der Katalog sagt, was es ist.
-    SELECT object, obj_name FROM tadir
-      FOR ALL ENTRIES IN @lt_prog
-      WHERE pgmid = 'R3TR' AND obj_name = @lt_prog-table_line
-      INTO TABLE @DATA(lt_tad).
-    SORT lt_tad BY obj_name.
+*   Was TRDIR nicht kennt, ist kein Programm: eine Datendefinition, ein
+*   View, eine Tabelle. Die Bezeichnung dafuer liefert die Werkbank
+*   selbst - EUOBJT fuehrt zu jeder Objektklasse einen Text, sogar in der
+*   Einzahl und sprachabhaengig. Das ist verlaesslicher als ein Blick in
+*   TADIR: dort kollidieren Namen, ein View heisst genauso wie das dazu
+*   erzeugte Customizing-Objekt, und der Katalog haette keinen Grund, das
+*   eine dem anderen vorzuziehen.
+    DATA lt_cls TYPE STANDARD TABLE OF euobjt-type.
+    LOOP AT lt_use INTO ls_use WHERE cls IS NOT INITIAL.
+      APPEND CONV euobjt-type( ls_use-cls ) TO lt_cls.
+    ENDLOOP.
+    SORT lt_cls BY table_line.
+    DELETE ADJACENT DUPLICATES FROM lt_cls COMPARING table_line.
+
+    DATA lt_clst TYPE STANDARD TABLE OF euobjt.
+    IF lt_cls IS NOT INITIAL.
+      SELECT * FROM euobjt
+        FOR ALL ENTRIES IN @lt_cls
+        WHERE spras = @mv_langu AND type = @lt_cls-table_line
+        INTO TABLE @lt_clst.
+      IF lt_clst IS INITIAL AND mv_falb = abap_true.
+        SELECT * FROM euobjt
+          FOR ALL ENTRIES IN @lt_cls
+          WHERE spras = @mv_flang AND type = @lt_cls-table_line
+          INTO TABLE @lt_clst.
+      ENDIF.
+      SORT lt_clst BY type.
+    ENDIF.
 
 *   How a table is used only shows in the source: the index knows that it
 *   is used, not whether it is read or written. Done for the entry point
@@ -2249,11 +2269,17 @@ CLASS lcl_collector_dev IMPLEMENTATION.
           lv_kind = |{ lv_kind } { lv_main }|.
         ENDIF.
       ELSE.
-        READ TABLE lt_tad INTO DATA(ls_tad)
-             WITH KEY obj_name = lv_main BINARY SEARCH.
-        IF sy-subrc = 0.
-          lv_kind = obj_label( ls_tad-object ).
-        ELSE.
+        CLEAR lv_kind.
+        IF ls_use-cls IS NOT INITIAL.
+          READ TABLE lt_clst INTO DATA(ls_clst)
+               WITH KEY type = ls_use-cls BINARY SEARCH.
+          IF sy-subrc = 0.
+            lv_kind = COND #( WHEN ls_clst-singular IS NOT INITIAL
+                              THEN ls_clst-singular
+                              ELSE ls_clst-stext ).
+          ENDIF.
+        ENDIF.
+        IF lv_kind IS INITIAL.
           lv_kind = ls_use-kind.
         ENDIF.
       ENDIF.
@@ -2333,7 +2359,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *   Der Baustein arbeitet mit klassischen Ausnahmen und kann bei grossem
 *   Umfang auf Batch ausweichen. Beides wird abgefangen; der Aufrufer
 *   faellt dann auf die Indextabellen zurueck.
-    CLEAR: et_name, ev_ok.
+    CLEAR: et_hit, ev_ok.
 
     DATA(lv_cls) = find_obj_cls( iv_type ).
     IF lv_cls IS INITIAL.
@@ -2383,17 +2409,18 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *   mit derselben Aufloesung wie beim Rueckfall.
     LOOP AT lt_found INTO DATA(ls_f).
       IF ls_f-object IS NOT INITIAL.
-        APPEND CONV sobj_name( ls_f-object ) TO et_name.
+        APPEND VALUE #( type = ls_f-object_cls
+                        name = ls_f-object ) TO et_hit.
       ENDIF.
 *     Das umschliessende Objekt hilft beim Aufloesen auf ein
 *     Katalogobjekt, in der Trefferliste selbst waere es eine Dublette.
       IF iv_with_encl = abap_true AND ls_f-encl_objec IS NOT INITIAL.
-        APPEND CONV sobj_name( ls_f-encl_objec ) TO et_name.
+        APPEND VALUE #( name = ls_f-encl_objec ) TO et_hit.
       ENDIF.
     ENDLOOP.
 
-    SORT et_name BY table_line.
-    DELETE ADJACENT DUPLICATES FROM et_name COMPARING table_line.
+    SORT et_hit BY name type.
+    DELETE ADJACENT DUPLICATES FROM et_hit COMPARING name.
   ENDMETHOD.
 
   METHOD usage_objects.
@@ -2416,13 +2443,13 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     crossref_users( EXPORTING iv_type      = iv_type
                               iv_name      = iv_name
                               iv_with_encl = abap_true
-                    IMPORTING et_name      = DATA(lt_cr_name)
+                    IMPORTING et_hit       = DATA(lt_cr_hit)
                               ev_ok        = DATA(lv_ok) ).
 
     IF lv_ok = abap_true.
       DATA lv_crp TYPE progname.
-      LOOP AT lt_cr_name INTO DATA(lv_crn).
-        lv_crp = lv_crn.
+      LOOP AT lt_cr_hit INTO DATA(ls_crh).
+        lv_crp = ls_crh-name.
         APPEND lv_crp TO lt_inc.
       ENDLOOP.
     ELSE.
@@ -2530,28 +2557,6 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         rv_prog = ls_master-master.
       ENDIF.
     ENDIF.
-  ENDMETHOD.
-
-  METHOD obj_label.
-*   Einzahl, im Gegensatz zu type_title, das die Gruppenueberschrift
-*   liefert. Hier steht die Angabe hinter einem einzelnen Namen.
-    CASE iv_type.
-      WHEN 'DDLS'. rv_label = 'CDS View'.
-      WHEN 'VIEW'. rv_label = lcl_t=>t( d = 'View' e = 'view' ).
-      WHEN 'TABL'. rv_label = lcl_t=>t( d = 'Tabelle/Struktur' e = 'table/structure' ).
-      WHEN 'CLAS'. rv_label = lcl_t=>t( d = 'Klasse' e = 'class' ).
-      WHEN 'INTF'. rv_label = 'Interface'.
-      WHEN 'FUGR'. rv_label = lcl_t=>t( d = 'Funktionsgruppe' e = 'function group' ).
-      WHEN 'PROG'. rv_label = lcl_t=>t( d = 'Programm' e = 'program' ).
-      WHEN 'DTEL'. rv_label = lcl_t=>t( d = 'Datenelement' e = 'data element' ).
-      WHEN 'DOMA'. rv_label = lcl_t=>t( d = 'Domäne' e = 'domain' ).
-      WHEN 'TTYP'. rv_label = lcl_t=>t( d = 'Tabellentyp' e = 'table type' ).
-      WHEN 'SHLP'. rv_label = lcl_t=>t( d = 'Suchhilfe' e = 'search help' ).
-      WHEN 'ENQU'. rv_label = lcl_t=>t( d = 'Sperrobjekt' e = 'lock object' ).
-      WHEN 'MSAG'. rv_label = lcl_t=>t( d = 'Nachrichtenklasse' e = 'message class' ).
-      WHEN 'TRAN'. rv_label = lcl_t=>t( d = 'Transaktion' e = 'transaction' ).
-      WHEN OTHERS. rv_label = iv_type.
-    ENDCASE.
   ENDMETHOD.
 
   METHOD prog_kind.

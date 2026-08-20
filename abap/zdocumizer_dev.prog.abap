@@ -108,6 +108,13 @@ TYPES: BEGIN OF ty_objref,
 TYPES ty_objrefs TYPE STANDARD TABLE OF ty_objref WITH EMPTY KEY.
 TYPES ty_names   TYPE STANDARD TABLE OF sobj_name WITH EMPTY KEY.
 
+* A line of source in which the documented object appears
+ TYPES: BEGIN OF ty_hit,
+         line TYPE i,
+         text TYPE string,
+       END OF ty_hit.
+ TYPES ty_hits TYPE STANDARD TABLE OF ty_hit WITH EMPTY KEY.
+
 * Entry point types offered on the selection screen.
 *
 * Both components carry a data element on purpose. F4IF_INT_TABLE_VALUE_REQUEST
@@ -1055,6 +1062,18 @@ CLASS lcl_renderer_html IMPLEMENTATION.
       IF lo_obj->get_note( ) IS NOT INITIAL.
         add( |<p class="ref">{ esc( lo_obj->get_note( ) ) }</p>| ).
       ENDIF.
+
+*     Source hits belong in a code block, not in a field table: the line
+*     number in front, the statement behind it, in a fixed-width font.
+      IF lo_obj->get_type( ) = 'SOURCE'.
+        add( '<pre class="src">' ).
+        LOOP AT lo_obj->get_fields( ) INTO DATA(ls_hit).
+          add( |{ esc( ls_hit-name ) }  { esc( ls_hit-rollname ) }| ).
+        ENDLOOP.
+        add( '</pre>' ).
+        CONTINUE.
+      ENDIF.
+
       IF lines( lo_obj->get_fields( ) ) > 0.
         add( |<table><tr><th>Name</th>| &&
              |<th>{ lcl_t=>t( d = 'Typ / Datenelement'
@@ -1126,6 +1145,7 @@ CLASS lcl_collector_dev DEFINITION.
     DATA mv_maxuse TYPE i.
     DATA mv_calls  TYPE abap_bool.
     DATA mv_nosap  TYPE abap_bool.
+    DATA mv_maxhit TYPE i VALUE 40.
     DATA mv_falb   TYPE abap_bool.
     DATA mv_flang  TYPE sy-langu.
     DATA mv_n_falb TYPE i.
@@ -1190,10 +1210,12 @@ CLASS lcl_collector_dev DEFINITION.
       IMPORTING iv_subc        TYPE trdir-subc
                 iv_prog        TYPE progname
       RETURNING VALUE(rv_kind) TYPE string.
-    METHODS table_access
-      IMPORTING iv_prog        TYPE progname
-                iv_table       TYPE sobj_name
-      RETURNING VALUE(rv_kind) TYPE string.
+    METHODS usage_scan
+      IMPORTING iv_prog   TYPE progname
+                iv_name   TYPE sobj_name
+                iv_access TYPE abap_bool
+      EXPORTING ev_access TYPE string
+                et_hits   TYPE ty_hits.
     METHODS add_calls
       IMPORTING iv_type    TYPE trobjtype
                 iv_name    TYPE sobj_name
@@ -1907,18 +1929,27 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     TYPES: BEGIN OF ty_acc,
              prog TYPE progname,
              acc  TYPE string,
+             hits TYPE ty_hits,
            END OF ty_acc.
     DATA lt_acc TYPE STANDARD TABLE OF ty_acc.
+    DATA ls_a   TYPE ty_acc.
 
-    IF iv_type = 'TABL' OR iv_type = 'VIEW'.
-      LOOP AT lt_inc INTO DATA(lv_pr).
-        APPEND VALUE ty_acc( prog = lv_pr
-                             acc  = table_access( iv_prog  = lv_pr
-                                                  iv_table = iv_name ) )
-               TO lt_acc.
-      ENDLOOP.
-      SORT lt_acc BY prog.
-    ENDIF.
+*   Only a table can be read or written; for everything else the pass just
+*   collects the lines.
+    DATA(lv_dml) = xsdbool( iv_type = 'TABL' OR iv_type = 'VIEW'
+                            OR iv_type = 'DDLS' ).
+
+    LOOP AT lt_inc INTO DATA(lv_pr).
+      CLEAR ls_a.
+      ls_a-prog = lv_pr.
+      usage_scan( EXPORTING iv_prog   = lv_pr
+                            iv_name   = iv_name
+                            iv_access = lv_dml
+                  IMPORTING ev_access = ls_a-acc
+                            et_hits   = ls_a-hits ).
+      APPEND ls_a TO lt_acc.
+    ENDLOOP.
+    SORT lt_acc BY prog.
 
     LOOP AT lt_use INTO ls_use.
 
@@ -1950,6 +1981,30 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
     io_chapter->add_object( lo_u ).
     mv_n_use = mv_n_use + 1.
+
+*   The hit lines follow the list, one block per place of use. The list
+*   answers "where", the block answers "how" - and that is the question
+*   the reader has next.
+    LOOP AT lt_use INTO ls_use.
+
+      READ TABLE lt_acc INTO DATA(ls_h)
+           WITH KEY prog = ls_use-where BINARY SEARCH.
+      IF sy-subrc <> 0 OR ls_h-hits IS INITIAL.
+        CONTINUE.
+      ENDIF.
+
+      DATA(lo_s) = NEW lcl_object( iv_type = 'SOURCE'
+                                   iv_name = ls_use-where ).
+      lo_s->set_note( |{ lcl_t=>t( d = `Fundstellen in` e = `Occurrences in` ) }| &&
+                      | { ls_use-where }| ).
+      LOOP AT ls_h-hits INTO DATA(ls_hit).
+        lo_s->add_field( VALUE ty_field(
+          name     = |{ ls_hit-line WIDTH = 6 ALIGN = RIGHT }|
+          rollname = ls_hit-text ) ).
+      ENDLOOP.
+      io_chapter->add_object( lo_s ).
+
+    ENDLOOP.
 
   ENDMETHOD.
 
@@ -1986,9 +2041,13 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     ENDCASE.
   ENDMETHOD.
 
-  METHOD table_access.
-*   Read or written. The write forms are checked first because DELETE FROM
-*   would otherwise be counted as a read.
+  METHOD usage_scan.
+*   One pass over the source of a using include. It answers two questions
+*   at once, so the source is read only once: how the object is accessed,
+*   and in which lines it appears. The second is what the reader wants -
+*   the same "Fundstellen" panel SE11 shows next to its hit list.
+    CLEAR: ev_access, et_hits.
+
     DATA(lt_src) = source_lines( iv_type = 'PROG' iv_name = iv_prog ).
     IF lt_src IS INITIAL.
       RETURN.
@@ -1997,10 +2056,13 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     DATA lv_read  TYPE abap_bool.
     DATA lv_write TYPE abap_bool.
     DATA lv_up    TYPE string.
-    DATA(lv_tab)  = to_upper( CONV string( iv_table ) ).
+    DATA lv_no    TYPE i.
+    DATA lv_cnt   TYPE i.
+    DATA(lv_tab)  = to_upper( CONV string( iv_name ) ).
 
     LOOP AT lt_src INTO DATA(lv_line).
 
+      lv_no = sy-tabix.
       lv_up = to_upper( lv_line ).
       SHIFT lv_up LEFT DELETING LEADING space.
       IF lv_up IS INITIAL OR lv_up(1) = '*'.
@@ -2009,10 +2071,28 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       IF lv_up CS '"'.
         SPLIT lv_up AT '"' INTO lv_up DATA(lv_rest).
       ENDIF.
-      IF NOT lv_up CS lv_tab.
+
+*     Whole word only. Without the boundary ZSCANTEST would also match
+*     ZSCANTEST_OLD.
+      FIND FIRST OCCURRENCE OF PCRE |\\b{ lv_tab }\\b| IN lv_up.
+      IF sy-subrc <> 0.
         CONTINUE.
       ENDIF.
 
+      IF mv_maxhit <= 0 OR lv_cnt < mv_maxhit.
+        lv_cnt = lv_cnt + 1.
+        APPEND VALUE ty_hit( line = lv_no
+                             text = condense( val = lv_line
+                                              del = cl_abap_char_utilities=>horizontal_tab ) )
+               TO et_hits.
+      ENDIF.
+
+      IF iv_access = abap_false.
+        CONTINUE.
+      ENDIF.
+
+*     The write forms are checked first - DELETE FROM would otherwise be
+*     counted as a read.
       FIND FIRST OCCURRENCE OF PCRE
         |^(?:INSERT\\s+(?:INTO\\s+)?\| \|UPDATE\\s+\| \|MODIFY\\s+\| \|DELETE\\s+(?:FROM\\s+)?)| &&
         |{ lv_tab }\\b|
@@ -2031,11 +2111,11 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     ENDLOOP.
 
     IF lv_read = abap_true AND lv_write = abap_true.
-      rv_kind = lcl_t=>t( d = 'lesend und schreibend' e = 'read and written' ).
+      ev_access = lcl_t=>t( d = 'lesend und schreibend' e = 'read and written' ).
     ELSEIF lv_write = abap_true.
-      rv_kind = lcl_t=>t( d = 'schreibend' e = 'written' ).
+      ev_access = lcl_t=>t( d = 'schreibend' e = 'written' ).
     ELSEIF lv_read = abap_true.
-      rv_kind = lcl_t=>t( d = 'lesend' e = 'read' ).
+      ev_access = lcl_t=>t( d = 'lesend' e = 'read' ).
     ENDIF.
   ENDMETHOD.
 

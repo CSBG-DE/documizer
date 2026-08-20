@@ -119,6 +119,8 @@ TYPES: BEGIN OF ty_reference,
          tcode    TYPE string,
        END OF ty_reference.
 
+TYPES ty_names TYPE STANDARD TABLE OF sobj_name WITH EMPTY KEY.
+
 TYPES: BEGIN OF ty_meta,
          version    TYPE string,
          doc_type   TYPE string,
@@ -946,6 +948,10 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE gv_blk2.
     SELECTION-SCREEN COMMENT 1(30) gv_tcall FOR FIELD p_calls.
     PARAMETERS p_calls AS CHECKBOX.
   SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tnsap FOR FIELD p_nosap.
+    PARAMETERS p_nosap AS CHECKBOX.
+  SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b2.
 
 SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE gv_blk3.
@@ -1009,6 +1015,7 @@ INITIALIZATION.
     gv_tmaxr = 'Max. Zeilen (0 = alle)'.
     gv_thist = 'Transport-Historie'.
     gv_tcall = 'Ausgehende Aufrufe'.
+    gv_tnsap = 'SAP-Standard ausschliessen'.
     gv_tpst  = 'Projektstatus ausgeben'.
     gv_tpmem = 'Projekt-Memo ausgeben'.
     gv_txml  = 'XML erzeugen/ausgeben'.
@@ -1039,6 +1046,7 @@ INITIALIZATION.
     gv_tmaxr = 'Max. rows (0 = all)'.
     gv_thist = 'Transport history'.
     gv_tcall = 'Outgoing references'.
+    gv_tnsap = 'Exclude SAP standard'.
     gv_tpst  = 'Show project status'.
     gv_tpmem = 'Show project memo'.
     gv_txml  = 'Create/show XML'.
@@ -1455,6 +1463,7 @@ CLASS lcl_collector_img DEFINITION.
                 iv_falb    TYPE abap_bool DEFAULT abap_false
                 iv_flang   TYPE sy-langu  DEFAULT 'E'
                 iv_calls   TYPE abap_bool DEFAULT abap_false
+                iv_nosap   TYPE abap_bool DEFAULT abap_false
                 io_cust    TYPE REF TO lcl_cust OPTIONAL.
     METHODS get_stat_nodes      RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_activities RETURNING VALUE(rv) TYPE i.
@@ -1494,6 +1503,7 @@ CLASS lcl_collector_img DEFINITION.
     DATA mv_n_docu  TYPE i.
     DATA mv_n_obj   TYPE i.
     DATA mv_calls   TYPE abap_bool.
+    DATA mv_nosap   TYPE abap_bool.
     DATA mv_n_call  TYPE i.
     METHODS enrich_activity
       IMPORTING io_chapter  TYPE REF TO lcl_chapter
@@ -1501,6 +1511,9 @@ CLASS lcl_collector_img DEFINITION.
     METHODS add_calls
       IMPORTING it_tcode   TYPE string_table
                 io_chapter TYPE REF TO lcl_chapter.
+    METHODS own_names
+      IMPORTING it_name       TYPE ty_names
+      RETURNING VALUE(rt_own) TYPE ty_names.
     METHODS tcode_program
       IMPORTING iv_tcode       TYPE string
       RETURNING VALUE(rv_prog) TYPE syrepid.
@@ -1541,6 +1554,7 @@ CLASS lcl_collector_img IMPLEMENTATION.
     mv_doku    = iv_doku.
     mv_obj     = iv_obj.
     mv_calls   = iv_calls.
+    mv_nosap   = iv_nosap.
   ENDMETHOD.
 
   METHOD lif_docu_collector~collect.
@@ -1883,6 +1897,51 @@ CLASS lcl_collector_img IMPLEMENTATION.
 
   ENDMETHOD.
 
+  METHOD own_names.
+*   Which of these objects are this system's own development. The criterion
+*   is the delivery unit of the package: HOME and LOCAL were built here,
+*   everything else was shipped. That is the line SAP itself draws, and
+*   unlike a name check it also catches customer objects in a reserved
+*   namespace and SAP objects that start with a Z.
+    IF it_name IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    SELECT obj_name, devclass FROM tadir
+      FOR ALL ENTRIES IN @it_name
+      WHERE pgmid = 'R3TR' AND obj_name = @it_name-table_line
+      INTO TABLE @DATA(lt_t).
+    IF lt_t IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    DATA lt_dev TYPE STANDARD TABLE OF devclass.
+    LOOP AT lt_t INTO DATA(ls_t).
+      APPEND ls_t-devclass TO lt_dev.
+    ENDLOOP.
+    SORT lt_dev BY table_line.
+    DELETE ADJACENT DUPLICATES FROM lt_dev COMPARING table_line.
+
+    SELECT devclass, dlvunit FROM tdevc
+      FOR ALL ENTRIES IN @lt_dev
+      WHERE devclass = @lt_dev-table_line
+      INTO TABLE @DATA(lt_d).
+
+    LOOP AT lt_t INTO ls_t.
+      READ TABLE lt_d INTO DATA(ls_d) WITH KEY devclass = ls_t-devclass.
+      IF sy-subrc <> 0.
+        CONTINUE.
+      ENDIF.
+      IF ls_d-dlvunit IS INITIAL
+         OR ls_d-dlvunit = 'HOME' OR ls_d-dlvunit = 'LOCAL'.
+        APPEND ls_t-obj_name TO rt_own.
+      ENDIF.
+    ENDLOOP.
+
+    SORT rt_own BY table_line.
+    DELETE ADJACENT DUPLICATES FROM rt_own COMPARING table_line.
+  ENDMETHOD.
+
   METHOD tcode_program.
 *   Behind an IMG activity sits a transaction, and behind the transaction a
 *   program. A parameter transaction has no program of its own; it points
@@ -2050,11 +2109,36 @@ CLASS lcl_collector_img IMPLEMENTATION.
       LOOP AT lt_fun INTO DATA(lv_f).
         APPEND CONV rs38l_fnam( lv_f ) TO lt_fn.
       ENDLOOP.
-      SELECT funcname FROM tfdir
+      SELECT funcname, pname FROM tfdir
         FOR ALL ENTRIES IN @lt_fn
         WHERE funcname = @lt_fn-table_line
         INTO TABLE @DATA(lt_fok).
       SORT lt_fok BY funcname.
+
+*     A function module has no catalog entry of its own - its function
+*     group decides whether it belongs to SAP or to this system.
+      IF mv_nosap = abap_true.
+        DATA lt_grp TYPE ty_names.
+        LOOP AT lt_fok INTO DATA(ls_f2).
+          IF strlen( ls_f2-pname ) > 4.
+            APPEND CONV sobj_name( ls_f2-pname+4 ) TO lt_grp.
+          ENDIF.
+        ENDLOOP.
+        DATA(lt_gown) = own_names( lt_grp ).
+        DATA lt_fkeep LIKE lt_fok.
+        LOOP AT lt_fok INTO ls_f2.
+          IF strlen( ls_f2-pname ) <= 4.
+            CONTINUE.
+          ENDIF.
+          READ TABLE lt_gown TRANSPORTING NO FIELDS
+               WITH KEY table_line = ls_f2-pname+4 BINARY SEARCH.
+          IF sy-subrc = 0.
+            APPEND ls_f2 TO lt_fkeep.
+          ENDIF.
+        ENDLOOP.
+        lt_fok = lt_fkeep.
+      ENDIF.
+
       LOOP AT lt_fok INTO DATA(ls_fok).
         lo_c->add_field( VALUE ty_field(
           name     = ls_fok-funcname
@@ -2074,6 +2158,23 @@ CLASS lcl_collector_img IMPLEMENTATION.
           AND obj_name = @lt_tn-table_line
         INTO TABLE @DATA(lt_tok).
       SORT lt_tok BY obj_name.
+      IF mv_nosap = abap_true.
+        DATA lt_town TYPE ty_names.
+        CLEAR lt_town.
+        LOOP AT lt_tok INTO DATA(ls_t2).
+          APPEND ls_t2-obj_name TO lt_town.
+        ENDLOOP.
+        DATA(lt_towned) = own_names( lt_town ).
+        DATA lt_tkeep LIKE lt_tok.
+        LOOP AT lt_tok INTO ls_t2.
+          READ TABLE lt_towned TRANSPORTING NO FIELDS
+               WITH KEY table_line = ls_t2-obj_name BINARY SEARCH.
+          IF sy-subrc = 0.
+            APPEND ls_t2 TO lt_tkeep.
+          ENDIF.
+        ENDLOOP.
+        lt_tok = lt_tkeep.
+      ENDIF.
       LOOP AT lt_tok INTO DATA(ls_tok).
         lo_c->add_field( VALUE ty_field(
           name     = ls_tok-obj_name
@@ -2093,6 +2194,23 @@ CLASS lcl_collector_img IMPLEMENTATION.
           AND obj_name = @lt_cn-table_line
         INTO TABLE @DATA(lt_cok).
       SORT lt_cok BY obj_name.
+      IF mv_nosap = abap_true.
+        DATA lt_cown TYPE ty_names.
+        CLEAR lt_cown.
+        LOOP AT lt_cok INTO DATA(ls_c2).
+          APPEND ls_c2-obj_name TO lt_cown.
+        ENDLOOP.
+        DATA(lt_cowned) = own_names( lt_cown ).
+        DATA lt_ckeep LIKE lt_cok.
+        LOOP AT lt_cok INTO ls_c2.
+          READ TABLE lt_cowned TRANSPORTING NO FIELDS
+               WITH KEY table_line = ls_c2-obj_name BINARY SEARCH.
+          IF sy-subrc = 0.
+            APPEND ls_c2 TO lt_ckeep.
+          ENDIF.
+        ENDLOOP.
+        lt_cok = lt_ckeep.
+      ENDIF.
       LOOP AT lt_cok INTO DATA(ls_cok).
         lo_c->add_field( VALUE ty_field(
           name     = ls_cok-obj_name
@@ -2942,6 +3060,7 @@ START-OF-SELECTION.
                                               iv_doku    = p_doku
                                               iv_obj     = p_obj
                                               iv_calls   = p_calls
+                                              iv_nosap   = p_nosap
                                               iv_proj    = p_proj
                                               iv_onlypr  = p_onlypr
                                               iv_pstat   = p_pstat

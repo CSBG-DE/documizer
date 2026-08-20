@@ -37,3 +37,16 @@ Ausgabe als XML und HTML, Ablage auf PC oder Applikationsserver.
 
 Offen sind Markdown als drittes Format, der Reimport-Report der Phase 1, das BAL-Protokoll und
 die `S_DEVELOP`-Prüfung — siehe [Offene Punkte](docs/spezifikation-documizer.md#9-offene-punkte).
+
+## Lizenz
+
+Apache License 2.0 — siehe [LICENSE](LICENSE) und [NOTICE](NOTICE).
+Copyright 2026 consiness GmbH.
+
+Weitergabe und Änderung sind erlaubt, auch im kommerziellen Einsatz. Bedingung ist, dass der
+Copyright- und Lizenzhinweis erhalten bleibt. Weil die Reports per Copy/Paste in ein fremdes
+System wandern und die `LICENSE` dabei nicht mitkommt, steht der Hinweis im Kopfkommentar jeder
+Quelle — er darf beim Kopieren nicht entfernt werden.
+
+Der Name „consiness" ist von der Lizenz nicht erfasst: der Code darf übernommen werden, der
+Name nicht weitergeführt.

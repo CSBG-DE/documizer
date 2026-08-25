@@ -589,8 +589,38 @@ Applikationsserver —, über denselben Parser ins Modell, dann die Objekte anle
 | Datenelement | `DDIF_DTEL_PUT` + `DDIF_DTEL_ACTIVATE` | umgesetzt |
 | Tabelle, Struktur | `DDIF_TABL_PUT` + `DDIF_TABL_ACTIVATE` | umgesetzt |
 | Report, Include | `INSERT REPORT … DIRECTORY ENTRY`, `INSERT TEXTPOOL` | umgesetzt |
+| Interface, Klasse | `SEO_*_CREATE_COMPLETE` + `IF_OO_CLIF_SOURCE` | umgesetzt |
+| Funktionsgruppe, Funktionsbaustein | `RS_FUNCTION_POOL_INSERT`, `RPY_FUNCTIONMODULE_INSERT` | umgesetzt |
 | Objektdokumentation | `DOCU_UPDATE` | umgesetzt für Report und Datenelement |
-| View, CDS, Klasse, Interface, Funktionsgruppe | — | offen, siehe 9 |
+| View, CDS-Quelle | — | offen, siehe 9 |
+
+**Klassen und Interfaces** wandern als **quelltextbasierte Fassung** — der eine Text, den SE24
+und ADT zeigen, mit Definition und Implementierung zusammen. Gelesen und geschrieben wird er
+über `CL_OO_FACTORY` und `IF_OO_CLIF_SOURCE`. Der Weg über die generierten Includes des
+Klassenpools führt nicht zum Ziel: aus ihnen lässt sich keine Klasse rekonstruieren. Der Kopf
+(`VSEOCLASS` bzw. `VSEOINTERF`) reist getrennt mit; Autor, Änderungsdatum und **UUID** bleiben
+dabei im Quellsystem — die UUID kennzeichnet genau diese eine Klasse, eine Kopie unter anderem
+Namen dürfte sie nicht führen.
+
+**Funktionsgruppen** bestehen aus mehr als einem Quelltext, deshalb trägt im XML jede Zeile
+ihren eigenen `<src>`: das TOP-Include und alle selbst geschriebenen Includes, dazu je
+Funktionsbaustein der Rumpf. Die Includes, die beim Anlegen der Bausteine entstehen
+(`L…U01`, `L…UXX`), werden beim Export übergangen — sonst entstünden sie beim Import zweimal.
+Die Schnittstelle kommt aus `RPY_FUNCTIONMODULE_READ` in genau den Strukturen, die
+`RPY_FUNCTIONMODULE_INSERT` annimmt; da diese kein Feld für den Bausteinnamen haben, bindet
+ein zusätzliches Attribut `_FUNC` sie an ihren Baustein.
+
+Ein Detail, das beim Testen auffiel: `RPY_FUNCTIONMODULE_READ` liefert den **ganzen** Include
+samt `FUNCTION`-Anweisung, Schnittstellenkommentar und `ENDFUNCTION`, während
+`RPY_FUNCTIONMODULE_INSERT` diese drei selbst erzeugt und nur den Rumpf erwartet. Der Importer
+schneidet sie deshalb ab; ohne das steht am Ende zweimal `ENDFUNCTION`.
+
+**Aktivierung.** DDIC-Objekte aktivieren ihre eigenen `DDIF_*_ACTIVATE`. Für Klassen und
+Funktionsgruppen dient `RS_WORKING_OBJECTS_ACTIVATE` — und zwar mit einer Liste, die der
+Importer selbst zusammenstellt: aus den inaktiven Objekten des Benutzers werden nur die
+genommen, die zum eben geschriebenen Objekt gehören. Die Liste der inaktiven Objekte enthält
+im Regelfall angefangene Arbeit dessen, der den Import startet; sie pauschal zu aktivieren
+würde fremde halbfertige Stände scharf schalten.
 
 Der Objektkatalogeintrag entsteht über `TR_TADIR_INTERFACE`; bei einem lokalen Paket (`$*`)
 ohne Auftrag, sonst mit dem angegebenen.
@@ -690,12 +720,10 @@ Namensauflösungen gegen `TADIR` laufen gebündelt, nicht mit einem `SELECT SING
 
 1. **Markdown-Ausgabe** — geplant war ATX-Überschriften, Pipe-Tabellen, Codefences mit
    Sprachkennzeichen `abap`. Bisher nur XML und HTML.
-2. **Reimport weiterer Objekttypen** — Domänen, Datenelemente, Tabellen, Strukturen und
-   Programme werden angelegt (siehe 5.6). Offen sind Views, CDS-Quellen, Klassen, Interfaces
-   und Funktionsgruppen. Für Views liegt der Weg mit `DDIF_VIEW_PUT` nahe; bei Klassen und
-   Funktionsgruppen reicht der heutige Export nicht — er hängt die Includes des Klassenpools
-   aneinander, und daraus lässt sich keine Klasse rekonstruieren. Dafür müssten die
-   `SEO*`-Strukturen bzw. die Bausteinschnittstelle in die Definitionsdaten wandern.
+2. **Reimport von Views und CDS-Quellen** — alles Übrige wird angelegt (siehe 5.6). Für Views
+   liegt `DDIF_VIEW_PUT` nahe, samt `DD25V`/`DD26V`/`DD27P`. CDS-Quellen haben keinen
+   entsprechenden Funktionsbaustein; dort führt der Weg über `CL_DD_DDL_HANDLER`, was eine
+   engere Bindung an interne API bedeutet als alles bisher Verwendete.
 3. **Sekundärindizes beim Reimport** — `DDIF_TABL_GET` liefert `DD12V`/`DD17V`, `DDIF_TABL_PUT`
    nimmt sie nicht an. Für Indizes wäre `DDIF_INDX_PUT` nötig.
 4. **Anzeigen ohne Anlegen** — eine XML-Datei nur einlesen und nach HTML rendern, ohne

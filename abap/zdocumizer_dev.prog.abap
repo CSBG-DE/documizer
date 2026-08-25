@@ -129,11 +129,20 @@ TYPES ty_attrs TYPE STANDARD TABLE OF ty_attr WITH EMPTY KEY.
 
 * A repeating part of a definition: the fields of a table, the fixed
 * values of a domain, the parameters of a function module. TAG says which.
+*
+* SRC carries source belonging to that one row - a function group has an
+* include and a body per function module, and one source per definition
+* would not be enough. It has to be an element of its own, never an
+* attribute: XML normalises line breaks inside an attribute value away.
 TYPES: BEGIN OF ty_defrow,
          tag   TYPE string,
          attrs TYPE ty_attrs,
+         src   TYPE string,
        END OF ty_defrow.
 TYPES ty_defrows TYPE STANDARD TABLE OF ty_defrow WITH EMPTY KEY.
+
+* Source as the ABAP statements want it: fixed-length lines.
+TYPES ty_code TYPE STANDARD TABLE OF char255 WITH EMPTY KEY.
 
 * A repository object the report can document. TYPE is the TADIR object
 * type, plus the pseudo type FUNC for a single function module - that one
@@ -687,6 +696,11 @@ CLASS lcl_renderer_xml IMPLEMENTATION.
           mo_writer->write_attribute( name = 'value' value = ls_ra-value ).
           mo_writer->close_element( ).
         ENDLOOP.
+        IF ls_dr-src IS NOT INITIAL.
+          mo_writer->open_element( name = 'src' ).
+          mo_writer->write_value( ls_dr-src ).
+          mo_writer->close_element( ).
+        ENDIF.
         mo_writer->close_element( ).
       ENDLOOP.
       IF io_chapter->get_defsource( ) IS NOT INITIAL.
@@ -838,6 +852,9 @@ CLASS lcl_parser_xml IMPLEMENTATION.
             WHEN 'defsource'.
               lv_target = 'defsource'.
 
+            WHEN 'src'.
+              lv_target = 'src'.
+
             WHEN 'definition'.
               CLEAR: lv_defkind, lt_defhead, ls_defrow, lv_inrow.
               LOOP AT lt_attr INTO lo_attr.
@@ -953,6 +970,8 @@ CLASS lcl_parser_xml IMPLEMENTATION.
                 IF lo_current IS BOUND.
                   lo_current->set_defsource( lv_value ).
                 ENDIF.
+              WHEN 'src'.
+                ls_defrow-src = lv_value.
             ENDCASE.
           ENDIF.
 
@@ -1062,9 +1081,32 @@ CLASS lcl_importer DEFINITION.
                                iv_name    TYPE string.
     METHODS put_prog IMPORTING io_chapter TYPE REF TO lcl_chapter
                                iv_name    TYPE string.
+    METHODS put_clif IMPORTING io_chapter TYPE REF TO lcl_chapter
+                               iv_kind    TYPE string
+                               iv_name    TYPE string.
+    METHODS put_fugr IMPORTING io_chapter TYPE REF TO lcl_chapter
+                               iv_name    TYPE string.
+    METHODS put_func IMPORTING io_chapter TYPE REF TO lcl_chapter
+                               is_row     TYPE ty_defrow
+                               iv_area    TYPE string.
     METHODS put_docu IMPORTING io_chapter TYPE REF TO lcl_chapter
                                iv_kind    TYPE string
                                iv_name    TYPE string.
+*   Source of one row or of the whole definition as a line table.
+    METHODS to_lines
+      IMPORTING iv_source       TYPE string
+      RETURNING VALUE(rt_lines) TYPE ty_code.
+    METHODS activate
+      IMPORTING iv_object TYPE trobjtype
+                iv_name   TYPE string
+      RETURNING VALUE(rv_ok) TYPE abap_bool.
+    METHODS prefix
+      IMPORTING iv_text        TYPE string
+                iv_pref        TYPE string
+      RETURNING VALUE(rv_flag) TYPE abap_bool.
+    METHODS func_body
+      IMPORTING iv_source       TYPE string
+      RETURNING VALUE(rt_lines) TYPE string_table.
 ENDCLASS.
 
 CLASS lcl_importer IMPLEMENTATION.
@@ -1115,6 +1157,11 @@ CLASS lcl_importer IMPLEMENTATION.
         WHEN 'DTEL'. put_dtel( io_chapter = ls_work-chapter iv_name = ls_work-name ).
         WHEN 'TABL'. put_tabl( io_chapter = ls_work-chapter iv_name = ls_work-name ).
         WHEN 'PROG'. put_prog( io_chapter = ls_work-chapter iv_name = ls_work-name ).
+        WHEN 'CLAS' OR 'INTF'.
+          put_clif( io_chapter = ls_work-chapter
+                    iv_kind    = ls_work-kind
+                    iv_name    = ls_work-name ).
+        WHEN 'FUGR'. put_fugr( io_chapter = ls_work-chapter iv_name = ls_work-name ).
       ENDCASE.
     ENDLOOP.
 
@@ -1130,6 +1177,11 @@ CLASS lcl_importer IMPLEMENTATION.
         WHEN 'DTEL'. lv_seq = 2.
         WHEN 'TABL'. lv_seq = 3.
         WHEN 'PROG'. lv_seq = 4.
+*       Interfaces before classes - a class implements them. Function
+*       groups last; their modules tend to use everything above.
+        WHEN 'INTF'. lv_seq = 5.
+        WHEN 'CLAS'. lv_seq = 6.
+        WHEN 'FUGR'. lv_seq = 7.
         WHEN OTHERS. lv_seq = 9.
       ENDCASE.
 
@@ -1142,6 +1194,9 @@ CLASS lcl_importer IMPLEMENTATION.
         WHEN 'DTEL'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'ROLLNAME' ).
         WHEN 'TABL'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'TABNAME' ).
         WHEN 'PROG'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'NAME' ).
+        WHEN 'CLAS' OR 'INTF'.
+          lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'CLSNAME' ).
+        WHEN 'FUGR'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'AREA' ).
       ENDCASE.
 
       IF lv_name IS NOT INITIAL AND lv_seq < 9.
@@ -1178,8 +1233,156 @@ CLASS lcl_importer IMPLEMENTATION.
         lv_prg = iv_name.
         SELECT SINGLE @abap_true FROM trdir
           WHERE name = @lv_prg INTO @rv_flag.
+      WHEN 'CLAS' OR 'INTF'.
+        DATA lv_cls TYPE seoclsname.
+        lv_cls = iv_name.
+        SELECT SINGLE @abap_true FROM seoclass
+          WHERE clsname = @lv_cls INTO @rv_flag.
+      WHEN 'FUGR'.
+        DATA lv_are TYPE rs38l-area.
+        lv_are = iv_name.
+        SELECT SINGLE @abap_true FROM tlibg
+          WHERE area = @lv_are INTO @rv_flag.
     ENDCASE.
 
+  ENDMETHOD.
+
+  METHOD to_lines.
+
+    DATA lt_str TYPE STANDARD TABLE OF string WITH EMPTY KEY.
+
+    SPLIT iv_source AT cl_abap_char_utilities=>newline INTO TABLE lt_str.
+    LOOP AT lt_str INTO DATA(lv_line).
+      APPEND CONV char255( lv_line ) TO rt_lines.
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD activate.
+
+    DATA lt_all  TYPE STANDARD TABLE OF dwinactiv WITH EMPTY KEY.
+    DATA lt_obj  TYPE STANDARD TABLE OF dwinactiv WITH EMPTY KEY.
+    DATA lv_keep TYPE abap_bool.
+    DATA lv_main TYPE progname.
+
+*   Only the parts that belong to the object just written. The list of
+*   inactive objects is per user and regularly holds unfinished work of
+*   the person running the import - activating all of it would push
+*   someone else's half-finished class into the active version.
+    SELECT * FROM dwinactiv WHERE uname = @sy-uname INTO TABLE @lt_all.
+    IF lt_all IS INITIAL.
+      rv_ok = abap_true.
+      RETURN.
+    ENDIF.
+
+    IF iv_object = 'FUGR'.
+      lv_main = |SAPL{ iv_name }|.
+      SELECT funcname FROM tfdir WHERE pname = @lv_main
+        INTO TABLE @DATA(lt_fn).
+    ENDIF.
+
+    LOOP AT lt_all INTO DATA(ls_in).
+      CLEAR lv_keep.
+      CASE iv_object.
+        WHEN 'CLAS' OR 'INTF'.
+*         The parts of a class carry the class name padded with equals
+*         signs, so a prefix test catches them all.
+          lv_keep = prefix( iv_text = CONV string( ls_in-obj_name )
+                            iv_pref = iv_name ).
+        WHEN 'PROG'.
+          IF ls_in-obj_name = iv_name.
+            lv_keep = abap_true.
+          ENDIF.
+        WHEN 'FUGR'.
+          IF prefix( iv_text = CONV string( ls_in-obj_name )
+                     iv_pref = |SAPL{ iv_name }| ) = abap_true
+             OR prefix( iv_text = CONV string( ls_in-obj_name )
+                        iv_pref = |L{ iv_name }| ) = abap_true.
+            lv_keep = abap_true.
+          ELSEIF ls_in-object = 'FUNC'.
+            READ TABLE lt_fn TRANSPORTING NO FIELDS
+                 WITH KEY funcname = ls_in-obj_name.
+            IF sy-subrc = 0.
+              lv_keep = abap_true.
+            ENDIF.
+          ENDIF.
+      ENDCASE.
+      IF lv_keep = abap_true.
+        APPEND ls_in TO lt_obj.
+      ENDIF.
+    ENDLOOP.
+
+    IF lt_obj IS INITIAL.
+*     Nothing inactive - the write went straight into the active version.
+      rv_ok = abap_true.
+      RETURN.
+    ENDIF.
+
+    CALL FUNCTION 'RS_WORKING_OBJECTS_ACTIVATE'
+      EXPORTING  activate_ddic_objects  = abap_false
+                 with_popup             = abap_false
+                 suppress_corr_insert   = abap_true
+      TABLES     objects                = lt_obj
+      EXCEPTIONS excecution_error       = 1
+                 cancelled              = 2
+                 insert_into_corr_error = 3
+                 OTHERS                 = 4.
+    IF sy-subrc = 0.
+      rv_ok = abap_true.
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD func_body.
+
+*   RPY_FUNCTIONMODULE_READ hands out the whole include: the FUNCTION
+*   statement, the interface as a comment block, the body and
+*   ENDFUNCTION. RPY_FUNCTIONMODULE_INSERT writes those three itself and
+*   wants the body alone - given the whole thing, the module ends up with
+*   two ENDFUNCTION statements.
+    DATA lt_all TYPE STANDARD TABLE OF string WITH EMPTY KEY.
+    DATA lv_up  TYPE string.
+    DATA lv_beg TYPE i.
+    DATA lv_end TYPE i.
+
+    SPLIT iv_source AT cl_abap_char_utilities=>newline INTO TABLE lt_all.
+    lv_end = lines( lt_all ).
+
+    LOOP AT lt_all INTO DATA(lv_line).
+      lv_up = to_upper( lv_line ).
+      SHIFT lv_up LEFT DELETING LEADING space.
+      IF lv_beg = 0 AND lv_up CP 'FUNCTION *'.
+        lv_beg = sy-tabix.
+      ELSEIF lv_up CP 'ENDFUNCTION*'.
+        lv_end = sy-tabix - 1.
+      ENDIF.
+    ENDLOOP.
+
+*   Everything up to and including FUNCTION, plus the comment block that
+*   documents the interface right after it.
+    IF lv_beg > 0.
+      LOOP AT lt_all INTO lv_line FROM lv_beg + 1.
+        lv_up = lv_line.
+        SHIFT lv_up LEFT DELETING LEADING space.
+        IF lv_up(2) = '*"'.
+          lv_beg = sy-tabix.
+        ELSE.
+          EXIT.
+        ENDIF.
+      ENDLOOP.
+    ENDIF.
+
+    LOOP AT lt_all INTO lv_line FROM lv_beg + 1 TO lv_end.
+      APPEND lv_line TO rt_lines.
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD prefix.
+    IF strlen( iv_text ) >= strlen( iv_pref )
+       AND substring( val = iv_text len = strlen( iv_pref ) ) = iv_pref.
+      rv_flag = abap_true.
+    ENDIF.
   ENDMETHOD.
 
   METHOD tadir.
@@ -1590,6 +1793,372 @@ CLASS lcl_importer IMPLEMENTATION.
                              ELSE lcl_t=>ui( d = `angelegt` e = `created` ) )
          iv_text   = |{ lines( lt_code ) } { lcl_t=>ui( d = `Zeilen` e = `lines` ) }| ).
     put_docu( io_chapter = io_chapter iv_kind = 'PROG' iv_name = iv_name ).
+
+  ENDMETHOD.
+
+  METHOD put_clif.
+
+    DATA ls_class TYPE vseoclass.
+    DATA ls_intf  TYPE vseointerf.
+    DATA lv_corr  TYPE trkorr.
+    DATA lt_src   TYPE rswsourcet.
+    DATA lv_obj   TYPE trobjtype.
+
+    DATA(lv_ex) = exists( iv_kind = iv_kind iv_name = iv_name ).
+    IF lv_ex = abap_true AND mv_over = abap_false.
+      log( iv_kind = iv_kind iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+           iv_text   = lcl_t=>ui( d = `existiert bereits` e = `already exists` ) ).
+      RETURN.
+    ENDIF.
+
+    DATA(lv_source) = io_chapter->get_defsource( ).
+    IF lv_source IS INITIAL.
+      log( iv_kind = iv_kind iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `nicht moeglich` e = `not possible` )
+           iv_text   = lcl_t=>ui( d = `kein Quelltext im Dokument`
+                                  e = `no source in the document` ) ).
+      RETURN.
+    ENDIF.
+    SPLIT lv_source AT cl_abap_char_utilities=>newline INTO TABLE lt_src.
+
+    IF mv_test = abap_true.
+      log( iv_kind = iv_kind iv_name = iv_name
+           iv_action = COND #( WHEN lv_ex = abap_true
+                               THEN lcl_t=>ui( d = `wuerde geaendert` e = `would change` )
+                               ELSE lcl_t=>ui( d = `wuerde angelegt` e = `would create` ) )
+           iv_text   = |{ lines( lt_src ) } { lcl_t=>ui( d = `Zeilen` e = `lines` ) }| ).
+      RETURN.
+    ENDIF.
+
+    IF mv_pack NP '$*'.
+      lv_corr = mv_tr.
+    ENDIF.
+
+*   Step one: the shell, so that the class exists in the catalogue and
+*   belongs to a package. Step two writes the source into it.
+    IF iv_kind = 'CLAS'.
+      lv_obj = 'CLAS'.
+      lcl_attr=>to_struct( EXPORTING it_attrs = io_chapter->get_defhead( )
+                           CHANGING  cs_data  = ls_class ).
+*     Who wrote it and when belongs to the source system. The UUID too -
+*     it identifies this one class, and a copy under another name that
+*     carried it would be a second object with the same identity.
+      CLEAR: ls_class-author, ls_class-createdon, ls_class-changedby,
+             ls_class-changedon, ls_class-chgdanyby, ls_class-chgdanyon,
+             ls_class-r3release, ls_class-version, ls_class-uuid.
+      ls_class-clsname = iv_name.
+      CALL FUNCTION 'SEO_CLASS_CREATE_COMPLETE'
+        EXPORTING  devclass        = mv_pack
+                   corrnr          = lv_corr
+                   overwrite       = abap_true
+                   suppress_dialog = abap_true
+                   authority_check = abap_false
+        CHANGING   class           = ls_class
+        EXCEPTIONS existing        = 1
+                   is_interface    = 2
+                   db_error        = 3
+                   component_error = 4
+                   no_access       = 5
+                   other           = 6
+                   OTHERS          = 7.
+    ELSE.
+      lv_obj = 'INTF'.
+      lcl_attr=>to_struct( EXPORTING it_attrs = io_chapter->get_defhead( )
+                           CHANGING  cs_data  = ls_intf ).
+      CLEAR: ls_intf-author, ls_intf-createdon, ls_intf-changedby,
+             ls_intf-changedon, ls_intf-r3release, ls_intf-version,
+             ls_intf-uuid.
+      ls_intf-clsname = iv_name.
+      CALL FUNCTION 'SEO_INTERFACE_CREATE_COMPLETE'
+        EXPORTING  devclass        = mv_pack
+                   corrnr          = lv_corr
+                   overwrite       = abap_true
+                   suppress_dialog = abap_true
+                   authority_check = abap_false
+        CHANGING   interface       = ls_intf
+        EXCEPTIONS existing        = 1
+                   is_class        = 2
+                   db_error        = 3
+                   component_error = 4
+                   no_access       = 5
+                   other           = 6
+                   OTHERS          = 7.
+    ENDIF.
+    IF sy-subrc <> 0.
+      log( iv_kind = iv_kind iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+           iv_text   = |SEO_*_CREATE_COMPLETE subrc { sy-subrc }| ).
+      RETURN.
+    ENDIF.
+
+*   Step two: the source-based form, the same text the export read.
+    TRY.
+        DATA(lo_src) = cl_oo_factory=>create_instance( )->create_clif_source(
+          clif_name = CONV seoclsname( iv_name ) ).
+        lo_src->lock( authority_check = abap_false ).
+        lo_src->set_source( lt_src ).
+        lo_src->save( ).
+        lo_src->unlock( ).
+      CATCH cx_root INTO DATA(lx).
+        log( iv_kind = iv_kind iv_name = iv_name
+             iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+             iv_text   = lx->get_text( ) ).
+        RETURN.
+    ENDTRY.
+
+    IF mv_act = abap_true AND activate( iv_object = lv_obj iv_name = iv_name ) = abap_false.
+      log( iv_kind = iv_kind iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `angelegt, inaktiv` e = `created, inactive` )
+           iv_text   = lcl_t=>ui( d = `Aktivierung fehlgeschlagen`
+                                  e = `activation failed` ) ).
+      RETURN.
+    ENDIF.
+
+    log( iv_kind = iv_kind iv_name = iv_name
+         iv_action = COND #( WHEN lv_ex = abap_true
+                             THEN lcl_t=>ui( d = `geaendert` e = `changed` )
+                             ELSE lcl_t=>ui( d = `angelegt` e = `created` ) )
+         iv_text   = |{ lines( lt_src ) } { lcl_t=>ui( d = `Zeilen` e = `lines` ) }| ).
+
+  ENDMETHOD.
+
+  METHOD put_fugr.
+
+    DATA lv_area  TYPE rs38l-area.
+    DATA lv_corr  TYPE e071-trkorr.
+    DATA ls_trdir TYPE trdir.
+    DATA lv_incl  TYPE progname.
+
+    DATA(lv_ex) = exists( iv_kind = 'FUGR' iv_name = iv_name ).
+    IF lv_ex = abap_true AND mv_over = abap_false.
+      log( iv_kind = 'FUGR' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+           iv_text   = lcl_t=>ui( d = `existiert bereits` e = `already exists` ) ).
+      RETURN.
+    ENDIF.
+
+    DATA(lt_rows) = io_chapter->get_defrows( ).
+    DATA(lv_ninc) = REDUCE i( INIT n = 0 FOR r IN lt_rows
+                              NEXT n = COND #( WHEN r-tag = 'INCLUDE' THEN n + 1 ELSE n ) ).
+    DATA(lv_nfun) = REDUCE i( INIT n = 0 FOR r IN lt_rows
+                              NEXT n = COND #( WHEN r-tag = 'FUNC' THEN n + 1 ELSE n ) ).
+
+    IF mv_test = abap_true.
+      log( iv_kind = 'FUGR' iv_name = iv_name
+           iv_action = COND #( WHEN lv_ex = abap_true
+                               THEN lcl_t=>ui( d = `wuerde geaendert` e = `would change` )
+                               ELSE lcl_t=>ui( d = `wuerde angelegt` e = `would create` ) )
+           iv_text   = |{ lv_nfun } { lcl_t=>ui( d = `Bausteine` e = `modules` ) }, | &&
+                       |{ lv_ninc } Includes| ).
+      RETURN.
+    ENDIF.
+
+    IF mv_pack NP '$*'.
+      lv_corr = mv_tr.
+    ENDIF.
+    lv_area = iv_name.
+
+    IF lv_ex = abap_false.
+      DATA lv_text TYPE tftit-stext.
+      lv_text = lcl_attr=>value( it_attrs = io_chapter->get_defhead( )
+                                 iv_name  = 'SHORT_TEXT' ).
+      CALL FUNCTION 'RS_FUNCTION_POOL_INSERT'
+        EXPORTING  function_pool           = lv_area
+                   short_text              = lv_text
+                   devclass                = mv_pack
+                   corrnum                 = lv_corr
+                   suppress_corr_check     = abap_true
+                   suppress_language_check = abap_true
+                   authority_check         = abap_false
+        EXCEPTIONS name_already_exists     = 1
+                   name_not_correct        = 2
+                   function_already_exists = 3
+                   invalid_function_pool   = 4
+                   invalid_name            = 5
+                   too_many_functions      = 6
+                   no_modify_permission    = 7
+                   no_show_permission      = 8
+                   enqueue_system_failure  = 9
+                   canceled_in_corr        = 10
+                   undefined_error         = 11
+                   OTHERS                  = 12.
+      IF sy-subrc <> 0.
+        log( iv_kind = 'FUGR' iv_name = iv_name
+             iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+             iv_text   = |RS_FUNCTION_POOL_INSERT subrc { sy-subrc }| ).
+        RETURN.
+      ENDIF.
+    ENDIF.
+
+*   The includes first: the TOP include holds the global declarations
+*   that the function modules compile against.
+    LOOP AT lt_rows INTO DATA(ls_row) WHERE tag = 'INCLUDE'.
+      lv_incl = lcl_attr=>value( it_attrs = ls_row-attrs iv_name = 'NAME' ).
+      IF lv_incl IS INITIAL OR ls_row-src IS INITIAL.
+        CONTINUE.
+      ENDIF.
+      DATA(lt_code) = to_lines( ls_row-src ).
+      CLEAR ls_trdir.
+      ls_trdir-name = lv_incl.
+      ls_trdir-subc = 'I'.
+      ls_trdir-fixpt = abap_true.
+      ls_trdir-uccheck = abap_true.
+      INSERT REPORT lv_incl FROM lt_code DIRECTORY ENTRY ls_trdir.
+      IF sy-subrc <> 0.
+        log( iv_kind = 'INCL' iv_name = CONV string( lv_incl )
+             iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+             iv_text   = |INSERT REPORT subrc { sy-subrc }| ).
+      ENDIF.
+    ENDLOOP.
+
+    LOOP AT lt_rows INTO ls_row WHERE tag = 'FUNC'.
+      put_func( io_chapter = io_chapter is_row = ls_row iv_area = iv_name ).
+    ENDLOOP.
+
+    IF mv_act = abap_true AND activate( iv_object = 'FUGR' iv_name = iv_name ) = abap_false.
+      log( iv_kind = 'FUGR' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `angelegt, inaktiv` e = `created, inactive` )
+           iv_text   = lcl_t=>ui( d = `Aktivierung fehlgeschlagen`
+                                  e = `activation failed` ) ).
+      RETURN.
+    ENDIF.
+
+    log( iv_kind = 'FUGR' iv_name = iv_name
+         iv_action = COND #( WHEN lv_ex = abap_true
+                             THEN lcl_t=>ui( d = `geaendert` e = `changed` )
+                             ELSE lcl_t=>ui( d = `angelegt` e = `created` ) )
+         iv_text   = |{ lv_nfun } { lcl_t=>ui( d = `Bausteine` e = `modules` ) }, | &&
+                     |{ lv_ninc } Includes| ).
+
+  ENDMETHOD.
+
+  METHOD put_func.
+
+    DATA lt_imp TYPE STANDARD TABLE OF rsimp WITH EMPTY KEY.
+    DATA lt_cha TYPE STANDARD TABLE OF rscha WITH EMPTY KEY.
+    DATA lt_exp TYPE STANDARD TABLE OF rsexp WITH EMPTY KEY.
+    DATA lt_tbl TYPE STANDARD TABLE OF rstbl WITH EMPTY KEY.
+    DATA lt_exc TYPE STANDARD TABLE OF rsexc WITH EMPTY KEY.
+    DATA lt_doc TYPE STANDARD TABLE OF rsfdo WITH EMPTY KEY.
+    DATA lt_src TYPE STANDARD TABLE OF rssource WITH EMPTY KEY.
+    DATA ls_imp TYPE rsimp.
+    DATA ls_cha TYPE rscha.
+    DATA ls_exp TYPE rsexp.
+    DATA ls_tbl TYPE rstbl.
+    DATA ls_exc TYPE rsexc.
+    DATA ls_doc TYPE rsfdo.
+    DATA lv_corr TYPE e071-trkorr.
+
+    DATA(lv_func) = lcl_attr=>value( it_attrs = is_row-attrs iv_name = 'FUNCNAME' ).
+    IF lv_func IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    SELECT SINGLE @abap_true FROM tfdir
+      WHERE funcname = @lv_func INTO @DATA(lv_ex).
+    IF lv_ex = abap_true.
+      log( iv_kind = 'FUNC' iv_name = lv_func
+           iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+           iv_text   = lcl_t=>ui( d = `existiert bereits` e = `already exists` ) ).
+      RETURN.
+    ENDIF.
+
+*   Collect the parameter rows that belong to this module.
+    LOOP AT io_chapter->get_defrows( ) INTO DATA(ls_p).
+      IF lcl_attr=>value( it_attrs = ls_p-attrs iv_name = '_FUNC' ) <> lv_func.
+        CONTINUE.
+      ENDIF.
+      CASE ls_p-tag.
+        WHEN 'RSIMP'.
+          CLEAR ls_imp.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_p-attrs CHANGING cs_data = ls_imp ).
+          APPEND ls_imp TO lt_imp.
+        WHEN 'RSCHA'.
+          CLEAR ls_cha.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_p-attrs CHANGING cs_data = ls_cha ).
+          APPEND ls_cha TO lt_cha.
+        WHEN 'RSEXP'.
+          CLEAR ls_exp.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_p-attrs CHANGING cs_data = ls_exp ).
+          APPEND ls_exp TO lt_exp.
+        WHEN 'RSTBL'.
+          CLEAR ls_tbl.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_p-attrs CHANGING cs_data = ls_tbl ).
+          APPEND ls_tbl TO lt_tbl.
+        WHEN 'RSEXC'.
+          CLEAR ls_exc.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_p-attrs CHANGING cs_data = ls_exc ).
+          APPEND ls_exc TO lt_exc.
+        WHEN 'RSFDO'.
+          CLEAR ls_doc.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_p-attrs CHANGING cs_data = ls_doc ).
+          APPEND ls_doc TO lt_doc.
+      ENDCASE.
+    ENDLOOP.
+
+    LOOP AT func_body( is_row-src ) INTO DATA(lv_line).
+      APPEND VALUE rssource( line = lv_line ) TO lt_src.
+    ENDLOOP.
+
+    IF mv_pack NP '$*'.
+      lv_corr = mv_tr.
+    ENDIF.
+
+    DATA lv_fn   TYPE rs38l-name.
+    DATA lv_area TYPE rs38l-area.
+    DATA lv_stxt TYPE tftit-stext.
+    DATA lv_glob TYPE rs38l-global.
+    DATA lv_rem  TYPE rs38l-remote.
+    DATA lv_upd  TYPE rs38l-ukind1.
+    DATA lv_bas  TYPE rs38l-basxml_enabled.
+
+    lv_fn   = lv_func.
+    lv_area = iv_area.
+    lv_stxt = lcl_attr=>value( it_attrs = is_row-attrs iv_name = 'SHORT_TEXT' ).
+    lv_glob = lcl_attr=>value( it_attrs = is_row-attrs iv_name = 'GLOBAL_FLAG' ).
+    lv_rem  = lcl_attr=>value( it_attrs = is_row-attrs iv_name = 'REMOTE_CALL' ).
+    lv_upd  = lcl_attr=>value( it_attrs = is_row-attrs iv_name = 'UPDATE_TASK' ).
+    lv_bas  = lcl_attr=>value( it_attrs = is_row-attrs iv_name = 'BASXML' ).
+
+    CALL FUNCTION 'RPY_FUNCTIONMODULE_INSERT'
+      EXPORTING  funcname                = lv_fn
+                 function_pool           = lv_area
+                 interface_global        = lv_glob
+                 remote_call             = lv_rem
+                 short_text              = lv_stxt
+                 update_task             = lv_upd
+                 remote_basxml_supported = lv_bas
+                 corrnum                 = lv_corr
+                 suppress_corr_check     = abap_true
+      TABLES     import_parameter        = lt_imp
+                 export_parameter        = lt_exp
+                 tables_parameter        = lt_tbl
+                 changing_parameter      = lt_cha
+                 exception_list          = lt_exc
+                 parameter_docu          = lt_doc
+                 source                  = lt_src
+      EXCEPTIONS error_message           = 1
+                 function_already_exists = 2
+                 invalid_function_pool   = 3
+                 invalid_name            = 4
+                 too_many_functions      = 5
+                 no_modify_permission    = 6
+                 no_show_permission      = 7
+                 enqueue_system_failure  = 8
+                 canceled_in_corr        = 9
+                 double_task             = 10
+                 OTHERS                  = 11.
+    IF sy-subrc <> 0.
+      log( iv_kind = 'FUNC' iv_name = lv_func
+           iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+           iv_text   = |RPY_FUNCTIONMODULE_INSERT subrc { sy-subrc }| ).
+      RETURN.
+    ENDIF.
+
+    log( iv_kind = 'FUNC' iv_name = lv_func
+         iv_action = lcl_t=>ui( d = `angelegt` e = `created` )
+         iv_text   = |{ lines( lt_src ) } { lcl_t=>ui( d = `Zeilen` e = `lines` ) }| ).
 
   ENDMETHOD.
 
@@ -2393,6 +2962,26 @@ CLASS lcl_collector_dev DEFINITION.
       IMPORTING iv_name    TYPE sobj_name
                 io_chapter TYPE REF TO lcl_chapter
       RETURNING VALUE(rv_ok) TYPE abap_bool.
+    METHODS def_clif
+      IMPORTING iv_type    TYPE trobjtype
+                iv_name    TYPE sobj_name
+                io_chapter TYPE REF TO lcl_chapter
+      RETURNING VALUE(rv_ok) TYPE abap_bool.
+    METHODS def_fugr
+      IMPORTING iv_name    TYPE sobj_name
+                io_chapter TYPE REF TO lcl_chapter
+      RETURNING VALUE(rv_ok) TYPE abap_bool.
+    METHODS def_func
+      IMPORTING iv_func    TYPE rs38l_fnam
+                io_chapter TYPE REF TO lcl_chapter.
+*   The complete source of a class or interface in its source-based
+*   form - the text SE24 and ADT show, not the generated includes.
+    METHODS clif_source
+      IMPORTING iv_name          TYPE sobj_name
+      RETURNING VALUE(rv_source) TYPE string.
+    METHODS report_source
+      IMPORTING iv_prog          TYPE progname
+      RETURNING VALUE(rv_source) TYPE string.
 
     METHODS read_short_text
       IMPORTING iv_type        TYPE trobjtype
@@ -2587,10 +3176,13 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       WHEN 'DTEL'. lv_ok = def_dtel( iv_name = iv_name io_chapter = io_chapter ).
       WHEN 'TABL'. lv_ok = def_tabl( iv_name = iv_name io_chapter = io_chapter ).
       WHEN 'PROG'. lv_ok = def_prog( iv_name = iv_name io_chapter = io_chapter ).
+      WHEN 'CLAS' OR 'INTF'.
+        lv_ok = def_clif( iv_type = iv_type iv_name = iv_name io_chapter = io_chapter ).
+      WHEN 'FUGR'. lv_ok = def_fugr( iv_name = iv_name io_chapter = io_chapter ).
       WHEN OTHERS.
-*       Views, classes, function groups and CDS sources are described in
-*       the document but cannot be rebuilt from it yet. Saying so is
-*       better than writing half a definition the importer would trip on.
+*       Views and CDS sources are described in the document but cannot be
+*       rebuilt from it yet. Saying so is better than writing half a
+*       definition the importer would trip on.
         RETURN.
     ENDCASE.
 
@@ -2767,6 +3359,272 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     ENDIF.
 
     rv_ok = abap_true.
+
+  ENDMETHOD.
+
+  METHOD clif_source.
+
+*   CL_OO_FACTORY hands out the source-based form of a class - the one
+*   text that carries definition and implementation together. The
+*   generated includes of the class pool would be the other way, and out
+*   of them no class can be rebuilt.
+    DATA lt_src TYPE rswsourcet.
+
+    TRY.
+        DATA(lo_src) = cl_oo_factory=>create_instance( )->create_clif_source(
+          clif_name = CONV seoclsname( iv_name )
+          version   = 'A' ).
+        lo_src->get_source( IMPORTING source = lt_src ).
+      CATCH cx_root.
+        RETURN.
+    ENDTRY.
+
+    LOOP AT lt_src INTO DATA(lv_line).
+      IF sy-tabix = 1.
+        rv_source = lv_line.
+      ELSE.
+        rv_source = |{ rv_source }{ cl_abap_char_utilities=>newline }{ lv_line }|.
+      ENDIF.
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD report_source.
+
+    DATA lt_src TYPE STANDARD TABLE OF string WITH EMPTY KEY.
+
+    READ REPORT iv_prog INTO lt_src.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    LOOP AT lt_src INTO DATA(lv_line).
+      IF sy-tabix = 1.
+        rv_source = lv_line.
+      ELSE.
+        rv_source = |{ rv_source }{ cl_abap_char_utilities=>newline }{ lv_line }|.
+      ENDIF.
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD def_clif.
+
+    DATA ls_class TYPE vseoclass.
+    DATA ls_intf  TYPE vseointerf.
+    DATA lv_clif  TYPE seoclsname.
+
+    lv_clif = iv_name.
+
+    DATA(lv_source) = clif_source( iv_name ).
+    IF lv_source IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    IF iv_type = 'CLAS'.
+      SELECT SINGLE * FROM vseoclass
+        WHERE clsname = @lv_clif AND version = '1' AND langu = @mv_langu
+        INTO @ls_class.
+      IF sy-subrc <> 0.
+*       Without a description in the output language the header is still
+*       needed - take it in the fallback language rather than not at all.
+        SELECT SINGLE * FROM vseoclass
+          WHERE clsname = @lv_clif AND version = '1'
+          INTO @ls_class.
+      ENDIF.
+      IF sy-subrc <> 0.
+        RETURN.
+      ENDIF.
+      io_chapter->set_definition( iv_kind = 'CLAS'
+                                  it_head = lcl_attr=>from_struct( ls_class ) ).
+    ELSE.
+      SELECT SINGLE * FROM vseointerf
+        WHERE clsname = @lv_clif AND version = '1' AND langu = @mv_langu
+        INTO @ls_intf.
+      IF sy-subrc <> 0.
+        SELECT SINGLE * FROM vseointerf
+          WHERE clsname = @lv_clif AND version = '1'
+          INTO @ls_intf.
+      ENDIF.
+      IF sy-subrc <> 0.
+        RETURN.
+      ENDIF.
+      io_chapter->set_definition( iv_kind = 'INTF'
+                                  it_head = lcl_attr=>from_struct( ls_intf ) ).
+    ENDIF.
+
+    io_chapter->set_defsource( lv_source ).
+    rv_ok = abap_true.
+
+  ENDMETHOD.
+
+  METHOD def_fugr.
+
+    DATA lv_area  TYPE rs38l-area.
+    DATA lv_main  TYPE progname.
+    DATA lt_incl  TYPE STANDARD TABLE OF progname.
+    DATA lt_skip  TYPE STANDARD TABLE OF progname WITH EMPTY KEY.
+
+    lv_area = iv_name.
+    lv_main = |SAPL{ iv_name }|.
+
+    SELECT SINGLE areat FROM tlibt
+      WHERE spras = @mv_langu AND area = @lv_area
+      INTO @DATA(lv_text).
+    IF sy-subrc <> 0 AND mv_falb = abap_true.
+      SELECT SINGLE areat FROM tlibt
+        WHERE spras = @mv_flang AND area = @lv_area
+        INTO @lv_text.
+    ENDIF.
+
+    io_chapter->set_definition(
+      iv_kind = 'FUGR'
+      it_head = VALUE ty_attrs(
+        ( name = 'AREA'       value = CONV string( iv_name ) )
+        ( name = 'SHORT_TEXT' value = CONV string( lv_text ) ) ) ).
+
+*   The includes that hold the function modules are generated when the
+*   modules are created; they must not travel as includes as well, or the
+*   import would write them twice and the second write would win.
+    SELECT funcname, include FROM tfdir
+      WHERE pname = @lv_main
+      INTO TABLE @DATA(lt_fdir).
+    LOOP AT lt_fdir INTO DATA(ls_fdir).
+      APPEND |L{ iv_name }U{ ls_fdir-include }| TO lt_skip.
+    ENDLOOP.
+    APPEND |L{ iv_name }UXX| TO lt_skip.
+    APPEND lv_main TO lt_skip.
+
+    CALL FUNCTION 'RS_GET_ALL_INCLUDES'
+      EXPORTING  program      = lv_main
+      TABLES     includetab   = lt_incl
+      EXCEPTIONS not_existent = 1
+                 no_program   = 2
+                 OTHERS       = 3.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    SORT lt_incl BY table_line.
+    LOOP AT lt_incl INTO DATA(lv_incl).
+      READ TABLE lt_skip TRANSPORTING NO FIELDS
+           WITH KEY table_line = lv_incl.
+      IF sy-subrc = 0.
+        CONTINUE.
+      ENDIF.
+      DATA(lv_isrc) = report_source( lv_incl ).
+      IF lv_isrc IS INITIAL.
+        CONTINUE.
+      ENDIF.
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag   = 'INCLUDE'
+        attrs = VALUE ty_attrs( ( name = 'NAME' value = CONV string( lv_incl ) ) )
+        src   = lv_isrc ) ).
+    ENDLOOP.
+
+*   Now the function modules. RPY_FUNCTIONMODULE_READ hands out exactly
+*   what RPY_FUNCTIONMODULE_INSERT takes in.
+    SORT lt_fdir BY funcname.
+    LOOP AT lt_fdir INTO ls_fdir.
+      def_func( iv_func = ls_fdir-funcname io_chapter = io_chapter ).
+    ENDLOOP.
+
+    rv_ok = abap_true.
+
+  ENDMETHOD.
+
+  METHOD def_func.
+
+    DATA lt_imp TYPE STANDARD TABLE OF rsimp WITH EMPTY KEY.
+    DATA lt_cha TYPE STANDARD TABLE OF rscha WITH EMPTY KEY.
+    DATA lt_exp TYPE STANDARD TABLE OF rsexp WITH EMPTY KEY.
+    DATA lt_tbl TYPE STANDARD TABLE OF rstbl WITH EMPTY KEY.
+    DATA lt_exc TYPE STANDARD TABLE OF rsexc WITH EMPTY KEY.
+    DATA lt_doc TYPE STANDARD TABLE OF rsfdo WITH EMPTY KEY.
+    DATA lt_src TYPE STANDARD TABLE OF rssource WITH EMPTY KEY.
+    DATA lv_glob TYPE rs38l-global.
+    DATA lv_rem  TYPE rs38l-remote.
+    DATA lv_upd  TYPE rs38l-utask.
+    DATA lv_bas  TYPE rs38l-basxml_enabled.
+    DATA lv_text TYPE tftit-stext.
+    DATA lv_fn   TYPE rs38l-name.
+
+    lv_fn = iv_func.
+    CALL FUNCTION 'RPY_FUNCTIONMODULE_READ'
+      EXPORTING  functionname            = lv_fn
+      IMPORTING  global_flag             = lv_glob
+                 remote_call             = lv_rem
+                 update_task             = lv_upd
+                 short_text              = lv_text
+                 remote_basxml_supported = lv_bas
+      TABLES     import_parameter        = lt_imp
+                 changing_parameter      = lt_cha
+                 export_parameter        = lt_exp
+                 tables_parameter        = lt_tbl
+                 exception_list          = lt_exc
+                 documentation           = lt_doc
+                 source                  = lt_src
+      EXCEPTIONS error_message           = 1
+                 function_not_found      = 2
+                 invalid_name            = 3
+                 OTHERS                  = 4.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    DATA lv_body TYPE string.
+    LOOP AT lt_src INTO DATA(ls_line).
+      IF sy-tabix = 1.
+        lv_body = ls_line-line.
+      ELSE.
+        lv_body = |{ lv_body }{ cl_abap_char_utilities=>newline }{ ls_line-line }|.
+      ENDIF.
+    ENDLOOP.
+
+    io_chapter->add_defrow( VALUE ty_defrow(
+      tag   = 'FUNC'
+      attrs = VALUE ty_attrs(
+        ( name = 'FUNCNAME'    value = CONV string( iv_func ) )
+        ( name = 'SHORT_TEXT'  value = CONV string( lv_text ) )
+        ( name = 'GLOBAL_FLAG' value = CONV string( lv_glob ) )
+        ( name = 'REMOTE_CALL' value = CONV string( lv_rem ) )
+        ( name = 'UPDATE_TASK' value = CONV string( lv_upd ) )
+        ( name = 'BASXML'      value = CONV string( lv_bas ) ) )
+      src   = lv_body ) ).
+
+*   The parameter structures carry no function module name of their own.
+*   _FUNC ties them back; the importer reads it and hands the rest over
+*   unchanged - an unknown component is skipped there anyway.
+    LOOP AT lt_imp INTO DATA(ls_imp).
+      DATA(lt_a) = lcl_attr=>from_struct( ls_imp ).
+      INSERT VALUE ty_attr( name = '_FUNC' value = iv_func ) INTO lt_a INDEX 1.
+      io_chapter->add_defrow( VALUE ty_defrow( tag = 'RSIMP' attrs = lt_a ) ).
+    ENDLOOP.
+    LOOP AT lt_cha INTO DATA(ls_cha).
+      lt_a = lcl_attr=>from_struct( ls_cha ).
+      INSERT VALUE ty_attr( name = '_FUNC' value = iv_func ) INTO lt_a INDEX 1.
+      io_chapter->add_defrow( VALUE ty_defrow( tag = 'RSCHA' attrs = lt_a ) ).
+    ENDLOOP.
+    LOOP AT lt_exp INTO DATA(ls_exp).
+      lt_a = lcl_attr=>from_struct( ls_exp ).
+      INSERT VALUE ty_attr( name = '_FUNC' value = iv_func ) INTO lt_a INDEX 1.
+      io_chapter->add_defrow( VALUE ty_defrow( tag = 'RSEXP' attrs = lt_a ) ).
+    ENDLOOP.
+    LOOP AT lt_tbl INTO DATA(ls_tbl).
+      lt_a = lcl_attr=>from_struct( ls_tbl ).
+      INSERT VALUE ty_attr( name = '_FUNC' value = iv_func ) INTO lt_a INDEX 1.
+      io_chapter->add_defrow( VALUE ty_defrow( tag = 'RSTBL' attrs = lt_a ) ).
+    ENDLOOP.
+    LOOP AT lt_exc INTO DATA(ls_exc).
+      lt_a = lcl_attr=>from_struct( ls_exc ).
+      INSERT VALUE ty_attr( name = '_FUNC' value = iv_func ) INTO lt_a INDEX 1.
+      io_chapter->add_defrow( VALUE ty_defrow( tag = 'RSEXC' attrs = lt_a ) ).
+    ENDLOOP.
+    LOOP AT lt_doc INTO DATA(ls_doc).
+      lt_a = lcl_attr=>from_struct( ls_doc ).
+      INSERT VALUE ty_attr( name = '_FUNC' value = iv_func ) INTO lt_a INDEX 1.
+      io_chapter->add_defrow( VALUE ty_defrow( tag = 'RSFDO' attrs = lt_a ) ).
+    ENDLOOP.
 
   ENDMETHOD.
 

@@ -112,6 +112,29 @@ TYPES: BEGIN OF ty_reference,
          tcode    TYPE string,   " here: package
        END OF ty_reference.
 
+* The definition of an object, as opposed to its description. Everything
+* above this line serves the reader; what follows serves the reimport
+* into another system and is therefore not translated and not formatted:
+* DDIC field names as they stand, values unchanged.
+*
+* Deliberately generic - name/value instead of one structure per object
+* type. Renderer and parser stay free of type knowledge, and a new object
+* type costs one method in the collector and one in the importer, not a
+* change to the format.
+TYPES: BEGIN OF ty_attr,
+         name  TYPE string,
+         value TYPE string,
+       END OF ty_attr.
+TYPES ty_attrs TYPE STANDARD TABLE OF ty_attr WITH EMPTY KEY.
+
+* A repeating part of a definition: the fields of a table, the fixed
+* values of a domain, the parameters of a function module. TAG says which.
+TYPES: BEGIN OF ty_defrow,
+         tag   TYPE string,
+         attrs TYPE ty_attrs,
+       END OF ty_defrow.
+TYPES ty_defrows TYPE STANDARD TABLE OF ty_defrow WITH EMPTY KEY.
+
 * A repository object the report can document. TYPE is the TADIR object
 * type, plus the pseudo type FUNC for a single function module - that one
 * has no TADIR entry of its own, it belongs to its function group.
@@ -162,7 +185,109 @@ TYPES: BEGIN OF ty_meta,
 TYPES ty_chapters TYPE STANDARD TABLE OF REF TO lcl_chapter WITH EMPTY KEY.
 TYPES ty_objects  TYPE STANDARD TABLE OF REF TO lcl_object  WITH EMPTY KEY.
 
-CONSTANTS gc_version TYPE string VALUE '1.0'.
+* Run protocol of the import: one line per object, in the order in which
+* it was worked on.
+TYPES: BEGIN OF ty_implog_row,
+         kind   TYPE string,
+         name   TYPE string,
+         action TYPE string,
+         text   TYPE string,
+       END OF ty_implog_row.
+TYPES ty_implog TYPE STANDARD TABLE OF ty_implog_row WITH EMPTY KEY.
+
+* Work list of the import. SEQ puts the objects in the order in which
+* they can be activated: what a later object refers to has to exist.
+TYPES: BEGIN OF ty_impwork_row,
+         seq     TYPE i,
+         kind    TYPE string,
+         name    TYPE string,
+         chapter TYPE REF TO lcl_chapter,
+       END OF ty_impwork_row.
+TYPES ty_impwork TYPE STANDARD TABLE OF ty_impwork_row WITH EMPTY KEY.
+
+CONSTANTS gc_version TYPE string VALUE '1.1'.
+
+*----------------------------------------------------------------------*
+* lcl_attr - a DDIC structure as name/value pairs, and back
+*
+* Export and import work on the same structures: what DDIF_TABL_GET
+* hands out is what DDIF_TABL_PUT takes in. Rather than listing the
+* fields of DD02V, DD03P and their kin - and keeping that list in step
+* with two SAP releases - the structure is walked at runtime. A field
+* added by SAP travels along without a change here.
+*
+* Initial fields are left out. The importer starts from an initial
+* structure, so an absent field means the same thing on both sides, and
+* the document stays readable.
+*----------------------------------------------------------------------*
+CLASS lcl_attr DEFINITION.
+  PUBLIC SECTION.
+    CLASS-METHODS from_struct
+      IMPORTING is_data         TYPE any
+      RETURNING VALUE(rt_attrs) TYPE ty_attrs.
+    CLASS-METHODS to_struct
+      IMPORTING it_attrs TYPE ty_attrs
+      CHANGING  cs_data  TYPE any.
+    CLASS-METHODS value
+      IMPORTING it_attrs        TYPE ty_attrs
+                iv_name         TYPE string
+      RETURNING VALUE(rv_value) TYPE string.
+ENDCLASS.
+
+CLASS lcl_attr IMPLEMENTATION.
+
+  METHOD from_struct.
+
+    DATA(lo_type) = cl_abap_typedescr=>describe_by_data( is_data ).
+    IF lo_type->kind <> cl_abap_typedescr=>kind_struct.
+      RETURN.
+    ENDIF.
+
+    LOOP AT CAST cl_abap_structdescr( lo_type )->get_components( )
+         INTO DATA(ls_comp).
+*     Only flat fields. A nested table or structure inside a DDIC
+*     interface structure carries no value the PUT would read back.
+      IF ls_comp-type->kind <> cl_abap_typedescr=>kind_elem.
+        CONTINUE.
+      ENDIF.
+      ASSIGN COMPONENT ls_comp-name OF STRUCTURE is_data
+             TO FIELD-SYMBOL(<lv_val>).
+      IF sy-subrc <> 0 OR <lv_val> IS INITIAL.
+        CONTINUE.
+      ENDIF.
+      APPEND VALUE ty_attr( name  = ls_comp-name
+                            value = |{ <lv_val> }| ) TO rt_attrs.
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD to_struct.
+
+    LOOP AT it_attrs INTO DATA(ls_attr).
+      ASSIGN COMPONENT ls_attr-name OF STRUCTURE cs_data
+             TO FIELD-SYMBOL(<lv_val>).
+*     A field the target release does not know is skipped, not fatal.
+*     That is the whole point of transporting name/value pairs.
+      IF sy-subrc <> 0.
+        CONTINUE.
+      ENDIF.
+      TRY.
+          <lv_val> = ls_attr-value.
+        CATCH cx_root.
+          CLEAR <lv_val>.
+      ENDTRY.
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD value.
+    READ TABLE it_attrs INTO DATA(ls_attr) WITH KEY name = iv_name.
+    IF sy-subrc = 0.
+      rv_value = ls_attr-value.
+    ENDIF.
+  ENDMETHOD.
+
+ENDCLASS.
 
 *----------------------------------------------------------------------*
 * lcl_object
@@ -272,6 +397,22 @@ CLASS lcl_chapter DEFINITION.
     METHODS get_reference     RETURNING VALUE(rs_reference) TYPE ty_reference.
     METHODS get_documentation RETURNING VALUE(rv_text)      TYPE string.
     METHODS has_reference     RETURNING VALUE(rv_flag)      TYPE abap_bool.
+
+*   Definition for the reimport. KIND is the object type the importer
+*   dispatches on; empty means the chapter carries description only.
+    METHODS set_definition
+      IMPORTING iv_kind TYPE string
+                it_head TYPE ty_attrs OPTIONAL.
+    METHODS add_defrow     IMPORTING is_row TYPE ty_defrow.
+*   The source belonging to the definition. Separate from the chapter
+*   source, which the reader sees and which P_MAXSRC may have cut short -
+*   a truncated source is fine to read and useless to import.
+    METHODS set_defsource  IMPORTING iv_source TYPE string.
+    METHODS get_defsource  RETURNING VALUE(rv_source) TYPE string.
+    METHODS get_defkind    RETURNING VALUE(rv_kind) TYPE string.
+    METHODS get_defhead    RETURNING VALUE(rt_head) TYPE ty_attrs.
+    METHODS get_defrows    RETURNING VALUE(rt_rows) TYPE ty_defrows.
+    METHODS has_definition RETURNING VALUE(rv_flag) TYPE abap_bool.
   PRIVATE SECTION.
     DATA mv_id            TYPE string.
     DATA mv_level         TYPE i.
@@ -283,6 +424,10 @@ CLASS lcl_chapter DEFINITION.
     DATA mv_doclang       TYPE string.
     DATA mt_children      TYPE ty_chapters.
     DATA mt_objects       TYPE ty_objects.
+    DATA mv_defkind       TYPE string.
+    DATA mt_defhead       TYPE ty_attrs.
+    DATA mt_defrows       TYPE ty_defrows.
+    DATA mv_defsource     TYPE string.
 ENDCLASS.
 
 CLASS lcl_chapter IMPLEMENTATION.
@@ -345,6 +490,35 @@ CLASS lcl_chapter IMPLEMENTATION.
   ENDMETHOD.
   METHOD has_reference.
     IF ms_reference IS INITIAL.
+      rv_flag = abap_false.
+    ELSE.
+      rv_flag = abap_true.
+    ENDIF.
+  ENDMETHOD.
+  METHOD set_definition.
+    mv_defkind = iv_kind.
+    mt_defhead = it_head.
+  ENDMETHOD.
+  METHOD add_defrow.
+    APPEND is_row TO mt_defrows.
+  ENDMETHOD.
+  METHOD set_defsource.
+    mv_defsource = iv_source.
+  ENDMETHOD.
+  METHOD get_defsource.
+    rv_source = mv_defsource.
+  ENDMETHOD.
+  METHOD get_defkind.
+    rv_kind = mv_defkind.
+  ENDMETHOD.
+  METHOD get_defhead.
+    rt_head = mt_defhead.
+  ENDMETHOD.
+  METHOD get_defrows.
+    rt_rows = mt_defrows.
+  ENDMETHOD.
+  METHOD has_definition.
+    IF mv_defkind IS INITIAL.
       rv_flag = abap_false.
     ELSE.
       rv_flag = abap_true.
@@ -495,6 +669,34 @@ CLASS lcl_renderer_xml IMPLEMENTATION.
       mo_writer->close_element( ).
     ENDIF.
 
+    IF io_chapter->has_definition( ) = abap_true.
+      mo_writer->open_element( name = 'definition' ).
+      mo_writer->write_attribute( name = 'kind' value = io_chapter->get_defkind( ) ).
+      LOOP AT io_chapter->get_defhead( ) INTO DATA(ls_ha).
+        mo_writer->open_element( name = 'attr' ).
+        mo_writer->write_attribute( name = 'name'  value = ls_ha-name ).
+        mo_writer->write_attribute( name = 'value' value = ls_ha-value ).
+        mo_writer->close_element( ).
+      ENDLOOP.
+      LOOP AT io_chapter->get_defrows( ) INTO DATA(ls_dr).
+        mo_writer->open_element( name = 'row' ).
+        mo_writer->write_attribute( name = 'tag' value = ls_dr-tag ).
+        LOOP AT ls_dr-attrs INTO DATA(ls_ra).
+          mo_writer->open_element( name = 'attr' ).
+          mo_writer->write_attribute( name = 'name'  value = ls_ra-name ).
+          mo_writer->write_attribute( name = 'value' value = ls_ra-value ).
+          mo_writer->close_element( ).
+        ENDLOOP.
+        mo_writer->close_element( ).
+      ENDLOOP.
+      IF io_chapter->get_defsource( ) IS NOT INITIAL.
+        mo_writer->open_element( name = 'defsource' ).
+        mo_writer->write_value( io_chapter->get_defsource( ) ).
+        mo_writer->close_element( ).
+      ENDIF.
+      mo_writer->close_element( ).
+    ENDIF.
+
     LOOP AT io_chapter->get_objects( ) INTO DATA(lo_object).
       write_object( lo_object ).
     ENDLOOP.
@@ -554,6 +756,13 @@ CLASS lcl_parser_xml IMPLEMENTATION.
     DATA lo_object  TYPE REF TO lcl_object.
     DATA ls_meta    TYPE ty_meta.
     DATA lv_target  TYPE string.
+
+*   State of the definition element: attributes belong to the current row
+*   while one is open, to the header otherwise.
+    DATA lv_defkind TYPE string.
+    DATA lt_defhead TYPE ty_attrs.
+    DATA ls_defrow  TYPE ty_defrow.
+    DATA lv_inrow   TYPE abap_bool.
 
     ro_document = NEW lcl_document( ).
     lo_reader   = cl_sxml_string_reader=>create( cl_abap_codepage=>convert_to( iv_xml ) ).
@@ -625,6 +834,41 @@ CLASS lcl_parser_xml IMPLEMENTATION.
 
             WHEN 'source'.
               lv_target = 'source'.
+
+            WHEN 'defsource'.
+              lv_target = 'defsource'.
+
+            WHEN 'definition'.
+              CLEAR: lv_defkind, lt_defhead, ls_defrow, lv_inrow.
+              LOOP AT lt_attr INTO lo_attr.
+                IF lo_attr->qname-name = 'kind'.
+                  lv_defkind = lo_attr->get_value( ).
+                ENDIF.
+              ENDLOOP.
+
+            WHEN 'row'.
+              CLEAR ls_defrow.
+              lv_inrow = abap_true.
+              LOOP AT lt_attr INTO lo_attr.
+                IF lo_attr->qname-name = 'tag'.
+                  ls_defrow-tag = lo_attr->get_value( ).
+                ENDIF.
+              ENDLOOP.
+
+            WHEN 'attr'.
+              DATA ls_pair TYPE ty_attr.
+              CLEAR ls_pair.
+              LOOP AT lt_attr INTO lo_attr.
+                CASE lo_attr->qname-name.
+                  WHEN 'name'.  ls_pair-name  = lo_attr->get_value( ).
+                  WHEN 'value'. ls_pair-value = lo_attr->get_value( ).
+                ENDCASE.
+              ENDLOOP.
+              IF lv_inrow = abap_true.
+                APPEND ls_pair TO ls_defrow-attrs.
+              ELSE.
+                APPEND ls_pair TO lt_defhead.
+              ENDIF.
 
             WHEN 'reference'.
               DATA ls_ref TYPE ty_reference.
@@ -705,6 +949,10 @@ CLASS lcl_parser_xml IMPLEMENTATION.
                 IF lo_current IS BOUND.
                   lo_current->set_source( lv_value ).
                 ENDIF.
+              WHEN 'defsource'.
+                IF lo_current IS BOUND.
+                  lo_current->set_defsource( lv_value ).
+                ENDIF.
             ENDCASE.
           ENDIF.
 
@@ -726,6 +974,20 @@ CLASS lcl_parser_xml IMPLEMENTATION.
               ENDIF.
             WHEN 'object'.
               CLEAR lo_object.
+            WHEN 'row'.
+              lv_inrow = abap_false.
+              IF lo_current IS BOUND.
+                lo_current->add_defrow( ls_defrow ).
+              ENDIF.
+              CLEAR ls_defrow.
+            WHEN 'definition'.
+*             Set last: the rows went in one by one, kind and header
+*             close the definition off.
+              IF lo_current IS BOUND.
+                lo_current->set_definition( iv_kind = lv_defkind
+                                            it_head = lt_defhead ).
+              ENDIF.
+              CLEAR: lv_defkind, lt_defhead.
           ENDCASE.
 
           CLEAR lv_target.
@@ -735,6 +997,646 @@ CLASS lcl_parser_xml IMPLEMENTATION.
     ENDDO.
 
     ro_document->set_meta( ls_meta ).
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+*----------------------------------------------------------------------*
+* lcl_importer - the other direction
+*
+* Reads a document that was written in another system and creates the
+* objects it defines. Everything the DDIC needs travels in the same
+* structures the DDIF_*_PUT function modules expect, so the importer
+* only has to fill them and hand them over.
+*
+* Two rules run through the whole class:
+*   - Nothing is written in a test run. The caller has to switch that
+*     off, and every step reports what it would have done.
+*   - An object that already exists is left alone unless overwriting was
+*     asked for. A documentation tool must not quietly replace a table.
+*
+* The order is fixed: domains, then data elements, then tables, then
+* programs. A table whose data elements do not exist yet cannot be
+* activated, and sorting the work is cheaper than retrying it.
+*----------------------------------------------------------------------*
+CLASS lcl_importer DEFINITION.
+  PUBLIC SECTION.
+    METHODS constructor
+      IMPORTING iv_test TYPE abap_bool
+                iv_over TYPE abap_bool
+                iv_act  TYPE abap_bool
+                iv_pack TYPE devclass
+                iv_tr   TYPE trkorr.
+    METHODS run IMPORTING io_document TYPE REF TO lcl_document.
+    METHODS get_log RETURNING VALUE(rt_log) TYPE ty_implog.
+  PRIVATE SECTION.
+    DATA mv_test TYPE abap_bool.
+    DATA mv_over TYPE abap_bool.
+    DATA mv_act  TYPE abap_bool.
+    DATA mv_pack TYPE devclass.
+    DATA mv_tr   TYPE trkorr.
+    DATA mt_log  TYPE ty_implog.
+
+    METHODS collect
+      IMPORTING io_chapter TYPE REF TO lcl_chapter
+      CHANGING  ct_work    TYPE ty_impwork.
+    METHODS log
+      IMPORTING iv_kind   TYPE string
+                iv_name   TYPE string
+                iv_action TYPE string
+                iv_text   TYPE string OPTIONAL.
+    METHODS exists
+      IMPORTING iv_kind        TYPE string
+                iv_name        TYPE string
+      RETURNING VALUE(rv_flag) TYPE abap_bool.
+    METHODS tadir
+      IMPORTING iv_object      TYPE trobjtype
+                iv_name        TYPE sobj_name
+      RETURNING VALUE(rv_ok)   TYPE abap_bool.
+    METHODS put_doma IMPORTING io_chapter TYPE REF TO lcl_chapter
+                               iv_name    TYPE string.
+    METHODS put_dtel IMPORTING io_chapter TYPE REF TO lcl_chapter
+                               iv_name    TYPE string.
+    METHODS put_tabl IMPORTING io_chapter TYPE REF TO lcl_chapter
+                               iv_name    TYPE string.
+    METHODS put_prog IMPORTING io_chapter TYPE REF TO lcl_chapter
+                               iv_name    TYPE string.
+    METHODS put_docu IMPORTING io_chapter TYPE REF TO lcl_chapter
+                               iv_kind    TYPE string
+                               iv_name    TYPE string.
+ENDCLASS.
+
+CLASS lcl_importer IMPLEMENTATION.
+
+  METHOD constructor.
+    mv_test = iv_test.
+    mv_over = iv_over.
+    mv_act  = iv_act.
+    mv_pack = iv_pack.
+    mv_tr   = iv_tr.
+  ENDMETHOD.
+
+  METHOD get_log.
+    rt_log = mt_log.
+  ENDMETHOD.
+
+  METHOD log.
+    APPEND VALUE ty_implog_row( kind   = iv_kind
+                                name   = iv_name
+                                action = iv_action
+                                text   = iv_text ) TO mt_log.
+  ENDMETHOD.
+
+  METHOD run.
+
+    DATA lt_work TYPE ty_impwork.
+
+    LOOP AT io_document->get_chapters( ) INTO DATA(lo_chapter).
+      collect( EXPORTING io_chapter = lo_chapter CHANGING ct_work = lt_work ).
+    ENDLOOP.
+
+    IF lt_work IS INITIAL.
+      log( iv_kind   = ''
+           iv_name   = ''
+           iv_action = lcl_t=>ui( d = `nichts zu tun`
+                                  e = `nothing to do` )
+           iv_text   = lcl_t=>ui( d = `Das Dokument enthaelt keine Definitionsdaten. Beim Export muss "Definitionsdaten fuer Reimport" angehakt sein.`
+                                  e = `The document carries no definition data. The export needs "Definition data for reimport" switched on.` ) ).
+      RETURN.
+    ENDIF.
+
+*   Domains before data elements before tables before programs.
+    SORT lt_work BY seq name.
+
+    LOOP AT lt_work INTO DATA(ls_work).
+      CASE ls_work-kind.
+        WHEN 'DOMA'. put_doma( io_chapter = ls_work-chapter iv_name = ls_work-name ).
+        WHEN 'DTEL'. put_dtel( io_chapter = ls_work-chapter iv_name = ls_work-name ).
+        WHEN 'TABL'. put_tabl( io_chapter = ls_work-chapter iv_name = ls_work-name ).
+        WHEN 'PROG'. put_prog( io_chapter = ls_work-chapter iv_name = ls_work-name ).
+      ENDCASE.
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD collect.
+
+    IF io_chapter->has_definition( ) = abap_true.
+      DATA(lv_kind) = io_chapter->get_defkind( ).
+      DATA lv_seq TYPE i.
+      CASE lv_kind.
+        WHEN 'DOMA'. lv_seq = 1.
+        WHEN 'DTEL'. lv_seq = 2.
+        WHEN 'TABL'. lv_seq = 3.
+        WHEN 'PROG'. lv_seq = 4.
+        WHEN OTHERS. lv_seq = 9.
+      ENDCASE.
+
+*     The name comes from the definition, never from the chapter title -
+*     the title carries the short text as well and is translated.
+      DATA lv_name TYPE string.
+      DATA(lt_head) = io_chapter->get_defhead( ).
+      CASE lv_kind.
+        WHEN 'DOMA'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'DOMNAME' ).
+        WHEN 'DTEL'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'ROLLNAME' ).
+        WHEN 'TABL'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'TABNAME' ).
+        WHEN 'PROG'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'NAME' ).
+      ENDCASE.
+
+      IF lv_name IS NOT INITIAL AND lv_seq < 9.
+        APPEND VALUE ty_impwork_row( seq     = lv_seq
+                                     kind    = lv_kind
+                                     name    = lv_name
+                                     chapter = io_chapter ) TO ct_work.
+      ENDIF.
+    ENDIF.
+
+    LOOP AT io_chapter->get_children( ) INTO DATA(lo_child).
+      collect( EXPORTING io_chapter = lo_child CHANGING ct_work = ct_work ).
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD exists.
+
+    DATA lv_obj TYPE ddobjname.
+    DATA lv_prg TYPE progname.
+
+    lv_obj = iv_name.
+    CASE iv_kind.
+      WHEN 'DOMA'.
+        SELECT SINGLE @abap_true FROM dd01l
+          WHERE domname = @lv_obj AND as4local = 'A' INTO @rv_flag.
+      WHEN 'DTEL'.
+        SELECT SINGLE @abap_true FROM dd04l
+          WHERE rollname = @lv_obj AND as4local = 'A' INTO @rv_flag.
+      WHEN 'TABL'.
+        SELECT SINGLE @abap_true FROM dd02l
+          WHERE tabname = @lv_obj AND as4local = 'A' INTO @rv_flag.
+      WHEN 'PROG'.
+        lv_prg = iv_name.
+        SELECT SINGLE @abap_true FROM trdir
+          WHERE name = @lv_prg INTO @rv_flag.
+    ENDCASE.
+
+  ENDMETHOD.
+
+  METHOD tadir.
+
+*   $TMP and the other local packages carry no transport, and asking the
+*   correction system for one there ends in a dialog nobody sees.
+    DATA lv_corr TYPE trkorr.
+    IF mv_pack CP '$*'.
+      CLEAR lv_corr.
+    ELSE.
+      lv_corr = mv_tr.
+    ENDIF.
+
+    CALL FUNCTION 'TR_TADIR_INTERFACE'
+      EXPORTING  wi_test_modus                  = abap_false
+                 wi_tadir_pgmid                 = 'R3TR'
+                 wi_tadir_object                = iv_object
+                 wi_tadir_obj_name              = iv_name
+                 wi_tadir_devclass              = mv_pack
+                 wi_tadir_masterlang            = sy-langu
+                 iv_set_genflag                 = abap_false
+                 wi_tadir_srcsystem             = sy-sysid
+                 iv_korrnum                     = lv_corr
+      EXCEPTIONS tadir_entry_not_existing       = 1
+                 tadir_entry_ill_type           = 2
+                 no_systemname                  = 3
+                 no_systemtype                  = 4
+                 original_system_conflict       = 5
+                 object_reserved_for_devclass   = 6
+                 object_exists_global           = 7
+                 object_exists_local            = 8
+                 object_is_distributed          = 9
+                 obj_specification_not_unique   = 10
+                 no_authorization_to_delete     = 11
+                 devclass_not_existing          = 12
+                 simultanious_set_remove_repair = 13
+                 order_missing                  = 14
+                 no_modification_of_head_syst   = 15
+                 pgmid_object_not_allowed       = 16
+                 masterlanguage_not_specified   = 17
+                 devclass_not_specified         = 18
+                 specify_owner_unique           = 19
+                 loc_priv_objs_no_repair        = 20
+                 gtadir_not_reached             = 21
+                 object_locked_for_order        = 22
+                 change_of_class_not_allowed    = 23
+                 no_change_from_sap_to_tmp      = 24
+                 OTHERS                         = 25.
+    IF sy-subrc = 0.
+      rv_ok = abap_true.
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD put_doma.
+
+    DATA ls_dd01v TYPE dd01v.
+    DATA lt_dd07v TYPE STANDARD TABLE OF dd07v WITH EMPTY KEY.
+    DATA ls_dd07v TYPE dd07v.
+    DATA lv_obj   TYPE ddobjname.
+    DATA lv_rc    TYPE sy-subrc.
+
+    DATA(lv_ex) = exists( iv_kind = 'DOMA' iv_name = iv_name ).
+    IF lv_ex = abap_true AND mv_over = abap_false.
+      log( iv_kind = 'DOMA' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+           iv_text   = lcl_t=>ui( d = `existiert bereits` e = `already exists` ) ).
+      RETURN.
+    ENDIF.
+
+    lcl_attr=>to_struct( EXPORTING it_attrs = io_chapter->get_defhead( )
+                         CHANGING  cs_data  = ls_dd01v ).
+    LOOP AT io_chapter->get_defrows( ) INTO DATA(ls_row) WHERE tag = 'DD07V'.
+      CLEAR ls_dd07v.
+      lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs
+                           CHANGING  cs_data  = ls_dd07v ).
+      APPEND ls_dd07v TO lt_dd07v.
+    ENDLOOP.
+
+    IF mv_test = abap_true.
+      log( iv_kind = 'DOMA' iv_name = iv_name
+           iv_action = COND #( WHEN lv_ex = abap_true
+                               THEN lcl_t=>ui( d = `wuerde geaendert` e = `would change` )
+                               ELSE lcl_t=>ui( d = `wuerde angelegt` e = `would create` ) )
+           iv_text   = |{ ls_dd01v-datatype } { ls_dd01v-leng }, | &&
+                       |{ lines( lt_dd07v ) } | &&
+                       |{ lcl_t=>ui( d = `Festwerte` e = `fixed values` ) }| ).
+      RETURN.
+    ENDIF.
+
+    lv_obj = iv_name.
+    CALL FUNCTION 'DDIF_DOMA_PUT'
+      EXPORTING  name              = lv_obj
+                 dd01v_wa          = ls_dd01v
+      TABLES     dd07v_tab         = lt_dd07v
+      EXCEPTIONS doma_not_found    = 1
+                 name_inconsistent = 2
+                 doma_inconsistent = 3
+                 put_refused       = 4
+                 OTHERS            = 5.
+    IF sy-subrc <> 0.
+      log( iv_kind = 'DOMA' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+           iv_text   = |DDIF_DOMA_PUT subrc { sy-subrc }| ).
+      RETURN.
+    ENDIF.
+
+    tadir( iv_object = 'DOMA' iv_name = CONV sobj_name( iv_name ) ).
+
+    IF mv_act = abap_true.
+      CALL FUNCTION 'DDIF_DOMA_ACTIVATE'
+        EXPORTING  name        = lv_obj
+                   auth_chk    = abap_false
+        IMPORTING  rc          = lv_rc
+        EXCEPTIONS not_found   = 1
+                   put_failure = 2
+                   OTHERS      = 3.
+      IF sy-subrc <> 0 OR lv_rc > 0.
+        log( iv_kind = 'DOMA' iv_name = iv_name
+             iv_action = lcl_t=>ui( d = `angelegt, inaktiv` e = `created, inactive` )
+             iv_text   = |DDIF_DOMA_ACTIVATE rc { lv_rc }| ).
+        RETURN.
+      ENDIF.
+    ENDIF.
+
+    log( iv_kind = 'DOMA' iv_name = iv_name
+         iv_action = COND #( WHEN lv_ex = abap_true
+                             THEN lcl_t=>ui( d = `geaendert` e = `changed` )
+                             ELSE lcl_t=>ui( d = `angelegt` e = `created` ) ) ).
+    put_docu( io_chapter = io_chapter iv_kind = 'DOMA' iv_name = iv_name ).
+
+  ENDMETHOD.
+
+  METHOD put_dtel.
+
+    DATA ls_dd04v TYPE dd04v.
+    DATA lv_obj   TYPE ddobjname.
+    DATA lv_rc    TYPE sy-subrc.
+
+    DATA(lv_ex) = exists( iv_kind = 'DTEL' iv_name = iv_name ).
+    IF lv_ex = abap_true AND mv_over = abap_false.
+      log( iv_kind = 'DTEL' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+           iv_text   = lcl_t=>ui( d = `existiert bereits` e = `already exists` ) ).
+      RETURN.
+    ENDIF.
+
+    lcl_attr=>to_struct( EXPORTING it_attrs = io_chapter->get_defhead( )
+                         CHANGING  cs_data  = ls_dd04v ).
+
+    IF mv_test = abap_true.
+      log( iv_kind = 'DTEL' iv_name = iv_name
+           iv_action = COND #( WHEN lv_ex = abap_true
+                               THEN lcl_t=>ui( d = `wuerde geaendert` e = `would change` )
+                               ELSE lcl_t=>ui( d = `wuerde angelegt` e = `would create` ) )
+           iv_text   = COND #( WHEN ls_dd04v-domname IS NOT INITIAL
+                               THEN |{ lcl_t=>ui( d = `Domaene` e = `domain` ) } { ls_dd04v-domname }|
+                               ELSE |{ ls_dd04v-datatype } { ls_dd04v-leng }| ) ).
+      RETURN.
+    ENDIF.
+
+    lv_obj = iv_name.
+    CALL FUNCTION 'DDIF_DTEL_PUT'
+      EXPORTING  name              = lv_obj
+                 dd04v_wa          = ls_dd04v
+      EXCEPTIONS dtel_not_found    = 1
+                 name_inconsistent = 2
+                 dtel_inconsistent = 3
+                 put_refused       = 4
+                 OTHERS            = 5.
+    IF sy-subrc <> 0.
+      log( iv_kind = 'DTEL' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+           iv_text   = |DDIF_DTEL_PUT subrc { sy-subrc }| ).
+      RETURN.
+    ENDIF.
+
+    tadir( iv_object = 'DTEL' iv_name = CONV sobj_name( iv_name ) ).
+
+    IF mv_act = abap_true.
+      CALL FUNCTION 'DDIF_DTEL_ACTIVATE'
+        EXPORTING  name        = lv_obj
+                   auth_chk    = abap_false
+        IMPORTING  rc          = lv_rc
+        EXCEPTIONS not_found   = 1
+                   put_failure = 2
+                   OTHERS      = 3.
+      IF sy-subrc <> 0 OR lv_rc > 0.
+        log( iv_kind = 'DTEL' iv_name = iv_name
+             iv_action = lcl_t=>ui( d = `angelegt, inaktiv` e = `created, inactive` )
+             iv_text   = |DDIF_DTEL_ACTIVATE rc { lv_rc }| ).
+        RETURN.
+      ENDIF.
+    ENDIF.
+
+    log( iv_kind = 'DTEL' iv_name = iv_name
+         iv_action = COND #( WHEN lv_ex = abap_true
+                             THEN lcl_t=>ui( d = `geaendert` e = `changed` )
+                             ELSE lcl_t=>ui( d = `angelegt` e = `created` ) ) ).
+    put_docu( io_chapter = io_chapter iv_kind = 'DTEL' iv_name = iv_name ).
+
+  ENDMETHOD.
+
+  METHOD put_tabl.
+
+    DATA ls_dd02v TYPE dd02v.
+    DATA ls_dd09v TYPE dd09v.
+    DATA lt_dd03p TYPE STANDARD TABLE OF dd03p WITH EMPTY KEY.
+    DATA lt_dd05m TYPE STANDARD TABLE OF dd05m WITH EMPTY KEY.
+    DATA lt_dd08v TYPE STANDARD TABLE OF dd08v WITH EMPTY KEY.
+    DATA lt_dd35v TYPE STANDARD TABLE OF dd35v WITH EMPTY KEY.
+    DATA lt_dd36m TYPE STANDARD TABLE OF dd36m WITH EMPTY KEY.
+    DATA ls_dd03p TYPE dd03p.
+    DATA ls_dd05m TYPE dd05m.
+    DATA ls_dd08v TYPE dd08v.
+    DATA ls_dd35v TYPE dd35v.
+    DATA ls_dd36m TYPE dd36m.
+    DATA lv_obj   TYPE ddobjname.
+    DATA lv_rc    TYPE sy-subrc.
+
+    DATA(lv_ex) = exists( iv_kind = 'TABL' iv_name = iv_name ).
+    IF lv_ex = abap_true AND mv_over = abap_false.
+      log( iv_kind = 'TABL' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+           iv_text   = lcl_t=>ui( d = `existiert bereits` e = `already exists` ) ).
+      RETURN.
+    ENDIF.
+
+    lcl_attr=>to_struct( EXPORTING it_attrs = io_chapter->get_defhead( )
+                         CHANGING  cs_data  = ls_dd02v ).
+
+    LOOP AT io_chapter->get_defrows( ) INTO DATA(ls_row).
+      CASE ls_row-tag.
+        WHEN 'DD09V'.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs
+                               CHANGING  cs_data  = ls_dd09v ).
+        WHEN 'DD03P'.
+          CLEAR ls_dd03p.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs
+                               CHANGING  cs_data  = ls_dd03p ).
+          APPEND ls_dd03p TO lt_dd03p.
+        WHEN 'DD05M'.
+          CLEAR ls_dd05m.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs
+                               CHANGING  cs_data  = ls_dd05m ).
+          APPEND ls_dd05m TO lt_dd05m.
+        WHEN 'DD08V'.
+          CLEAR ls_dd08v.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs
+                               CHANGING  cs_data  = ls_dd08v ).
+          APPEND ls_dd08v TO lt_dd08v.
+        WHEN 'DD35V'.
+          CLEAR ls_dd35v.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs
+                               CHANGING  cs_data  = ls_dd35v ).
+          APPEND ls_dd35v TO lt_dd35v.
+        WHEN 'DD36M'.
+          CLEAR ls_dd36m.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs
+                               CHANGING  cs_data  = ls_dd36m ).
+          APPEND ls_dd36m TO lt_dd36m.
+      ENDCASE.
+    ENDLOOP.
+
+    IF mv_test = abap_true.
+      log( iv_kind = 'TABL' iv_name = iv_name
+           iv_action = COND #( WHEN lv_ex = abap_true
+                               THEN lcl_t=>ui( d = `wuerde geaendert` e = `would change` )
+                               ELSE lcl_t=>ui( d = `wuerde angelegt` e = `would create` ) )
+           iv_text   = |{ ls_dd02v-tabclass }, { lines( lt_dd03p ) } | &&
+                       |{ lcl_t=>ui( d = `Felder` e = `fields` ) }| ).
+      RETURN.
+    ENDIF.
+
+    lv_obj = iv_name.
+    CALL FUNCTION 'DDIF_TABL_PUT'
+      EXPORTING  name              = lv_obj
+                 dd02v_wa          = ls_dd02v
+                 dd09l_wa          = ls_dd09v
+      TABLES     dd03p_tab         = lt_dd03p
+                 dd05m_tab         = lt_dd05m
+                 dd08v_tab         = lt_dd08v
+                 dd35v_tab         = lt_dd35v
+                 dd36m_tab         = lt_dd36m
+      EXCEPTIONS tabl_not_found    = 1
+                 name_inconsistent = 2
+                 tabl_inconsistent = 3
+                 put_refused       = 4
+                 OTHERS            = 5.
+    IF sy-subrc <> 0.
+      log( iv_kind = 'TABL' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+           iv_text   = |DDIF_TABL_PUT subrc { sy-subrc }| ).
+      RETURN.
+    ENDIF.
+
+    tadir( iv_object = 'TABL' iv_name = CONV sobj_name( iv_name ) ).
+
+    IF mv_act = abap_true.
+      CALL FUNCTION 'DDIF_TABL_ACTIVATE'
+        EXPORTING  name        = lv_obj
+                   auth_chk    = abap_false
+        IMPORTING  rc          = lv_rc
+        EXCEPTIONS not_found   = 1
+                   put_failure = 2
+                   OTHERS      = 3.
+      IF sy-subrc <> 0 OR lv_rc > 0.
+        log( iv_kind = 'TABL' iv_name = iv_name
+             iv_action = lcl_t=>ui( d = `angelegt, inaktiv` e = `created, inactive` )
+             iv_text   = |DDIF_TABL_ACTIVATE rc { lv_rc }| ).
+        RETURN.
+      ENDIF.
+    ENDIF.
+
+    log( iv_kind = 'TABL' iv_name = iv_name
+         iv_action = COND #( WHEN lv_ex = abap_true
+                             THEN lcl_t=>ui( d = `geaendert` e = `changed` )
+                             ELSE lcl_t=>ui( d = `angelegt` e = `created` ) ) ).
+    put_docu( io_chapter = io_chapter iv_kind = 'TABL' iv_name = iv_name ).
+
+  ENDMETHOD.
+
+  METHOD put_prog.
+
+    DATA ls_trdir TYPE trdir.
+    DATA lt_src   TYPE STANDARD TABLE OF string WITH EMPTY KEY.
+    DATA lt_code  TYPE STANDARD TABLE OF char255 WITH EMPTY KEY.
+    DATA lt_tpool TYPE STANDARD TABLE OF textpool WITH EMPTY KEY.
+    DATA ls_tp    TYPE textpool.
+    DATA lv_prog  TYPE progname.
+
+    DATA(lv_ex) = exists( iv_kind = 'PROG' iv_name = iv_name ).
+    IF lv_ex = abap_true AND mv_over = abap_false.
+      log( iv_kind = 'PROG' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+           iv_text   = lcl_t=>ui( d = `existiert bereits` e = `already exists` ) ).
+      RETURN.
+    ENDIF.
+
+    DATA(lv_source) = io_chapter->get_defsource( ).
+    IF lv_source IS INITIAL.
+      log( iv_kind = 'PROG' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `nicht moeglich` e = `not possible` )
+           iv_text   = lcl_t=>ui( d = `kein Quelltext im Dokument`
+                                  e = `no source in the document` ) ).
+      RETURN.
+    ENDIF.
+    SPLIT lv_source AT cl_abap_char_utilities=>newline INTO TABLE lt_src.
+    LOOP AT lt_src INTO DATA(lv_line).
+      APPEND CONV char255( lv_line ) TO lt_code.
+    ENDLOOP.
+
+    lcl_attr=>to_struct( EXPORTING it_attrs = io_chapter->get_defhead( )
+                         CHANGING  cs_data  = ls_trdir ).
+*   Who wrote it in the source system is of no interest here, and a
+*   foreign name in the directory entry only confuses the target system.
+    CLEAR: ls_trdir-cnam, ls_trdir-cdat, ls_trdir-unam, ls_trdir-udat,
+           ls_trdir-vern, ls_trdir-levl, ls_trdir-rmand, ls_trdir-sdate,
+           ls_trdir-stime, ls_trdir-idate, ls_trdir-itime.
+    ls_trdir-name = iv_name.
+
+    LOOP AT io_chapter->get_defrows( ) INTO DATA(ls_row) WHERE tag = 'TPOOL'.
+      CLEAR ls_tp.
+      lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs
+                           CHANGING  cs_data  = ls_tp ).
+      APPEND ls_tp TO lt_tpool.
+    ENDLOOP.
+
+    IF mv_test = abap_true.
+      log( iv_kind = 'PROG' iv_name = iv_name
+           iv_action = COND #( WHEN lv_ex = abap_true
+                               THEN lcl_t=>ui( d = `wuerde geaendert` e = `would change` )
+                               ELSE lcl_t=>ui( d = `wuerde angelegt` e = `would create` ) )
+           iv_text   = |{ lcl_t=>ui( d = `Art` e = `type` ) } { ls_trdir-subc }, | &&
+                       |{ lines( lt_code ) } { lcl_t=>ui( d = `Zeilen` e = `lines` ) }, | &&
+                       |{ lines( lt_tpool ) } { lcl_t=>ui( d = `Textelemente` e = `text elements` ) }| ).
+      RETURN.
+    ENDIF.
+
+    lv_prog = iv_name.
+    INSERT REPORT lv_prog FROM lt_code DIRECTORY ENTRY ls_trdir.
+    IF sy-subrc <> 0.
+      log( iv_kind = 'PROG' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+           iv_text   = |INSERT REPORT subrc { sy-subrc }| ).
+      RETURN.
+    ENDIF.
+
+    IF lt_tpool IS NOT INITIAL.
+      INSERT TEXTPOOL lv_prog FROM lt_tpool LANGUAGE sy-langu STATE 'A'.
+    ENDIF.
+
+    tadir( iv_object = 'PROG' iv_name = CONV sobj_name( iv_name ) ).
+
+    log( iv_kind = 'PROG' iv_name = iv_name
+         iv_action = COND #( WHEN lv_ex = abap_true
+                             THEN lcl_t=>ui( d = `geaendert` e = `changed` )
+                             ELSE lcl_t=>ui( d = `angelegt` e = `created` ) )
+         iv_text   = |{ lines( lt_code ) } { lcl_t=>ui( d = `Zeilen` e = `lines` ) }| ).
+    put_docu( io_chapter = io_chapter iv_kind = 'PROG' iv_name = iv_name ).
+
+  ENDMETHOD.
+
+  METHOD put_docu.
+
+    DATA lt_line TYPE STANDARD TABLE OF tline WITH EMPTY KEY.
+    DATA ls_head TYPE thead.
+    DATA lt_raw  TYPE STANDARD TABLE OF string WITH EMPTY KEY.
+    DATA lv_id   TYPE dokhl-id.
+
+    DATA(lv_text) = io_chapter->get_documentation( ).
+    IF lv_text IS INITIAL OR mv_test = abap_true.
+      RETURN.
+    ENDIF.
+
+*   Documentation class per object type - the same key the export read.
+    CASE iv_kind.
+      WHEN 'PROG'. lv_id = 'RE'.
+      WHEN 'DTEL'. lv_id = 'DE'.
+      WHEN OTHERS. RETURN.
+    ENDCASE.
+
+*   The text travels as ITF, one line per row, tag and text separated by
+*   a tabulator - the same shape READ_TEXT hands out.
+    SPLIT lv_text AT cl_abap_char_utilities=>newline INTO TABLE lt_raw.
+    LOOP AT lt_raw INTO DATA(lv_line).
+      DATA ls_line TYPE tline.
+      CLEAR ls_line.
+      SPLIT lv_line AT cl_abap_char_utilities=>horizontal_tab
+            INTO ls_line-tdformat ls_line-tdline.
+      IF ls_line-tdformat IS INITIAL AND ls_line-tdline IS INITIAL.
+        ls_line-tdformat = '/'.
+      ENDIF.
+      APPEND ls_line TO lt_line.
+    ENDLOOP.
+    IF lt_line IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_lang) = io_chapter->get_doclang( ).
+    ls_head-tdid      = lv_id.
+    ls_head-tdspras   = COND #( WHEN lv_lang IS NOT INITIAL THEN lv_lang ELSE sy-langu ).
+    ls_head-tdname    = iv_name.
+    ls_head-tdobject  = 'DOKU'.
+
+    CALL FUNCTION 'DOCU_UPDATE'
+      EXPORTING  head    = ls_head
+                 state   = 'A'
+                 typ     = 'E'
+                 version = 0
+      TABLES     line    = lt_line
+      EXCEPTIONS OTHERS  = 1.
+    IF sy-subrc = 0.
+      log( iv_kind = 'DOKU' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `Dokumentation gesetzt`
+                                  e = `documentation written` ) ).
+    ENDIF.
 
   ENDMETHOD.
 
@@ -838,6 +1740,10 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE gv_blk2.
     SELECTION-SCREEN COMMENT 1(30) gv_tfsrc FOR FIELD p_fsrc.
     PARAMETERS p_fsrc AS CHECKBOX.
   SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tdef FOR FIELD p_def.
+    PARAMETERS p_def AS CHECKBOX DEFAULT 'X'.
+  SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b2.
 
 SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE gv_blk3.
@@ -871,6 +1777,47 @@ SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE gv_blk3.
     PARAMETERS p_srv TYPE char128 LOWER CASE VISIBLE LENGTH 30.
   SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b3.
+
+*----------------------------------------------------------------------*
+* Import: the other direction. A document written in system A is read
+* here and the objects it defines are created. Nothing is written unless
+* the test run is switched off - that is the whole safety net, so it is
+* on by default and has to be taken off deliberately.
+*----------------------------------------------------------------------*
+SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE gv_blk4.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_timp FOR FIELD p_imp.
+    PARAMETERS p_imp AS CHECKBOX USER-COMMAND mode.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(24) gv_tifil FOR FIELD p_ifile.
+    PARAMETERS p_ifile TYPE char128 LOWER CASE VISIBLE LENGTH 40.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tisrv FOR FIELD p_isrv.
+    PARAMETERS p_isrv AS CHECKBOX.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_titst FOR FIELD p_itest.
+    PARAMETERS p_itest AS CHECKBOX DEFAULT 'X'.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tiovr FOR FIELD p_iover.
+    PARAMETERS p_iover AS CHECKBOX.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tiact FOR FIELD p_iact.
+    PARAMETERS p_iact AS CHECKBOX DEFAULT 'X'.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tipck FOR FIELD p_ipack.
+    PARAMETERS p_ipack TYPE devclass DEFAULT '$TMP' VISIBLE LENGTH 20.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_titr FOR FIELD p_itr.
+    PARAMETERS p_itr TYPE trkorr.
+  SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN END OF BLOCK b4.
 
 INITIALIZATION.
 * Screen labels live in the source, not in the text pool, so that a copied
@@ -908,6 +1855,16 @@ INITIALIZATION.
     gv_tpath = 'Verzeichnis'.
     gv_tdsrv = 'Ablage Appl.-Server'.
     gv_tsrv  = 'Verzeichnis'.
+    gv_tdef  = 'Definitionsdaten fuer Reimport'.
+    gv_blk4  = 'Import in dieses System'.
+    gv_timp  = 'Importieren statt dokumentieren'.
+    gv_tifil = 'XML-Datei'.
+    gv_tisrv = 'Datei auf Applikationsserver'.
+    gv_titst = 'Testlauf (nichts anlegen)'.
+    gv_tiovr = 'Bestehende Objekte ueberschreiben'.
+    gv_tiact = 'Nach dem Anlegen aktivieren'.
+    gv_tipck = 'Zielpaket'.
+    gv_titr  = 'Auftrag'.
     %_s_objtyp_%_app_%-text = 'Objekttyp'.
     %_s_objnam_%_app_%-text = 'Objektname'.
   ELSE.
@@ -942,6 +1899,16 @@ INITIALIZATION.
     gv_tpath = 'Directory'.
     gv_tdsrv = 'Store on app server'.
     gv_tsrv  = 'Directory'.
+    gv_tdef  = 'Definition data for reimport'.
+    gv_blk4  = 'Import into this system'.
+    gv_timp  = 'Import instead of document'.
+    gv_tifil = 'XML file'.
+    gv_tisrv = 'File on application server'.
+    gv_titst = 'Test run (create nothing)'.
+    gv_tiovr = 'Overwrite existing objects'.
+    gv_tiact = 'Activate after creation'.
+    gv_tipck = 'Target package'.
+    gv_titr  = 'Request'.
 * Select-options take their label from the text pool; the COMMENT approach
 * used for the other fields does not apply. The generated fields
 * %_<name>_%_app_%-text allow setting it at runtime.
@@ -1347,7 +2314,8 @@ CLASS lcl_collector_dev DEFINITION.
                 iv_nosap  TYPE abap_bool
                 iv_maxhit TYPE i
                 iv_fsrc   TYPE abap_bool
-                iv_udep   TYPE i.
+                iv_udep   TYPE i
+                iv_def    TYPE abap_bool.
     METHODS get_stat_packages RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_objects  RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_total    RETURNING VALUE(rv) TYPE i.
@@ -1356,6 +2324,7 @@ CLASS lcl_collector_dev DEFINITION.
     METHODS get_stat_usage    RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_fallback RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_calls    RETURNING VALUE(rv) TYPE i.
+    METHODS get_stat_def      RETURNING VALUE(rv) TYPE i.
   PRIVATE SECTION.
     DATA mv_stype  TYPE char2.
     DATA mv_sval   TYPE string.
@@ -1388,6 +2357,32 @@ CLASS lcl_collector_dev DEFINITION.
     DATA mv_n_obj  TYPE i.
     DATA mv_n_tot  TYPE i.
     DATA mv_n_docu TYPE i.
+    DATA mv_def    TYPE abap_bool.
+    DATA mv_n_def  TYPE i.
+
+*   Definition data for the reimport. One method per object type, all of
+*   them reading exactly the structures that the matching DDIF_*_PUT
+*   expects - what is written here can be handed back unchanged.
+    METHODS add_definition
+      IMPORTING iv_type    TYPE trobjtype
+                iv_name    TYPE sobj_name
+                io_chapter TYPE REF TO lcl_chapter.
+    METHODS def_doma
+      IMPORTING iv_name    TYPE sobj_name
+                io_chapter TYPE REF TO lcl_chapter
+      RETURNING VALUE(rv_ok) TYPE abap_bool.
+    METHODS def_dtel
+      IMPORTING iv_name    TYPE sobj_name
+                io_chapter TYPE REF TO lcl_chapter
+      RETURNING VALUE(rv_ok) TYPE abap_bool.
+    METHODS def_tabl
+      IMPORTING iv_name    TYPE sobj_name
+                io_chapter TYPE REF TO lcl_chapter
+      RETURNING VALUE(rv_ok) TYPE abap_bool.
+    METHODS def_prog
+      IMPORTING iv_name    TYPE sobj_name
+                io_chapter TYPE REF TO lcl_chapter
+      RETURNING VALUE(rv_ok) TYPE abap_bool.
 
     METHODS read_short_text
       IMPORTING iv_type        TYPE trobjtype
@@ -1536,6 +2531,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     mv_maxuse = iv_maxuse.
     mv_falb   = iv_falb.
     mv_flang  = iv_flang.
+    mv_def    = iv_def.
   ENDMETHOD.
 
   METHOD build_title.
@@ -1570,6 +2566,198 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       WHEN 'FUNC'. rv_title = lcl_t=>t( d = 'Funktionsbausteine' e = 'Function modules' ).
       WHEN OTHERS. rv_title = |{ lcl_t=>t( d = `Objekttyp` e = `Object type` ) } { iv_type }|.
     ENDCASE.
+  ENDMETHOD.
+
+  METHOD add_definition.
+
+    DATA lv_ok TYPE abap_bool.
+
+    CASE iv_type.
+      WHEN 'DOMA'. lv_ok = def_doma( iv_name = iv_name io_chapter = io_chapter ).
+      WHEN 'DTEL'. lv_ok = def_dtel( iv_name = iv_name io_chapter = io_chapter ).
+      WHEN 'TABL'. lv_ok = def_tabl( iv_name = iv_name io_chapter = io_chapter ).
+      WHEN 'PROG'. lv_ok = def_prog( iv_name = iv_name io_chapter = io_chapter ).
+      WHEN OTHERS.
+*       Views, classes, function groups and CDS sources are described in
+*       the document but cannot be rebuilt from it yet. Saying so is
+*       better than writing half a definition the importer would trip on.
+        RETURN.
+    ENDCASE.
+
+    IF lv_ok = abap_true.
+      mv_n_def = mv_n_def + 1.
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD def_doma.
+
+    DATA ls_dd01v TYPE dd01v.
+    DATA lt_dd07v TYPE STANDARD TABLE OF dd07v WITH EMPTY KEY.
+    DATA lv_obj   TYPE ddobjname.
+
+    lv_obj = iv_name.
+    CALL FUNCTION 'DDIF_DOMA_GET'
+      EXPORTING  name          = lv_obj
+                 state         = 'A'
+                 langu         = mv_langu
+      IMPORTING  dd01v_wa      = ls_dd01v
+      TABLES     dd07v_tab     = lt_dd07v
+      EXCEPTIONS illegal_input = 1
+                 OTHERS        = 2.
+    IF sy-subrc <> 0 OR ls_dd01v-domname IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    io_chapter->set_definition( iv_kind = 'DOMA'
+                                it_head = lcl_attr=>from_struct( ls_dd01v ) ).
+    LOOP AT lt_dd07v INTO DATA(ls_dd07v).
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag   = 'DD07V'
+        attrs = lcl_attr=>from_struct( ls_dd07v ) ) ).
+    ENDLOOP.
+    rv_ok = abap_true.
+
+  ENDMETHOD.
+
+  METHOD def_dtel.
+
+    DATA ls_dd04v TYPE dd04v.
+    DATA lv_obj   TYPE ddobjname.
+
+    lv_obj = iv_name.
+    CALL FUNCTION 'DDIF_DTEL_GET'
+      EXPORTING  name          = lv_obj
+                 state         = 'A'
+                 langu         = mv_langu
+      IMPORTING  dd04v_wa      = ls_dd04v
+      EXCEPTIONS illegal_input = 1
+                 OTHERS        = 2.
+    IF sy-subrc <> 0 OR ls_dd04v-rollname IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    io_chapter->set_definition( iv_kind = 'DTEL'
+                                it_head = lcl_attr=>from_struct( ls_dd04v ) ).
+    rv_ok = abap_true.
+
+  ENDMETHOD.
+
+  METHOD def_tabl.
+
+    DATA ls_dd02v TYPE dd02v.
+    DATA ls_dd09v TYPE dd09v.
+    DATA lt_dd03p TYPE STANDARD TABLE OF dd03p WITH EMPTY KEY.
+    DATA lt_dd05m TYPE STANDARD TABLE OF dd05m WITH EMPTY KEY.
+    DATA lt_dd08v TYPE STANDARD TABLE OF dd08v WITH EMPTY KEY.
+    DATA lt_dd35v TYPE STANDARD TABLE OF dd35v WITH EMPTY KEY.
+    DATA lt_dd36m TYPE STANDARD TABLE OF dd36m WITH EMPTY KEY.
+    DATA lv_obj   TYPE ddobjname.
+
+    lv_obj = iv_name.
+    CALL FUNCTION 'DDIF_TABL_GET'
+      EXPORTING  name          = lv_obj
+                 state         = 'A'
+                 langu         = mv_langu
+      IMPORTING  dd02v_wa      = ls_dd02v
+                 dd09l_wa      = ls_dd09v
+      TABLES     dd03p_tab     = lt_dd03p
+                 dd05m_tab     = lt_dd05m
+                 dd08v_tab     = lt_dd08v
+                 dd35v_tab     = lt_dd35v
+                 dd36m_tab     = lt_dd36m
+      EXCEPTIONS illegal_input = 1
+                 OTHERS        = 2.
+    IF sy-subrc <> 0 OR ls_dd02v-tabname IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    io_chapter->set_definition( iv_kind = 'TABL'
+                                it_head = lcl_attr=>from_struct( ls_dd02v ) ).
+
+*   Technical settings only exist for a real table, not for a structure.
+    IF ls_dd09v-tabname IS NOT INITIAL.
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag = 'DD09V' attrs = lcl_attr=>from_struct( ls_dd09v ) ) ).
+    ENDIF.
+
+    LOOP AT lt_dd03p INTO DATA(ls_dd03p).
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag = 'DD03P' attrs = lcl_attr=>from_struct( ls_dd03p ) ) ).
+    ENDLOOP.
+    LOOP AT lt_dd05m INTO DATA(ls_dd05m).
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag = 'DD05M' attrs = lcl_attr=>from_struct( ls_dd05m ) ) ).
+    ENDLOOP.
+    LOOP AT lt_dd08v INTO DATA(ls_dd08v).
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag = 'DD08V' attrs = lcl_attr=>from_struct( ls_dd08v ) ) ).
+    ENDLOOP.
+    LOOP AT lt_dd35v INTO DATA(ls_dd35v).
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag = 'DD35V' attrs = lcl_attr=>from_struct( ls_dd35v ) ) ).
+    ENDLOOP.
+    LOOP AT lt_dd36m INTO DATA(ls_dd36m).
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag = 'DD36M' attrs = lcl_attr=>from_struct( ls_dd36m ) ) ).
+    ENDLOOP.
+
+    rv_ok = abap_true.
+
+  ENDMETHOD.
+
+  METHOD def_prog.
+
+    DATA ls_trdir TYPE trdir.
+    DATA lt_tpool TYPE STANDARD TABLE OF textpool WITH EMPTY KEY.
+    DATA lv_prog  TYPE progname.
+
+    lv_prog = iv_name.
+    SELECT SINGLE * FROM trdir WHERE name = @lv_prog INTO @ls_trdir.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+*   The source has to be complete here. What the reader gets may be cut
+*   short by P_MAXSRC; half a report cannot be inserted anywhere.
+    DATA(lt_src) = source_lines( iv_type = 'PROG' iv_name = iv_name ).
+    IF lt_src IS INITIAL.
+      RETURN.
+    ENDIF.
+    DATA lv_source TYPE string.
+    LOOP AT lt_src INTO DATA(lv_line).
+      IF lv_source IS INITIAL AND sy-tabix = 1.
+        lv_source = lv_line.
+      ELSE.
+        lv_source = |{ lv_source }{ cl_abap_char_utilities=>newline }{ lv_line }|.
+      ENDIF.
+    ENDLOOP.
+
+    io_chapter->set_definition( iv_kind = 'PROG'
+                                it_head = lcl_attr=>from_struct( ls_trdir ) ).
+    io_chapter->set_defsource( lv_source ).
+
+*   Text elements are part of the program and are stored apart from the
+*   source; without them selection texts and list headings are lost.
+    READ TEXTPOOL lv_prog INTO lt_tpool LANGUAGE mv_langu.
+    LOOP AT lt_tpool INTO DATA(ls_tp).
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag = 'TPOOL' attrs = lcl_attr=>from_struct( ls_tp ) ) ).
+    ENDLOOP.
+
+    SELECT SINGLE text FROM trdirt
+      WHERE name = @lv_prog AND sprsl = @mv_langu
+      INTO @DATA(lv_title).
+    IF sy-subrc = 0 AND lv_title IS NOT INITIAL.
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag   = 'TITLE'
+        attrs = VALUE ty_attrs(
+          ( name = 'SPRSL' value = CONV string( mv_langu ) )
+          ( name = 'TEXT'  value = lv_title ) ) ) ).
+    ENDIF.
+
+    rv_ok = abap_true.
+
   ENDMETHOD.
 
   METHOD read_short_text.
@@ -3527,6 +4715,10 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       ENDIF.
     ENDIF.
 
+    IF mv_def = abap_true.
+      add_definition( iv_type = iv_type iv_name = iv_name io_chapter = ro_chapter ).
+    ENDIF.
+
   ENDMETHOD.
 
   METHOD collect_single.
@@ -3995,6 +5187,9 @@ CLASS lcl_collector_dev IMPLEMENTATION.
   METHOD get_stat_calls.
     rv = mv_n_call.
   ENDMETHOD.
+  METHOD get_stat_def.
+    rv = mv_n_def.
+  ENDMETHOD.
 
 ENDCLASS.
 
@@ -4276,6 +5471,126 @@ FORM download_srv USING iv_content TYPE string
 
 ENDFORM.
 
+*&---------------------------------------------------------------------*
+*& FORM import
+*&---------------------------------------------------------------------*
+* Reads the document from the PC or from the application server, parses
+* it and hands it to the importer. Everything the run did is written to
+* the list, including what it deliberately did not do.
+*----------------------------------------------------------------------*
+FORM import.
+
+  DATA lv_xml  TYPE string.
+  DATA lv_x    TYPE xstring.
+  DATA lv_file TYPE string.
+  DATA lt_bin  TYPE STANDARD TABLE OF x255 WITH EMPTY KEY.
+  DATA lv_len  TYPE i.
+
+  lv_file = p_ifile.
+  CONDENSE lv_file.
+  IF lv_file IS INITIAL.
+    WRITE: / lcl_t=>ui( d = `Keine Datei angegeben.` e = `No file given.` ).
+    RETURN.
+  ENDIF.
+
+  IF p_isrv = abap_true.
+    OPEN DATASET lv_file FOR INPUT IN BINARY MODE.
+    IF sy-subrc <> 0.
+      WRITE: / lcl_t=>ui( d = `Serverdatei nicht lesbar        :`
+                          e = `Server file cannot be read       :` ), lv_file.
+      RETURN.
+    ENDIF.
+    READ DATASET lv_file INTO lv_x MAXIMUM LENGTH 20000000.
+    CLOSE DATASET lv_file.
+  ELSE.
+    IF sy-batch = abap_true.
+      WRITE: / lcl_t=>ui( d = `Im Hintergrund gibt es keinen PC-Zugriff. Datei auf dem Applikationsserver ablegen.`
+                          e = `There is no PC access in the background. Put the file on the application server.` ).
+      RETURN.
+    ENDIF.
+    CALL FUNCTION 'GUI_UPLOAD'
+      EXPORTING  filename   = lv_file
+                 filetype   = 'BIN'
+      IMPORTING  filelength = lv_len
+      TABLES     data_tab   = lt_bin
+      EXCEPTIONS OTHERS     = 1.
+    IF sy-subrc <> 0.
+      WRITE: / lcl_t=>ui( d = `Datei nicht lesbar              :`
+                          e = `File cannot be read              :` ), lv_file.
+      RETURN.
+    ENDIF.
+    CALL FUNCTION 'SCMS_BINARY_TO_XSTRING'
+      EXPORTING  input_length = lv_len
+      IMPORTING  buffer       = lv_x
+      TABLES     binary_tab   = lt_bin
+      EXCEPTIONS OTHERS       = 1.
+    IF sy-subrc <> 0.
+      WRITE: / lcl_t=>ui( d = `Datei nicht wandelbar.` e = `File cannot be converted.` ).
+      RETURN.
+    ENDIF.
+  ENDIF.
+
+  IF lv_x IS INITIAL.
+    WRITE: / lcl_t=>ui( d = `Datei ist leer.` e = `File is empty.` ).
+    RETURN.
+  ENDIF.
+
+  TRY.
+      lv_xml = cl_abap_codepage=>convert_from( lv_x ).
+    CATCH cx_root.
+      WRITE: / lcl_t=>ui( d = `Datei ist kein UTF-8.` e = `File is not UTF-8.` ).
+      RETURN.
+  ENDTRY.
+
+  DATA lo_doc TYPE REF TO lcl_document.
+  TRY.
+      lo_doc = lcl_parser_xml=>parse( lv_xml ).
+    CATCH cx_root.
+      WRITE: / lcl_t=>ui( d = `Datei ist kein Documizer-XML.`
+                          e = `File is not a Documizer XML.` ).
+      RETURN.
+  ENDTRY.
+
+  DATA(ls_meta) = lo_doc->get_meta( ).
+  WRITE: / lcl_t=>ui( d = `Import` e = `Import` ).
+  ULINE.
+  WRITE: / lcl_t=>ui( d = `Datei                            :` e = `File                             :` ), lv_file.
+  WRITE: / lcl_t=>ui( d = `Quellsystem                      :` e = `Source system                    :` ),
+           ls_meta-system, '/', ls_meta-client.
+  WRITE: / lcl_t=>ui( d = `Erzeugt                          :` e = `Created                          :` ),
+           ls_meta-created_at, ls_meta-created_by.
+  WRITE: / lcl_t=>ui( d = `Zielpaket                        :` e = `Target package                   :` ), p_ipack.
+  IF p_itr IS NOT INITIAL.
+    WRITE: / lcl_t=>ui( d = `Auftrag                          :` e = `Request                          :` ), p_itr.
+  ENDIF.
+  IF p_itest = abap_true.
+    WRITE: / lcl_t=>ui( d = `TESTLAUF - es wird nichts angelegt.`
+                        e = `TEST RUN - nothing is created.` ).
+  ENDIF.
+  SKIP.
+
+  DATA(lo_imp) = NEW lcl_importer( iv_test = p_itest
+                                   iv_over = p_iover
+                                   iv_act  = p_iact
+                                   iv_pack = p_ipack
+                                   iv_tr   = p_itr ).
+  lo_imp->run( lo_doc ).
+
+  DATA lv_n TYPE i.
+  LOOP AT lo_imp->get_log( ) INTO DATA(ls_log).
+    lv_n = lv_n + 1.
+    WRITE: / ls_log-kind, ls_log-name(40), ls_log-action(22), ls_log-text.
+  ENDLOOP.
+  IF lv_n = 0.
+    WRITE: / lcl_t=>ui( d = `Nichts verarbeitet.` e = `Nothing processed.` ).
+  ELSE.
+    SKIP.
+    WRITE: / lcl_t=>ui( d = `Zeilen im Protokoll              :`
+                        e = `Lines in the protocol            :` ), lv_n.
+  ENDIF.
+
+ENDFORM.
+
 *----------------------------------------------------------------------*
 * Main flow
 *----------------------------------------------------------------------*
@@ -4283,6 +5598,13 @@ START-OF-SELECTION.
 
 * The document speaks the output language, including its own headings.
   lcl_t=>set_lang( p_langu ).
+
+* Import is the other direction and shares nothing with the run below
+* but the model in between: read the file, parse it, create the objects.
+  IF p_imp = abap_true.
+    PERFORM import.
+    RETURN.
+  ENDIF.
 
   DATA(lo_collector) = NEW lcl_collector_dev( iv_stype  = p_stype
                                               iv_sval   = CONV string( p_sval )
@@ -4303,7 +5625,8 @@ START-OF-SELECTION.
                                               iv_nosap  = p_nosap
                                               iv_maxhit = p_maxhit
                                               iv_fsrc   = p_fsrc
-                                              iv_udep   = p_udep ).
+                                              iv_udep   = p_udep
+                                              iv_def    = p_def ).
 
   DATA lo_coll TYPE REF TO lif_docu_collector.
   lo_coll = lo_collector.

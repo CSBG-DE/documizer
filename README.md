@@ -13,11 +13,30 @@ Gemeinsam ist beiden das Kapitelmodell und der XML-Roundtrip: der Export ist wie
 Jeder Report ist eine einzige Quelle und lässt sich per Copy/Paste in SE38 in ein beliebiges
 System bringen — ohne Textelemente, ohne Zusatzobjekte.
 
-`ZDOCUMIZER_DEV` kann die Richtung auch umkehren: ein in System A erzeugtes XML einlesen und die
-darin definierten Objekte in System B **anlegen** — Domänen, Datenelemente, Tabellen,
-Strukturen, Views, CDS-Quellen, Reports samt Textelementen, Klassen, Interfaces und
-Funktionsgruppen mit ihren Bausteinen. Testlauf ist Vorbelegung, vorhandene Objekte bleiben
-unangetastet. Siehe [Reimport](docs/spezifikation-documizer.md#56-reimport).
+Ausgabe als **HTML** zum Lesen (eine Datei, CSS eingebettet, kein JavaScript; große Blöcke
+stehen eingeklappt) und als **XML** zur Weiterverarbeitung.
+
+## Import: die Gegenrichtung
+
+`ZDOCUMIZER_DEV` kann ein in System A erzeugtes XML einlesen und die darin definierten Objekte
+in System B **anlegen**:
+
+| Objekttyp | Umfang |
+|---|---|
+| Domäne, Datenelement | mit Festwerten und Texten |
+| Tabelle, Struktur | technische Einstellungen, Fremdschlüssel, Suchhilfen, Sekundärindizes |
+| View | Basistabellen, Felder, Join-Bedingungen |
+| CDS-Quelle | SQL-View und Strukturobjekt entstehen beim Aktivieren von selbst |
+| Report, Include | Programmattribute, Textelemente, Dokumentation |
+| Interface, Klasse | als quelltextbasierte Fassung |
+| Funktionsgruppe | Includes, Bausteine, deren Schnittstelle und Rumpf |
+
+**Testlauf ist Vorbelegung** — der Report meldet, was er anlegen würde, und legt nichts an.
+Vorhandene Objekte bleiben unangetastet, solange „überschreiben" nicht gesetzt ist. Die
+`S_DEVELOP`-Prüfung der gerufenen SAP-Bausteine bleibt eingeschaltet.
+
+Customizing-Inhalte schreibt der Documizer bewusst nicht zurück — dafür gibt es BC-Sets.
+Siehe [Reimport](docs/spezifikation-documizer.md#56-reimport).
 
 ## Dokumente
 
@@ -38,10 +57,14 @@ unangetastet. Siehe [Reimport](docs/spezifikation-documizer.md#56-reimport).
 
 ## Stand
 
-Beide Reports laufen und sind gegen das System S4H (SAP_BASIS 758, S/4HANA 2023) verifiziert.
-Ausgabe als XML und HTML, Ablage auf PC oder Applikationsserver.
+Beide Reports laufen und sind gegen das System S4H (SAP_BASIS 758, S/4HANA 2023) verifiziert —
+Export wie Import, je Objekttyp mit einem eigenen Durchlauf von der Erzeugung über den Export
+und das Umbenennen bis zum Anlegen im Ziel.
 
-Offen sind Markdown als drittes Format, das BAL-Protokoll und die `S_DEVELOP`-Prüfung — siehe
+XML-Formatversion 1.1. Ablage auf PC oder Applikationsserver.
+
+Offen sind Markdown als drittes Format, das Anzeigen einer XML-Datei ohne Systemzugriff, das
+BAL-Protokoll und eine `S_DEVELOP`-Prüfung vor dem Lauf — siehe
 [Offene Punkte](docs/spezifikation-documizer.md#9-offene-punkte).
 
 ## Lizenz

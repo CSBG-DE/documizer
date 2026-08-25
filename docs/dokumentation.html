@@ -320,10 +320,11 @@
       Zwei ABAP-Reports, die aus dem laufenden System heraus Dokumentation erzeugen:
       einmal aus dem Einführungsleitfaden samt Customizing, einmal ab einem Paket, Report,
       Baustein oder DDIC-Objekt der Eigenentwicklung. Beide schreiben dasselbe XML-Format,
-      das sich wieder einlesen lässt.
+      das sich wieder einlesen lässt — und der Development-Report kann daraus die Objekte
+      in einem anderen System auch wieder anlegen.
     </p>
     <div class="factbar">
-      <span><b>Stand</b> 20.08.2026</span>
+      <span><b>Stand</b> 25.08.2026</span>
       <span><b>System</b> S4H · SAP_BASIS 758</span>
       <span><b>Pakete</b> ZCONS_DOCUMIZER</span>
       <span><b>Transport</b> S4HK901757</span>
@@ -341,6 +342,7 @@
         <li><a href="#projekt">Projektmodus</a></li>
         <li><a href="#dev">Development-Report</a></li>
         <li><a href="#ausgabe">Ausgabe &amp; Export</a></li>
+        <li><a href="#import">Import</a></li>
         <li><a href="#datenmodell">Datenmodell</a></li>
         <li><a href="#betrieb">Betrieb</a></li>
         <li><a href="#fallen">Fallen</a></li>
@@ -394,6 +396,8 @@
               <tr><td><code>lif_docu_collector</code></td><td>Sammelt — je Report eine eigene Implementierung</td></tr>
               <tr><td><code>lif_docu_renderer</code></td><td>Gibt aus — XML und HTML aus demselben Modell</td></tr>
               <tr><td><code>lcl_parser_xml</code></td><td>Liest das XML wieder in das Modell ein</td></tr>
+              <tr><td><code>lcl_attr</code></td><td>DDIC-Struktur in Name/Wert-Paare und zurück — nur im Development-Report</td></tr>
+              <tr><td><code>lcl_importer</code></td><td>Legt die Objekte im Zielsystem an — nur im Development-Report</td></tr>
             </tbody>
           </table>
         </div>
@@ -401,8 +405,9 @@
         <div class="note">
           <p><b>Roundtrip.</b> Jeder Lauf kann sich selbst prüfen: Das Modell wird serialisiert,
           aus dem XML neu aufgebaut, erneut serialisiert und zeichenweise verglichen.
-          Was der Parser verliert, fällt sofort auf. Der Selbsttest schreibt nichts ins System —
-          er prüft den Importpfad, nicht das Zurückschreiben.</p>
+          Was der Parser verliert, fällt sofort auf. Der Selbsttest schreibt nichts ins System.
+          Jede Erweiterung des Formats — die Definitionsdaten für den Import, der Quelltext je
+          Zeile — wurde erst nach einem bestandenen Roundtrip weitergebaut.</p>
         </div>
       </section>
 
@@ -726,9 +731,11 @@
           Führendes Format, erzeugt über sXML statt über eine Simple Transformation — eine ST
           ist ein eigenes Repository-Objekt und ließe sich nicht in einen kopierbaren Report
           packen. Das Format trägt eine Version, damit spätere Änderungen sauber behandelbar
-          bleiben.
+          bleiben. Version <b>1.1</b> hat die Definitionsdaten für den Import hinzubekommen,
+          und zwar in eigenen neuen Elementen: ein zusätzliches Attribut an einem bestehenden
+          Element hätte jedes bisher geschriebene Dokument gebrochen.
         </p>
-<pre><code>&lt;documizer version="1.0" type="IMG"&gt;
+<pre><code>&lt;documizer version="1.1" type="IMG"&gt;
  &lt;meta&gt;
   &lt;system&gt;S4H&lt;/system&gt;
   &lt;client&gt;100&lt;/client&gt;
@@ -804,21 +811,24 @@
           aufeinanderfolgende Läufe sich nicht überschreiben.
         </p>
 
-        <h3>Import: die Gegenrichtung</h3>
-        <p>
-          Der Entwickler-Report kann statt zu dokumentieren auch <b>importieren</b>: ein in
-          System A erzeugtes XML einlesen und die darin beschriebenen Objekte in System B
-          anlegen. Der Haken <em>Importieren statt dokumentieren</em> schaltet um, alles Weitere
-          steht im selben Block.
+      </section>
+
+      <!-- 6a -->
+      <section id="import">
+        <h2>Import: die Gegenrichtung</h2>
+        <p class="sec-note">
+          Ein in System A erzeugtes XML einlesen und die darin beschriebenen Objekte in
+          System B anlegen. Der Haken <em>Importieren statt dokumentieren</em> schaltet um,
+          alles Weitere steht im selben Block. Nur der Development-Report kann das.
         </p>
         <p>
           Damit das gehen kann, muss beim Export <em>Definitionsdaten für den Reimport</em>
           angehakt sein — das ist die Vorbelegung. Das Dokument trägt dann neben der Beschreibung
           für den Leser die technische Definition: für eine Tabelle die Auslieferungsklasse, die
           Tabellenart, die technischen Einstellungen, alle Felder mit Datenelement und
-          Schlüsselkennzeichen, Fremdschlüssel und Suchhilfen; für einen Report die
-          Programmattribute, den vollständigen Quelltext und die Textelemente. Gelesen wird das
-          mit denselben Bausteinen, mit denen es beim Import wieder eingespielt wird — was
+          Schlüsselkennzeichen, Fremdschlüssel, Suchhilfen und Sekundärindizes; für einen Report
+          die Programmattribute, den vollständigen Quelltext und die Textelemente. Gelesen wird
+          das mit denselben Bausteinen, mit denen es beim Import wieder eingespielt wird — was
           herauskommt, passt garantiert wieder hinein.
         </p>
         <div class="tablewrap">
@@ -844,11 +854,24 @@
           ersetzen.</p>
         </div>
         <p>
-          Die Reihenfolge legt der Report selbst fest: erst Domänen, dann Datenelemente, dann
-          Tabellen, dann Programme. Eine Tabelle, deren Datenelemente noch fehlen, ließe sich
-          nicht aktivieren. Das Protokoll nennt je Objekt, was geschehen ist — angelegt,
-          geändert, übersprungen, Fehler — und warum.
+          <b>Die Reihenfolge legt der Report selbst fest:</b> Domänen, Datenelemente, Tabellen,
+          Views, CDS-Quellen, Programme, Interfaces, Klassen, Funktionsgruppen. Eine Tabelle,
+          deren Datenelemente noch fehlen, ließe sich nicht aktivieren; die Arbeit vorher zu
+          sortieren ist billiger, als sie zu wiederholen. Sekundärindizes entstehen zuletzt je
+          Tabelle — ein Index auf einer Tabelle, die es noch nicht gibt, lässt sich nicht
+          aktivieren.
         </p>
+        <p>
+          Das Protokoll nennt je Objekt, was geschehen ist — angelegt, geändert, übersprungen,
+          Fehler, nicht möglich — und warum.
+        </p>
+        <div class="note">
+          <p><b>Aktiviert wird gezielt.</b> Klassen und Funktionsgruppen entstehen zunächst
+          inaktiv. Die Liste der inaktiven Objekte gehört aber dem Benutzer und enthält im
+          Regelfall dessen angefangene Arbeit. Der Import nimmt daraus nur die Einträge, die
+          zum eben geschriebenen Objekt gehören — sonst würde er fremde halbfertige Stände
+          scharf schalten.</p>
+        </div>
       </section>
 
       <!-- 7 -->
@@ -931,6 +954,13 @@
           Berechtigung, erscheint das Objekt mit Vermerk im Dokument statt stillschweigend
           leer zu bleiben. Ein Dokumentationswerkzeug darf keine Leseberechtigungen umgehen.
         </p>
+        <p>
+          Beim <b>Import</b> gilt dasselbe in der Schreibrichtung. Die gerufenen SAP-Bausteine
+          prüfen <code>S_DEVELOP</code> gegen Objekt und Paket, und diese Prüfung bleibt
+          eingeschaltet. Fehlen die Rechte, weigert sich der Baustein und die Ablehnung steht
+          im Protokoll. Sie abzuschalten wäre eine Zeile gewesen — und hätte ein Werkzeug
+          ergeben, mit dem jemand Objekte anlegt, die er von Hand nicht anlegen dürfte.
+        </p>
       </section>
 
       <!-- 9 -->
@@ -974,6 +1004,34 @@
                 <td>CDS-Quelltext mit <code>\r</code> am Zeilenende</td>
                 <td><code>DDDDLSRC-SOURCE</code> ist mit CRLF abgelegt; der Wagenrücklauf muss entfernt werden.</td>
               </tr>
+              <tr>
+                <td>Quelltext kam einzeilig zurück</td>
+                <td>XML normalisiert Zeilenumbrüche <b>innerhalb eines Attributwerts</b> zu Leerzeichen — ohne Fehlermeldung. Quelltext gehört in ein Element, nie in ein Attribut.</td>
+              </tr>
+              <tr>
+                <td><code>CALL_FUNCTION_CONFLICT_TYPE</code> bei <code>TR_TADIR_INTERFACE</code></td>
+                <td>Vollständig typisierte Bausteinparameter verlangen <b>gleiche</b> Typen, nicht nur konvertierbare. <code>SY-SYSID</code> hat acht Zeichen, <code>TADIR-SRCSYSTEM</code> zehn. Je ein Local pro Feld, nach der Tabelle typisiert.</td>
+              </tr>
+              <tr>
+                <td><code>CALL_FUNCTION_PARM_MISSING</code> trotz aller Pflichtparameter</td>
+                <td>In klassischen Bausteinen sind <b>alle</b> <code>TABLES</code>-Parameter Pflicht, auch die leeren. <code>RPY_FUNCTIONMODULE_INSERT</code> hat sieben davon.</td>
+              </tr>
+              <tr>
+                <td>Funktionsbaustein mit zwei <code>ENDFUNCTION</code></td>
+                <td><code>RPY_FUNCTIONMODULE_READ</code> gibt den ganzen Include samt <code>FUNCTION</code>, Schnittstellenkommentar und <code>ENDFUNCTION</code> heraus; <code>_INSERT</code> erzeugt diese drei selbst und will nur den Rumpf.</td>
+              </tr>
+              <tr>
+                <td>Objekt „inaktiv", obwohl es aktiv ist</td>
+                <td>Die <code>DDIF_*_ACTIVATE</code>-Bausteine liefern <code>4</code> für „aktiviert mit Warnung"; erst ab <code>8</code> bleibt das Objekt inaktiv. Die 4 als Fehler zu werten bricht den Lauf an einer brauchbaren Tabelle ab und lässt die Folgeschritte aus.</td>
+              </tr>
+              <tr>
+                <td>CDS-Quelle ließ sich nicht sichern</td>
+                <td><code>PUT_STATE = 'M'</code> ist ein <b>Lese</b>zustand; der DDL-Handler lehnt ihn beim Sichern ab. Die neue, noch inaktive Fassung ist <code>'N'</code>.</td>
+              </tr>
+              <tr>
+                <td>Index nannte die Tabelle des Quellsystems</td>
+                <td><code>DD12V-DBINDEX</code> ist der Name auf der Datenbank und wird aus dem Tabellennamen gebildet. Beim Import leeren — die Aktivierung setzt den richtigen.</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -990,7 +1048,7 @@
               <tr><td>Markdown als drittes Format</td><td>nicht begonnen; greift auf denselben ITF-Rohtext zu wie HTML</td></tr>
               <tr><td>DOCX</td><td>bewusst zurückgestellt — ZIP-Container mit OOXML, deutlich mehr Aufwand als HTML. Für „im Word öffnen" reicht oft HTML</td></tr>
               <tr><td>Anwendungsprotokoll (BAL)</td><td>offen: gelesene Knoten, übersprungene wegen Berechtigung, abgeschnittene Tabellen, Laufzeit</td></tr>
-              <tr><td><code>S_DEVELOP</code>-Prüfung im DEV-Report</td><td>offen; der IMG-Report prüft bereits <code>S_TABU_NAM</code></td></tr>
+              <tr><td><code>S_DEVELOP</code> vorab prüfen</td><td>beim Import prüfen die gerufenen Bausteine selbst, aber erst je Objekt. Eine Prüfung vor dem Lauf würde einen aussichtslosen Import gar nicht erst starten</td></tr>
               <tr><td>Reimport von Customizing</td><td>bleibt bei BC-Sets — der Documizer schreibt bewusst nicht in Customizing-Tabellen</td></tr>
               <tr><td>Anzeigen ohne Anlegen</td><td>offen; eine XML-Datei nur einlesen und nach HTML rendern, ohne Systemzugriff — Parser und Renderer sind da, es fehlt der Schalter</td></tr>
               <tr><td>Bausteine im Verwendungsnachweis</td><td>für die Richtung „welcher Baustein wird von wem gerufen" gibt es keinen Index; ein Scan über alle Programme wäre zu teuer</td></tr>

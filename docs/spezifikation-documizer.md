@@ -1,6 +1,6 @@
 # Spezifikation: Documizer — IMG- und Entwicklerdokumentationsreports
 
-**Stand:** 20.08.2026
+**Stand:** 25.08.2026
 **Grundlage:** [Recherche](recherche-img-und-entwicklerdoku.md)
 **Zielsystem:** S/4HANA On-Premise, SAP_BASIS 758, klassisches ABAP
 
@@ -20,8 +20,9 @@ ist, steht es unter [9. Offene Punkte](#9-offene-punkte).
 
 ### 1.1 Phasenschnitt
 
-- **Phase 1** — beide Reports, Export nach XML und HTML.
-- **Phase 2** — Rückschreiben ins System.
+- **Phase 1** — beide Reports, Export nach XML und HTML. *Erledigt.*
+- **Phase 2** — Rückschreiben ins System. *Für Repository-Objekte erledigt, für Customizing
+  bewusst nicht vorgesehen.*
 
 Für **Customizing** bleibt es bei der ursprünglichen Abgrenzung: das lösen BC-Sets
 (`SCPR3`/`SCPR20`), und sie sind im Fehlerfall belastbarer als eine Eigenentwicklung. Der
@@ -61,10 +62,10 @@ Beide Reports haben denselben Ablauf. Nur der Collector unterscheidet sich.
 Selektionsbild
      │
      ▼
-┌──────────────────┐     ┌───────────────────────────┐
-│  Collector       │────▶│  Kapitelmodell (generisch) │
-│  IMG | DEV       │     │  lcl_chapter / lcl_object  │
-└──────────────────┘     └────────────┬──────────────┘
+┌──────────────────┐     ┌────────────────────────────┐
+│  Collector       │────▶│  Kapitelmodell (generisch)  │
+│  IMG | DEV       │     │  lcl_chapter / lcl_object   │
+└──────────────────┘     └────────────┬───────────────┘
                                       │
                           ┌───────────┴───────────┐
                           ▼                       ▼
@@ -74,6 +75,17 @@ Selektionsbild
                     Parser → Modell → XML   (Roundtrip-Selbsttest)
 ```
 
+Der DEV-Report kann die Kette umkehren. Dann steht am Anfang die Datei und am Ende das
+Zielsystem — dazwischen liegt dasselbe Modell:
+
+```
+XML-Datei (PC | Appl.-Server)
+     │
+     ▼
+lcl_parser_xml ──▶ Kapitelmodell ──▶ lcl_importer ──▶ DDIC / Repository
+                   mit <definition>                    (Testlauf: nur Protokoll)
+```
+
 ### 2.2 Lokale Klassen je Report
 
 | Klasse / Interface | Aufgabe |
@@ -81,7 +93,7 @@ Selektionsbild
 | `lcl_t` | Texte: `t( )` folgt der Ausgabesprache, `ui( )` der Anmeldesprache |
 | `lif_docu_collector` | Schnittstelle: `collect` liefert das Dokument |
 | `lcl_collector_img` / `lcl_collector_dev` | Der jeweilige Collector |
-| `lcl_chapter` | Kapitelknoten (Baum) |
+| `lcl_chapter` | Kapitelknoten (Baum), trägt auch die Definitionsdaten |
 | `lcl_object` | Objektblock innerhalb eines Kapitels (Felder, Zeilen, Vermerk) |
 | `lcl_document` | Wurzel mit `<meta>` |
 | `lif_docu_renderer` | Schnittstelle: `render` liefert den Dateiinhalt |
@@ -89,6 +101,8 @@ Selektionsbild
 | `lcl_parser_xml` | Rücklesen über `cl_sxml_string_reader` |
 | `lcl_renderer_html` | HTML mit Inhaltsverzeichnis, CSS eingebettet |
 | `lcl_cust` (nur IMG) | Auflösung und Lesen des Customizings |
+| `lcl_attr` (nur DEV) | DDIC-Struktur ↔ Name/Wert-Paare, per RTTI (siehe 5.5) |
+| `lcl_importer` (nur DEV) | Legt die Objekte im Zielsystem an (siehe 5.6) |
 
 **sXML statt Simple Transformation.** Die ursprüngliche Planung sah eine eigene ST vor. Eine ST
 ist ein Repository-Objekt und hätte die Copy/Paste-Bedingung gebrochen. `cl_sxml_string_writer`
@@ -322,6 +336,7 @@ Pseudotyp `FUNC`: Kurztext aus `TFTIT`, Doku über Dokuklasse `FU`, Schnittstell
 | `P_RDEP` | 1 | Verweistiefe, 0 = keine |
 | `P_NOSAP` | | SAP-Standard ausschließen |
 | `P_MAXUSE` | 50 | Maximale Verwendungen je Objekt |
+| `P_UDEP` | 0 | Verwendungstiefe — dokumentiert die gefundenen Verwender selbst mit |
 | `P_MAXHIT` | 40 | Maximale Fundstellen je Stelle |
 | `P_FSRC` | | Fundstellen im ganzen Quelltext |
 | `P_DEF` | X | Definitionsdaten für den Reimport (siehe 5.5) |
@@ -506,8 +521,9 @@ Serialisierung über **sXML** (`cl_sxml_string_writer`), Rücklesen über
 </documizer>
 ```
 
-Für `type="DEV"` sind `meta` und `chapters` identisch; unterschiedlich sind nur die Objektarten
-(`CALLS`, `USAGE`, `SOURCE`, `FUNC`, …).
+Für `type="DEV"` sind `meta` und `chapters` identisch; unterschiedlich sind die Objektarten
+(`CALLS`, `USAGE`, `SOURCE`, `FUNC`, …) und das zusätzliche Element `<definition>` je
+Objektkapitel (siehe 5.5).
 
 ### 5.3 Regeln
 
@@ -518,18 +534,23 @@ Für `type="DEV"` sind `meta` und `chapters` identisch; unterschiedlich sind nur
 - **Dokumentation im ITF-Rohformat**, Umsetzung nach HTML erst beim Rendern. So bleibt der
   Reimport verlustfrei.
 - **Keine Zeitstempel oder Benutzer in den Kapiteldaten** — ausschließlich in `<meta>`.
-- **Modellerweiterungen nur innerhalb des bestehenden Schemas.** Die Fundstellenmarkierung
-  nutzt deshalb das vorhandene Feldkennzeichen `key`; ein neues Attribut hätte jedes bisher
-  geschriebene Dokument gebrochen.
+- **Erweitern statt ändern.** Ein neues Attribut an einem bestehenden Element bricht jedes
+  bisher geschriebene Dokument. Die Fundstellenmarkierung nutzt deshalb das vorhandene
+  Feldkennzeichen `key` statt eines eigenen Attributs. Wo eine Erweiterung unvermeidlich war —
+  die Definitionsdaten in 5.5 — steht sie in **neuen, eigenen Elementen**, die ein älterer
+  Parser überliest, und die Formatversion ist auf 1.1 gegangen.
+- **Quelltext gehört in Elemente, nicht in Attribute.** XML normalisiert Zeilenumbrüche
+  innerhalb eines Attributwerts zu Leerzeichen. Ein Quelltext im Attribut käme einzeilig
+  zurück — ohne Fehlermeldung. Deshalb `<source>`, `<defsource>` und `<src>`.
 
 ### 5.4 Roundtrip-Selbsttest
 
 `P_RTEST` rendert das Modell nach XML, liest es zurück, rendert erneut und vergleicht
 zeichenweise. Das Ergebnis steht im Protokoll (`IDENTISCH - bestanden` / `ABWEICHUNG`).
 
-Der Test ist die Absicherung für Phase 2: geht beim Hin- und Rückweg etwas verloren, fällt es
-hier auf und nicht erst beim Zurückspielen. Er ist auch der Grund, warum Modellerweiterungen
-mit dem bestehenden Schema auskommen müssen.
+Der Test ist die Absicherung des Reimports: geht beim Hin- und Rückweg etwas verloren, fällt es
+hier auf und nicht erst im Zielsystem. Jede Formaterweiterung — Definitionsdaten,
+Quelltext je Zeile — wurde erst nach einem bestandenen Roundtrip weitergebaut.
 
 Nebenwirkung: das XML wird auch dann erzeugt, wenn `P_XML` aus ist — sonst gäbe es nichts zu
 prüfen.
@@ -704,12 +725,25 @@ Markdown ist noch nicht umgesetzt (siehe 9).
 
 - Berechtigungsprüfung `S_TABU_NAM` je gelesener Customizing-Tabelle. Nicht lesbare Tabellen
   erscheinen mit Vermerk, nicht stillschweigend ausgelassen.
-- `S_DEVELOP` für den Entwicklerreport ist **noch nicht geprüft** (siehe 9).
 - Größere Läufe im Hintergrund, Ablage dann auf dem Applikationsserver.
 - Anwendungsprotokoll (`BAL`) ist **noch nicht umgesetzt** (siehe 9); das Laufprotokoll steht
   bisher nur in der Liste.
 
-### 7.1 Laufzeit
+### 7.1 Berechtigungen beim Import
+
+Der Import ist die einzige Stelle, an der der Documizer schreibt. Die gerufenen APIs prüfen
+`S_DEVELOP` gegen Objekt und Paket, und **diese Prüfung bleibt eingeschaltet**: `AUTH_CHK`
+bzw. `AUTHORITY_CHECK` steht überall auf `X`. Fehlen die Rechte, weigert sich der Baustein,
+und der Lauf schreibt die Ablehnung ins Protokoll.
+
+Das ist bewusst so und nicht der bequemste Weg. Die Prüfung abzuschalten wäre eine Zeile und
+würde den Report zu einem Werkzeug machen, mit dem jemand Repository-Objekte anlegt, die er
+von Hand nicht anlegen dürfte.
+
+Was der Report **nicht** tut: eine eigene Prüfung vor dem Lauf. Wer keine Rechte hat, erfährt
+das objektweise aus dem Protokoll statt einmal vorab (siehe 9).
+
+### 7.2 Laufzeit
 
 Zwei Stellen kosten spürbar und sind entsprechend gedeckelt:
 
@@ -738,9 +772,15 @@ Namensauflösungen gegen `TADIR` laufen gebündelt, nicht mit einem `SELECT SING
 | 6c | Startpunkt wählbar, Verweistiefe | erledigt |
 | 6d | Verwendungsnachweis, ausgehende Aufrufe, Quelltext-Scan | erledigt |
 | 6e | SAP-Standard-Filter | erledigt |
-| 7 | Markdown-Renderer | offen |
-| 8 | Reimport Phase 1 (Anzeige) | offen |
-| 9 | BAL-Protokoll, `S_DEVELOP` | offen |
+| 6f | Große Blöcke im HTML einklappbar (`P_FOLD`) | erledigt |
+| 7 | Definitionsdaten im XML, Formatversion 1.1 | erledigt |
+| 7a | Reimport: Domänen, Datenelemente, Tabellen, Reports | erledigt |
+| 7b | Reimport: Klassen, Interfaces, Funktionsgruppen | erledigt |
+| 7c | Reimport: Views, CDS-Quellen | erledigt |
+| 7d | Reimport: Sekundärindizes | erledigt |
+| 8 | Markdown-Renderer | offen |
+| 9 | Anzeigen ohne Anlegen | offen |
+| 10 | BAL-Protokoll, `S_DEVELOP` | offen |
 
 ## 9. Offene Punkte
 
@@ -750,7 +790,9 @@ Namensauflösungen gegen `TADIR` laufen gebündelt, nicht mit einem `SELECT SING
    Systemzugriff. Parser und Renderer sind da, es fehlt der Schalter.
 3. **BAL-Anwendungsprotokoll** — gelesene Knoten/Objekte, übersprungene wegen Berechtigung,
    abgeschnittene Tabellen, Laufzeit.
-4. **`S_DEVELOP`-Prüfung** im Entwicklerreport.
+4. **`S_DEVELOP` vorab prüfen** — beim Import prüfen die gerufenen APIs selbst (siehe 7.1),
+   aber erst je Objekt. Eine Prüfung vor dem Lauf würde einen aussichtslosen Import gar nicht
+   erst starten.
 5. **Funktionsbausteine im Verwendungsnachweis** — für die Richtung „welcher Baustein wird von
    wem gerufen" gibt es keinen Index; ein Quelltext-Scan über alle Programme wäre zu teuer.
 6. **Mandantenabhängiges Customizing** — der Export bezieht sich auf den Anmeldemandanten.

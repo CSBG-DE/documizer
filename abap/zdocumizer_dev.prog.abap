@@ -1029,6 +1029,12 @@ ENDCLASS.
 * structures the DDIF_*_PUT function modules expect, so the importer
 * only has to fill them and hand them over.
 *
+* The authority check of the called APIs stays switched on. They test
+* S_DEVELOP for the object and the package and refuse when the rights
+* are missing - which is exactly what should happen. Switching it off
+* would let this report create repository objects for someone who is
+* not allowed to create them by hand.
+*
 * Two rules run through the whole class:
 *   - Nothing is written in a test run. The caller has to switch that
 *     off, and every step reports what it would have done.
@@ -1526,7 +1532,7 @@ CLASS lcl_importer IMPLEMENTATION.
     IF mv_act = abap_true.
       CALL FUNCTION 'DDIF_DOMA_ACTIVATE'
         EXPORTING  name        = lv_obj
-                   auth_chk    = abap_false
+                   auth_chk    = abap_true
         IMPORTING  rc          = lv_rc
         EXCEPTIONS not_found   = 1
                    put_failure = 2
@@ -1596,7 +1602,7 @@ CLASS lcl_importer IMPLEMENTATION.
     IF mv_act = abap_true.
       CALL FUNCTION 'DDIF_DTEL_ACTIVATE'
         EXPORTING  name        = lv_obj
-                   auth_chk    = abap_false
+                   auth_chk    = abap_true
         IMPORTING  rc          = lv_rc
         EXCEPTIONS not_found   = 1
                    put_failure = 2
@@ -1721,7 +1727,7 @@ CLASS lcl_importer IMPLEMENTATION.
     IF mv_act = abap_true.
       CALL FUNCTION 'DDIF_TABL_ACTIVATE'
         EXPORTING  name        = lv_obj
-                   auth_chk    = abap_false
+                   auth_chk    = abap_true
         IMPORTING  rc          = lv_rc
         EXCEPTIONS not_found   = 1
                    put_failure = 2
@@ -1812,7 +1818,7 @@ CLASS lcl_importer IMPLEMENTATION.
         CALL FUNCTION 'DDIF_INDX_ACTIVATE'
           EXPORTING  name        = lv_obj
                      id          = lv_id
-                     auth_chk    = abap_false
+                     auth_chk    = abap_true
           IMPORTING  rc          = lv_rc
           EXCEPTIONS not_found   = 1
                      put_failure = 2
@@ -2013,7 +2019,7 @@ CLASS lcl_importer IMPLEMENTATION.
     IF mv_act = abap_true.
       CALL FUNCTION 'DDIF_VIEW_ACTIVATE'
         EXPORTING  name        = lv_obj
-                   auth_chk    = abap_false
+                   auth_chk    = abap_true
         IMPORTING  rc          = lv_rc
         EXCEPTIONS not_found   = 1
                    put_failure = 2
@@ -2182,7 +2188,7 @@ CLASS lcl_importer IMPLEMENTATION.
                    corrnr          = lv_corr
                    overwrite       = abap_true
                    suppress_dialog = abap_true
-                   authority_check = abap_false
+                   authority_check = abap_true
         CHANGING   class           = ls_class
         EXCEPTIONS existing        = 1
                    is_interface    = 2
@@ -2204,7 +2210,7 @@ CLASS lcl_importer IMPLEMENTATION.
                    corrnr          = lv_corr
                    overwrite       = abap_true
                    suppress_dialog = abap_true
-                   authority_check = abap_false
+                   authority_check = abap_true
         CHANGING   interface       = ls_intf
         EXCEPTIONS existing        = 1
                    is_class        = 2
@@ -2225,7 +2231,7 @@ CLASS lcl_importer IMPLEMENTATION.
     TRY.
         DATA(lo_src) = cl_oo_factory=>create_instance( )->create_clif_source(
           clif_name = CONV seoclsname( iv_name ) ).
-        lo_src->lock( authority_check = abap_false ).
+        lo_src->lock( authority_check = abap_true ).
         lo_src->set_source( lt_src ).
         lo_src->save( ).
         lo_src->unlock( ).
@@ -2299,7 +2305,7 @@ CLASS lcl_importer IMPLEMENTATION.
                    corrnum                 = lv_corr
                    suppress_corr_check     = abap_true
                    suppress_language_check = abap_true
-                   authority_check         = abap_false
+                   authority_check         = abap_true
         EXCEPTIONS name_already_exists     = 1
                    name_not_correct        = 2
                    function_already_exists = 3

@@ -826,7 +826,7 @@
             <thead><tr><th>Objekttyp</th><th>wird angelegt</th></tr></thead>
             <tbody>
               <tr><td>Domäne, Datenelement</td><td>ja, mit Festwerten und Texten</td></tr>
-              <tr><td>Tabelle, Struktur</td><td>ja, samt technischen Einstellungen</td></tr>
+              <tr><td>Tabelle, Struktur</td><td>ja, samt technischen Einstellungen und Sekundärindizes</td></tr>
               <tr><td>Report, Include</td><td>ja, mit Textelementen und Dokumentation</td></tr>
               <tr><td>Interface, Klasse</td><td>ja, als quelltextbasierte Fassung</td></tr>
               <tr><td>Funktionsgruppe</td><td>ja, mit Includes, Bausteinen und deren Schnittstelle</td></tr>
@@ -992,7 +992,7 @@
               <tr><td>Anwendungsprotokoll (BAL)</td><td>offen: gelesene Knoten, übersprungene wegen Berechtigung, abgeschnittene Tabellen, Laufzeit</td></tr>
               <tr><td><code>S_DEVELOP</code>-Prüfung im DEV-Report</td><td>offen; der IMG-Report prüft bereits <code>S_TABU_NAM</code></td></tr>
               <tr><td>Reimport von Customizing</td><td>bleibt bei BC-Sets — der Documizer schreibt bewusst nicht in Customizing-Tabellen</td></tr>
-              <tr><td>Sekundärindizes beim Reimport</td><td>offen; Tabellen und Views selbst werden vollständig angelegt, ihre Indizes noch nicht</td></tr>
+              <tr><td>Anzeigen ohne Anlegen</td><td>offen; eine XML-Datei nur einlesen und nach HTML rendern, ohne Systemzugriff — Parser und Renderer sind da, es fehlt der Schalter</td></tr>
               <tr><td>Bausteine im Verwendungsnachweis</td><td>für die Richtung „welcher Baustein wird von wem gerufen" gibt es keinen Index; ein Scan über alle Programme wäre zu teuer</td></tr>
               <tr><td>Mandantenabhängiges Customizing</td><td>der Export bezieht sich auf den Anmeldemandanten; mandantenübergreifendes Customizing ist nicht gesondert gekennzeichnet</td></tr>
               <tr><td>Tabs Mitarbeiter und Stichwörter</td><td>liegen in Nachbartabellen von <code>CUSSTAT</code>, mit demselben Muster anbindbar</td></tr>

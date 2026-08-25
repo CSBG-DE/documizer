@@ -250,6 +250,8 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'Interfaces und Funktionsgruppen mit ihren Bausteinen.' ).
     a( iv_f = 'B1' iv_t = 'Bei einer CDS-Quelle entstehen SQL-View und Strukturobjekt beim' ).
     a( iv_f = '=' iv_t = 'Aktivieren von selbst; sie stehen nicht im Dokument.' ).
+    a( iv_f = 'B1' iv_t = 'Sekundaerindizes einer Tabelle reisen mit und werden angelegt,' ).
+    a( iv_f = '=' iv_t = 'nachdem die Tabelle aktiv ist.' ).
     a( iv_f = 'B1' iv_t = 'Klassen reisen als quelltextbasierte Fassung - der Text, den SE24' ).
     a( iv_f = '=' iv_t = 'zeigt. Autor, Aenderungsdatum und UUID bleiben im Quellsystem.' ).
     a( iv_f = 'B1' iv_t = 'Testlauf ist vorbelegt: der Report meldet, was er anlegen wuerde, und' ).

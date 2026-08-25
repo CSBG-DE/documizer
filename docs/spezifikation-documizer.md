@@ -588,6 +588,7 @@ Applikationsserver —, über denselben Parser ins Modell, dann die Objekte anle
 | Domäne | `DDIF_DOMA_PUT` + `DDIF_DOMA_ACTIVATE` | umgesetzt |
 | Datenelement | `DDIF_DTEL_PUT` + `DDIF_DTEL_ACTIVATE` | umgesetzt |
 | Tabelle, Struktur | `DDIF_TABL_PUT` + `DDIF_TABL_ACTIVATE` | umgesetzt |
+| Sekundärindex | `DDIF_INDX_PUT` + `DDIF_INDX_ACTIVATE` | umgesetzt |
 | View | `DDIF_VIEW_PUT` + `DDIF_VIEW_ACTIVATE` | umgesetzt |
 | CDS-Quelle | `IF_DD_DDL_HANDLER` (`save`, `write_tadir`, `activate`) | umgesetzt |
 | Report, Include | `INSERT REPORT … DIRECTORY ENTRY`, `INSERT TEXTPOOL` | umgesetzt |
@@ -597,6 +598,18 @@ Applikationsserver —, über denselben Parser ins Modell, dann die Objekte anle
 
 **Views** laufen wie Tabellen: `DDIF_VIEW_GET` liefert `DD25V`, `DD09V`, `DD26V`, `DD27P`,
 `DD28J`, `DD28V`, `DD35V` und `DD36M`, `DDIF_VIEW_PUT` nimmt dieselben Strukturen wieder an.
+
+**Sekundärindizes** sind eigene Objekte: `DDIF_TABL_GET` gibt sie als `DD12V`/`DD17V` heraus,
+aber `DDIF_TABL_PUT` nimmt sie nicht an — dafür gibt es `DDIF_INDX_PUT`. Sie reisen deshalb
+als Zeilen der Tabellendefinition mit und werden angelegt, **nachdem** die Tabelle aktiv ist;
+ein Index auf einer Tabelle, die es noch nicht gibt, lässt sich nicht aktivieren. Das Feld
+`DBINDEX` bleibt dabei leer: es enthält den Namen auf der Datenbank, der aus dem Tabellennamen
+gebildet wird, und würde unverändert übernommen noch die Tabelle des Quellsystems nennen.
+
+**Rückgabecodes der Aktivierung.** Die `DDIF_*_ACTIVATE`-Bausteine bewerten ihr Ergebnis: 0 ist
+sauber, 4 heißt „aktiviert mit Warnung", ab 8 hat es nicht geklappt. Nur ab 8 bleibt das Objekt
+inaktiv. Die 4 als Fehler zu behandeln hieße, den Lauf an einer Tabelle abzubrechen, die
+einwandfrei benutzbar ist — und die Folgeschritte, etwa die Indizes, auszulassen.
 
 **CDS-Quellen** haben keinen `DDIF_*`-Baustein. Der einzige Weg führt über
 `CL_DD_DDL_HANDLER_FACTORY=>CREATE( )` und läuft in drei Schritten: Quelle sichern, Objekt in
@@ -733,16 +746,14 @@ Namensauflösungen gegen `TADIR` laufen gebündelt, nicht mit einem `SELECT SING
 
 1. **Markdown-Ausgabe** — geplant war ATX-Überschriften, Pipe-Tabellen, Codefences mit
    Sprachkennzeichen `abap`. Bisher nur XML und HTML.
-2. **Sekundärindizes beim Reimport** — `DDIF_TABL_GET` liefert `DD12V`/`DD17V`, `DDIF_TABL_PUT`
-   nimmt sie nicht an. Für Indizes wäre `DDIF_INDX_PUT` nötig.
-3. **Anzeigen ohne Anlegen** — eine XML-Datei nur einlesen und nach HTML rendern, ohne
+2. **Anzeigen ohne Anlegen** — eine XML-Datei nur einlesen und nach HTML rendern, ohne
    Systemzugriff. Parser und Renderer sind da, es fehlt der Schalter.
-4. **BAL-Anwendungsprotokoll** — gelesene Knoten/Objekte, übersprungene wegen Berechtigung,
+3. **BAL-Anwendungsprotokoll** — gelesene Knoten/Objekte, übersprungene wegen Berechtigung,
    abgeschnittene Tabellen, Laufzeit.
-5. **`S_DEVELOP`-Prüfung** im Entwicklerreport.
-6. **Funktionsbausteine im Verwendungsnachweis** — für die Richtung „welcher Baustein wird von
+4. **`S_DEVELOP`-Prüfung** im Entwicklerreport.
+5. **Funktionsbausteine im Verwendungsnachweis** — für die Richtung „welcher Baustein wird von
    wem gerufen" gibt es keinen Index; ein Quelltext-Scan über alle Programme wäre zu teuer.
-7. **Mandantenabhängiges Customizing** — der Export bezieht sich auf den Anmeldemandanten.
+6. **Mandantenabhängiges Customizing** — der Export bezieht sich auf den Anmeldemandanten.
    Mandantenübergreifendes Customizing ist noch nicht gesondert gekennzeichnet.
-8. **Dokumentationsobjekte im Transport** — die von `ZDOCUMIZER_DOCU` erzeugte
+7. **Dokumentationsobjekte im Transport** — die von `ZDOCUMIZER_DOCU` erzeugte
    Reportdokumentation liegt nicht im Transportauftrag.

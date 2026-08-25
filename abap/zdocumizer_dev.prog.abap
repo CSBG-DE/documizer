@@ -1081,6 +1081,8 @@ CLASS lcl_importer DEFINITION.
                                iv_name    TYPE string.
     METHODS put_prog IMPORTING io_chapter TYPE REF TO lcl_chapter
                                iv_name    TYPE string.
+    METHODS put_index IMPORTING io_chapter TYPE REF TO lcl_chapter
+                                iv_name    TYPE string.
     METHODS put_view IMPORTING io_chapter TYPE REF TO lcl_chapter
                                iv_name    TYPE string.
     METHODS put_ddls IMPORTING io_chapter TYPE REF TO lcl_chapter
@@ -1529,7 +1531,7 @@ CLASS lcl_importer IMPLEMENTATION.
         EXCEPTIONS not_found   = 1
                    put_failure = 2
                    OTHERS      = 3.
-      IF sy-subrc <> 0 OR lv_rc > 0.
+      IF sy-subrc <> 0 OR lv_rc > 4.
         log( iv_kind = 'DOMA' iv_name = iv_name
              iv_action = lcl_t=>ui( d = `angelegt, inaktiv` e = `created, inactive` )
              iv_text   = |DDIF_DOMA_ACTIVATE rc { lv_rc }| ).
@@ -1599,7 +1601,7 @@ CLASS lcl_importer IMPLEMENTATION.
         EXCEPTIONS not_found   = 1
                    put_failure = 2
                    OTHERS      = 3.
-      IF sy-subrc <> 0 OR lv_rc > 0.
+      IF sy-subrc <> 0 OR lv_rc > 4.
         log( iv_kind = 'DTEL' iv_name = iv_name
              iv_action = lcl_t=>ui( d = `angelegt, inaktiv` e = `created, inactive` )
              iv_text   = |DDIF_DTEL_ACTIVATE rc { lv_rc }| ).
@@ -1676,13 +1678,19 @@ CLASS lcl_importer IMPLEMENTATION.
       ENDCASE.
     ENDLOOP.
 
+    DATA(lv_nidx) = REDUCE i( INIT n = 0 FOR r IN io_chapter->get_defrows( )
+                              NEXT n = COND #( WHEN r-tag = 'DD12V' THEN n + 1 ELSE n ) ).
+
     IF mv_test = abap_true.
       log( iv_kind = 'TABL' iv_name = iv_name
            iv_action = COND #( WHEN lv_ex = abap_true
                                THEN lcl_t=>ui( d = `wuerde geaendert` e = `would change` )
                                ELSE lcl_t=>ui( d = `wuerde angelegt` e = `would create` ) )
            iv_text   = |{ ls_dd02v-tabclass }, { lines( lt_dd03p ) } | &&
-                       |{ lcl_t=>ui( d = `Felder` e = `fields` ) }| ).
+                       |{ lcl_t=>ui( d = `Felder` e = `fields` ) }| &&
+                       COND string( WHEN lv_nidx > 0
+                                    THEN |, { lv_nidx } { lcl_t=>ui( d = `Indizes` e = `indexes` ) }|
+                                    ELSE `` ) ).
       RETURN.
     ENDIF.
 
@@ -1718,7 +1726,7 @@ CLASS lcl_importer IMPLEMENTATION.
         EXCEPTIONS not_found   = 1
                    put_failure = 2
                    OTHERS      = 3.
-      IF sy-subrc <> 0 OR lv_rc > 0.
+      IF sy-subrc <> 0 OR lv_rc > 4.
         log( iv_kind = 'TABL' iv_name = iv_name
              iv_action = lcl_t=>ui( d = `angelegt, inaktiv` e = `created, inactive` )
              iv_text   = |DDIF_TABL_ACTIVATE rc { lv_rc }| ).
@@ -1731,6 +1739,96 @@ CLASS lcl_importer IMPLEMENTATION.
                              THEN lcl_t=>ui( d = `geaendert` e = `changed` )
                              ELSE lcl_t=>ui( d = `angelegt` e = `created` ) ) ).
     put_docu( io_chapter = io_chapter iv_kind = 'TABL' iv_name = iv_name ).
+
+*   Only now, with the table active: an index on a table that is not
+*   there yet cannot be activated.
+*
+*   The activation grades its result: 0 is clean, 4 means activated with
+*   a warning, 8 and above means it did not work. Only from 8 upwards
+*   does the object stay inactive - treating 4 as a failure would stop
+*   the run on a table that is perfectly usable.
+    IF lv_nidx > 0.
+      put_index( io_chapter = io_chapter iv_name = iv_name ).
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD put_index.
+
+    DATA ls_dd12v TYPE dd12v.
+    DATA ls_dd17v TYPE dd17v.
+    DATA lt_dd17v TYPE STANDARD TABLE OF dd17v WITH EMPTY KEY.
+    DATA lv_obj   TYPE ddobjname.
+    DATA lv_id    TYPE ddobjectid.
+    DATA lv_rc    TYPE sy-subrc.
+
+    lv_obj = iv_name.
+
+    LOOP AT io_chapter->get_defrows( ) INTO DATA(ls_row) WHERE tag = 'DD12V'.
+      CLEAR: ls_dd12v, lt_dd17v.
+      lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs
+                           CHANGING  cs_data  = ls_dd12v ).
+      IF ls_dd12v-indexname IS INITIAL.
+        CONTINUE.
+      ENDIF.
+      lv_id = ls_dd12v-indexname.
+*     The index name ties header and fields together; both carry it.
+      ls_dd12v-sqltab = lv_obj.
+*     DBINDEX holds the name on the database and is built from the table
+*     name. Carried over unchanged it would still name the table of the
+*     source system; the activation puts the right one in.
+      CLEAR: ls_dd12v-dbindex, ls_dd12v-as4user,
+             ls_dd12v-as4date, ls_dd12v-as4time.
+
+      LOOP AT io_chapter->get_defrows( ) INTO DATA(ls_f) WHERE tag = 'DD17V'.
+        IF lcl_attr=>value( it_attrs = ls_f-attrs iv_name = 'INDEXNAME' ) <> lv_id.
+          CONTINUE.
+        ENDIF.
+        CLEAR ls_dd17v.
+        lcl_attr=>to_struct( EXPORTING it_attrs = ls_f-attrs
+                             CHANGING  cs_data  = ls_dd17v ).
+        ls_dd17v-sqltab = lv_obj.
+        APPEND ls_dd17v TO lt_dd17v.
+      ENDLOOP.
+
+      CALL FUNCTION 'DDIF_INDX_PUT'
+        EXPORTING  name              = lv_obj
+                   id                = lv_id
+                   dd12v_wa          = ls_dd12v
+        TABLES     dd17v_tab         = lt_dd17v
+        EXCEPTIONS indx_not_found    = 1
+                   name_inconsistent = 2
+                   indx_inconsistent = 3
+                   put_refused       = 4
+                   OTHERS            = 5.
+      IF sy-subrc <> 0.
+        log( iv_kind = 'INDX' iv_name = |{ iv_name }-{ lv_id }|
+             iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+             iv_text   = |DDIF_INDX_PUT subrc { sy-subrc }| ).
+        CONTINUE.
+      ENDIF.
+
+      IF mv_act = abap_true.
+        CALL FUNCTION 'DDIF_INDX_ACTIVATE'
+          EXPORTING  name        = lv_obj
+                     id          = lv_id
+                     auth_chk    = abap_false
+          IMPORTING  rc          = lv_rc
+          EXCEPTIONS not_found   = 1
+                     put_failure = 2
+                     OTHERS      = 3.
+        IF sy-subrc <> 0 OR lv_rc > 4.
+          log( iv_kind = 'INDX' iv_name = |{ iv_name }-{ lv_id }|
+               iv_action = lcl_t=>ui( d = `angelegt, inaktiv` e = `created, inactive` )
+               iv_text   = |DDIF_INDX_ACTIVATE rc { lv_rc }| ).
+          CONTINUE.
+        ENDIF.
+      ENDIF.
+
+      log( iv_kind = 'INDX' iv_name = |{ iv_name }-{ lv_id }|
+           iv_action = lcl_t=>ui( d = `angelegt` e = `created` )
+           iv_text   = |{ lines( lt_dd17v ) } { lcl_t=>ui( d = `Felder` e = `fields` ) }| ).
+    ENDLOOP.
 
   ENDMETHOD.
 
@@ -1920,7 +2018,7 @@ CLASS lcl_importer IMPLEMENTATION.
         EXCEPTIONS not_found   = 1
                    put_failure = 2
                    OTHERS      = 3.
-      IF sy-subrc <> 0 OR lv_rc > 0.
+      IF sy-subrc <> 0 OR lv_rc > 4.
         log( iv_kind = 'VIEW' iv_name = iv_name
              iv_action = lcl_t=>ui( d = `angelegt, inaktiv` e = `created, inactive` )
              iv_text   = |DDIF_VIEW_ACTIVATE rc { lv_rc }| ).
@@ -3492,6 +3590,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     DATA lt_dd08v TYPE STANDARD TABLE OF dd08v WITH EMPTY KEY.
     DATA lt_dd35v TYPE STANDARD TABLE OF dd35v WITH EMPTY KEY.
     DATA lt_dd36m TYPE STANDARD TABLE OF dd36m WITH EMPTY KEY.
+    DATA lt_dd12v TYPE STANDARD TABLE OF dd12v WITH EMPTY KEY.
+    DATA lt_dd17v TYPE STANDARD TABLE OF dd17v WITH EMPTY KEY.
     DATA lv_obj   TYPE ddobjname.
 
     lv_obj = iv_name.
@@ -3504,6 +3604,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       TABLES     dd03p_tab     = lt_dd03p
                  dd05m_tab     = lt_dd05m
                  dd08v_tab     = lt_dd08v
+                 dd12v_tab     = lt_dd12v
+                 dd17v_tab     = lt_dd17v
                  dd35v_tab     = lt_dd35v
                  dd36m_tab     = lt_dd36m
       EXCEPTIONS illegal_input = 1
@@ -3540,6 +3642,18 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     LOOP AT lt_dd36m INTO DATA(ls_dd36m).
       io_chapter->add_defrow( VALUE ty_defrow(
         tag = 'DD36M' attrs = lcl_attr=>from_struct( ls_dd36m ) ) ).
+    ENDLOOP.
+
+*   Secondary indexes are objects of their own; DDIF_TABL_PUT does not
+*   take them, DDIF_INDX_PUT does. They travel along here and are
+*   created after the table stands.
+    LOOP AT lt_dd12v INTO DATA(ls_dd12v).
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag = 'DD12V' attrs = lcl_attr=>from_struct( ls_dd12v ) ) ).
+    ENDLOOP.
+    LOOP AT lt_dd17v INTO DATA(ls_dd17v).
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag = 'DD17V' attrs = lcl_attr=>from_struct( ls_dd17v ) ) ).
     ENDLOOP.
 
     rv_ok = abap_true.

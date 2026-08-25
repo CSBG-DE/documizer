@@ -41,8 +41,8 @@ unangetastet. Siehe [Reimport](docs/spezifikation-documizer.md#56-reimport).
 Beide Reports laufen und sind gegen das System S4H (SAP_BASIS 758, S/4HANA 2023) verifiziert.
 Ausgabe als XML und HTML, Ablage auf PC oder Applikationsserver.
 
-Offen sind Markdown als drittes Format, Sekundärindizes beim Reimport, das BAL-Protokoll und
-die `S_DEVELOP`-Prüfung — siehe [Offene Punkte](docs/spezifikation-documizer.md#9-offene-punkte).
+Offen sind Markdown als drittes Format, das BAL-Protokoll und die `S_DEVELOP`-Prüfung — siehe
+[Offene Punkte](docs/spezifikation-documizer.md#9-offene-punkte).
 
 ## Lizenz
 

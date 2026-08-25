@@ -246,9 +246,10 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'anlegen. Voraussetzung ist, dass beim Export die Definitionsdaten' ).
     a( iv_f = '=' iv_t = 'mitgeschrieben wurden.' ).
     a( iv_f = 'B1' iv_t = 'Angelegt werden Domaenen, Datenelemente, Tabellen, Strukturen,' ).
-    a( iv_f = '=' iv_t = 'Programme samt Textelementen, Klassen, Interfaces und' ).
-    a( iv_f = '=' iv_t = 'Funktionsgruppen mit ihren Bausteinen. Views und CDS-Quellen stehen' ).
-    a( iv_f = '=' iv_t = 'im Protokoll als nicht moeglich.' ).
+    a( iv_f = '=' iv_t = 'Views, CDS-Quellen, Programme samt Textelementen, Klassen,' ).
+    a( iv_f = '=' iv_t = 'Interfaces und Funktionsgruppen mit ihren Bausteinen.' ).
+    a( iv_f = 'B1' iv_t = 'Bei einer CDS-Quelle entstehen SQL-View und Strukturobjekt beim' ).
+    a( iv_f = '=' iv_t = 'Aktivieren von selbst; sie stehen nicht im Dokument.' ).
     a( iv_f = 'B1' iv_t = 'Klassen reisen als quelltextbasierte Fassung - der Text, den SE24' ).
     a( iv_f = '=' iv_t = 'zeigt. Autor, Aenderungsdatum und UUID bleiben im Quellsystem.' ).
     a( iv_f = 'B1' iv_t = 'Testlauf ist vorbelegt: der Report meldet, was er anlegen wuerde, und' ).
@@ -256,8 +257,9 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = 'B1' iv_t = 'Ein Objekt, das es hier schon gibt, bleibt unangetastet, solange' ).
     a( iv_f = '=' iv_t = 'Bestehende Objekte ueberschreiben nicht gesetzt ist.' ).
     a( iv_f = 'B1' iv_t = 'Die Reihenfolge legt der Report fest: Domaenen, Datenelemente,' ).
-    a( iv_f = '=' iv_t = 'Tabellen, Programme, Interfaces, Klassen, Funktionsgruppen. Eine' ).
-    a( iv_f = '=' iv_t = 'Tabelle ohne ihre Datenelemente liesse sich nicht aktivieren.' ).
+    a( iv_f = '=' iv_t = 'Tabellen, Views, CDS-Quellen, Programme, Interfaces, Klassen,' ).
+    a( iv_f = '=' iv_t = 'Funktionsgruppen. Eine Tabelle ohne ihre Datenelemente liesse sich' ).
+    a( iv_f = '=' iv_t = 'nicht aktivieren.' ).
     a( iv_f = 'B1' iv_t = 'Aktiviert wird gezielt: aus den inaktiven Objekten des Benutzers' ).
     a( iv_f = '=' iv_t = 'nimmt der Import nur die, die zum eben geschriebenen Objekt gehoeren.' ).
     a( iv_f = '=' iv_t = 'Angefangene Arbeit anderer bleibt unberuehrt.' ).

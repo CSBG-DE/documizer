@@ -1081,6 +1081,10 @@ CLASS lcl_importer DEFINITION.
                                iv_name    TYPE string.
     METHODS put_prog IMPORTING io_chapter TYPE REF TO lcl_chapter
                                iv_name    TYPE string.
+    METHODS put_view IMPORTING io_chapter TYPE REF TO lcl_chapter
+                               iv_name    TYPE string.
+    METHODS put_ddls IMPORTING io_chapter TYPE REF TO lcl_chapter
+                               iv_name    TYPE string.
     METHODS put_clif IMPORTING io_chapter TYPE REF TO lcl_chapter
                                iv_kind    TYPE string
                                iv_name    TYPE string.
@@ -1156,6 +1160,8 @@ CLASS lcl_importer IMPLEMENTATION.
         WHEN 'DOMA'. put_doma( io_chapter = ls_work-chapter iv_name = ls_work-name ).
         WHEN 'DTEL'. put_dtel( io_chapter = ls_work-chapter iv_name = ls_work-name ).
         WHEN 'TABL'. put_tabl( io_chapter = ls_work-chapter iv_name = ls_work-name ).
+        WHEN 'VIEW'. put_view( io_chapter = ls_work-chapter iv_name = ls_work-name ).
+        WHEN 'DDLS'. put_ddls( io_chapter = ls_work-chapter iv_name = ls_work-name ).
         WHEN 'PROG'. put_prog( io_chapter = ls_work-chapter iv_name = ls_work-name ).
         WHEN 'CLAS' OR 'INTF'.
           put_clif( io_chapter = ls_work-chapter
@@ -1176,13 +1182,16 @@ CLASS lcl_importer IMPLEMENTATION.
         WHEN 'DOMA'. lv_seq = 1.
         WHEN 'DTEL'. lv_seq = 2.
         WHEN 'TABL'. lv_seq = 3.
-        WHEN 'PROG'. lv_seq = 4.
+*       A view stands on tables, a CDS source on both.
+        WHEN 'VIEW'. lv_seq = 4.
+        WHEN 'DDLS'. lv_seq = 5.
+        WHEN 'PROG'. lv_seq = 6.
 *       Interfaces before classes - a class implements them. Function
 *       groups last; their modules tend to use everything above.
-        WHEN 'INTF'. lv_seq = 5.
-        WHEN 'CLAS'. lv_seq = 6.
-        WHEN 'FUGR'. lv_seq = 7.
-        WHEN OTHERS. lv_seq = 9.
+        WHEN 'INTF'. lv_seq = 7.
+        WHEN 'CLAS'. lv_seq = 8.
+        WHEN 'FUGR'. lv_seq = 9.
+        WHEN OTHERS. lv_seq = 99.
       ENDCASE.
 
 *     The name comes from the definition, never from the chapter title -
@@ -1194,12 +1203,14 @@ CLASS lcl_importer IMPLEMENTATION.
         WHEN 'DTEL'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'ROLLNAME' ).
         WHEN 'TABL'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'TABNAME' ).
         WHEN 'PROG'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'NAME' ).
+        WHEN 'VIEW'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'VIEWNAME' ).
+        WHEN 'DDLS'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'DDLNAME' ).
         WHEN 'CLAS' OR 'INTF'.
           lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'CLSNAME' ).
         WHEN 'FUGR'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'AREA' ).
       ENDCASE.
 
-      IF lv_name IS NOT INITIAL AND lv_seq < 9.
+      IF lv_name IS NOT INITIAL AND lv_seq < 99.
         APPEND VALUE ty_impwork_row( seq     = lv_seq
                                      kind    = lv_kind
                                      name    = lv_name
@@ -1233,6 +1244,14 @@ CLASS lcl_importer IMPLEMENTATION.
         lv_prg = iv_name.
         SELECT SINGLE @abap_true FROM trdir
           WHERE name = @lv_prg INTO @rv_flag.
+      WHEN 'VIEW'.
+        SELECT SINGLE @abap_true FROM dd25l
+          WHERE viewname = @lv_obj AND as4local = 'A' INTO @rv_flag.
+      WHEN 'DDLS'.
+        DATA lv_ddl TYPE ddlname.
+        lv_ddl = iv_name.
+        SELECT SINGLE @abap_true FROM ddddlsrc
+          WHERE ddlname = @lv_ddl AND as4local = 'A' INTO @rv_flag.
       WHEN 'CLAS' OR 'INTF'.
         DATA lv_cls TYPE seoclsname.
         lv_cls = iv_name.
@@ -1793,6 +1812,218 @@ CLASS lcl_importer IMPLEMENTATION.
                              ELSE lcl_t=>ui( d = `angelegt` e = `created` ) )
          iv_text   = |{ lines( lt_code ) } { lcl_t=>ui( d = `Zeilen` e = `lines` ) }| ).
     put_docu( io_chapter = io_chapter iv_kind = 'PROG' iv_name = iv_name ).
+
+  ENDMETHOD.
+
+  METHOD put_view.
+
+    DATA ls_dd25v TYPE dd25v.
+    DATA ls_dd09v TYPE dd09v.
+    DATA lt_dd26v TYPE STANDARD TABLE OF dd26v WITH EMPTY KEY.
+    DATA lt_dd27p TYPE STANDARD TABLE OF dd27p WITH EMPTY KEY.
+    DATA lt_dd28j TYPE STANDARD TABLE OF dd28j WITH EMPTY KEY.
+    DATA lt_dd28v TYPE STANDARD TABLE OF dd28v WITH EMPTY KEY.
+    DATA lt_dd35v TYPE STANDARD TABLE OF dd35v WITH EMPTY KEY.
+    DATA lt_dd36m TYPE STANDARD TABLE OF dd36m WITH EMPTY KEY.
+    DATA ls_dd26v TYPE dd26v.
+    DATA ls_dd27p TYPE dd27p.
+    DATA ls_dd28j TYPE dd28j.
+    DATA ls_dd28v TYPE dd28v.
+    DATA ls_dd35v TYPE dd35v.
+    DATA ls_dd36m TYPE dd36m.
+    DATA lv_obj   TYPE ddobjname.
+    DATA lv_rc    TYPE sy-subrc.
+
+    DATA(lv_ex) = exists( iv_kind = 'VIEW' iv_name = iv_name ).
+    IF lv_ex = abap_true AND mv_over = abap_false.
+      log( iv_kind = 'VIEW' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+           iv_text   = lcl_t=>ui( d = `existiert bereits` e = `already exists` ) ).
+      RETURN.
+    ENDIF.
+
+    lcl_attr=>to_struct( EXPORTING it_attrs = io_chapter->get_defhead( )
+                         CHANGING  cs_data  = ls_dd25v ).
+
+    LOOP AT io_chapter->get_defrows( ) INTO DATA(ls_row).
+      CASE ls_row-tag.
+        WHEN 'DD09V'.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs CHANGING cs_data = ls_dd09v ).
+        WHEN 'DD26V'.
+          CLEAR ls_dd26v.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs CHANGING cs_data = ls_dd26v ).
+          APPEND ls_dd26v TO lt_dd26v.
+        WHEN 'DD27P'.
+          CLEAR ls_dd27p.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs CHANGING cs_data = ls_dd27p ).
+          APPEND ls_dd27p TO lt_dd27p.
+        WHEN 'DD28J'.
+          CLEAR ls_dd28j.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs CHANGING cs_data = ls_dd28j ).
+          APPEND ls_dd28j TO lt_dd28j.
+        WHEN 'DD28V'.
+          CLEAR ls_dd28v.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs CHANGING cs_data = ls_dd28v ).
+          APPEND ls_dd28v TO lt_dd28v.
+        WHEN 'DD35V'.
+          CLEAR ls_dd35v.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs CHANGING cs_data = ls_dd35v ).
+          APPEND ls_dd35v TO lt_dd35v.
+        WHEN 'DD36M'.
+          CLEAR ls_dd36m.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs CHANGING cs_data = ls_dd36m ).
+          APPEND ls_dd36m TO lt_dd36m.
+      ENDCASE.
+    ENDLOOP.
+
+    IF mv_test = abap_true.
+      log( iv_kind = 'VIEW' iv_name = iv_name
+           iv_action = COND #( WHEN lv_ex = abap_true
+                               THEN lcl_t=>ui( d = `wuerde geaendert` e = `would change` )
+                               ELSE lcl_t=>ui( d = `wuerde angelegt` e = `would create` ) )
+           iv_text   = |{ ls_dd25v-viewclass }, { lines( lt_dd26v ) } | &&
+                       |{ lcl_t=>ui( d = `Basistabellen` e = `base tables` ) }, | &&
+                       |{ lines( lt_dd27p ) } { lcl_t=>ui( d = `Felder` e = `fields` ) }| ).
+      RETURN.
+    ENDIF.
+
+    lv_obj = iv_name.
+    CALL FUNCTION 'DDIF_VIEW_PUT'
+      EXPORTING  name              = lv_obj
+                 dd25v_wa          = ls_dd25v
+                 dd09l_wa          = ls_dd09v
+      TABLES     dd26v_tab         = lt_dd26v
+                 dd27p_tab         = lt_dd27p
+                 dd28j_tab         = lt_dd28j
+                 dd28v_tab         = lt_dd28v
+                 dd35v_tab         = lt_dd35v
+                 dd36m_tab         = lt_dd36m
+      EXCEPTIONS view_not_found    = 1
+                 name_inconsistent = 2
+                 view_inconsistent = 3
+                 put_refused       = 4
+                 OTHERS            = 5.
+    IF sy-subrc <> 0.
+      log( iv_kind = 'VIEW' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+           iv_text   = |DDIF_VIEW_PUT subrc { sy-subrc }| ).
+      RETURN.
+    ENDIF.
+
+    tadir( iv_object = 'VIEW' iv_name = CONV sobj_name( iv_name ) ).
+
+    IF mv_act = abap_true.
+      CALL FUNCTION 'DDIF_VIEW_ACTIVATE'
+        EXPORTING  name        = lv_obj
+                   auth_chk    = abap_false
+        IMPORTING  rc          = lv_rc
+        EXCEPTIONS not_found   = 1
+                   put_failure = 2
+                   OTHERS      = 3.
+      IF sy-subrc <> 0 OR lv_rc > 0.
+        log( iv_kind = 'VIEW' iv_name = iv_name
+             iv_action = lcl_t=>ui( d = `angelegt, inaktiv` e = `created, inactive` )
+             iv_text   = |DDIF_VIEW_ACTIVATE rc { lv_rc }| ).
+        RETURN.
+      ENDIF.
+    ENDIF.
+
+    log( iv_kind = 'VIEW' iv_name = iv_name
+         iv_action = COND #( WHEN lv_ex = abap_true
+                             THEN lcl_t=>ui( d = `geaendert` e = `changed` )
+                             ELSE lcl_t=>ui( d = `angelegt` e = `created` ) )
+         iv_text   = |{ lines( lt_dd27p ) } { lcl_t=>ui( d = `Felder` e = `fields` ) }| ).
+
+  ENDMETHOD.
+
+  METHOD put_ddls.
+
+    DATA ls_src TYPE ddddlsrcv.
+    DATA lv_ddl TYPE ddlname.
+
+    DATA(lv_ex) = exists( iv_kind = 'DDLS' iv_name = iv_name ).
+    IF lv_ex = abap_true AND mv_over = abap_false.
+      log( iv_kind = 'DDLS' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+           iv_text   = lcl_t=>ui( d = `existiert bereits` e = `already exists` ) ).
+      RETURN.
+    ENDIF.
+
+    DATA(lv_source) = io_chapter->get_defsource( ).
+    IF lv_source IS INITIAL.
+      log( iv_kind = 'DDLS' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `nicht moeglich` e = `not possible` )
+           iv_text   = lcl_t=>ui( d = `keine DDL-Quelle im Dokument`
+                                  e = `no DDL source in the document` ) ).
+      RETURN.
+    ENDIF.
+
+    IF mv_test = abap_true.
+      DATA lt_l TYPE STANDARD TABLE OF string WITH EMPTY KEY.
+      SPLIT lv_source AT cl_abap_char_utilities=>newline INTO TABLE lt_l.
+      log( iv_kind = 'DDLS' iv_name = iv_name
+           iv_action = COND #( WHEN lv_ex = abap_true
+                               THEN lcl_t=>ui( d = `wuerde geaendert` e = `would change` )
+                               ELSE lcl_t=>ui( d = `wuerde angelegt` e = `would create` ) )
+           iv_text   = |{ lines( lt_l ) } { lcl_t=>ui( d = `Zeilen` e = `lines` ) }| ).
+      RETURN.
+    ENDIF.
+
+    lv_ddl = iv_name.
+    lcl_attr=>to_struct( EXPORTING it_attrs = io_chapter->get_defhead( )
+                         CHANGING  cs_data  = ls_src ).
+    CLEAR: ls_src-as4user, ls_src-as4date, ls_src-as4time.
+    ls_src-ddlname = lv_ddl.
+    ls_src-source  = lv_source.
+
+*   A CDS source has no DDIF_*_PUT. The DDL handler is the only way in,
+*   and it works in three steps: save the source, hang the object into
+*   the catalogue, activate. Its exceptions are class based.
+    TRY.
+        DATA(lo_ddl) = cl_dd_ddl_handler_factory=>create( ).
+*       'N' is the new, still inactive version. 'M' is a read state and
+*       the handler refuses it here.
+        lo_ddl->save( name         = lv_ddl
+                      put_state    = 'N'
+                      ddddlsrcv_wa = ls_src ).
+      CATCH cx_root INTO DATA(lx_save).
+        log( iv_kind = 'DDLS' iv_name = iv_name
+             iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+             iv_text   = lx_save->get_text( ) ).
+        RETURN.
+    ENDTRY.
+
+    TRY.
+        cl_dd_ddl_handler=>if_dd_ddl_handler~write_tadir(
+          objectname = lv_ddl
+          devclass   = mv_pack
+          username   = sy-uname
+          prid       = 0 ).
+      CATCH cx_root.
+*       The catalogue entry may already be there from an earlier run.
+    ENDTRY.
+
+    IF mv_pack NP '$*' AND mv_tr IS NOT INITIAL.
+      lo_ddl->write_trkorr( EXPORTING trkorr     = mv_tr
+                                      objectname = lv_ddl
+                                      prid       = 0 ).
+    ENDIF.
+
+    IF mv_act = abap_true.
+      TRY.
+          lo_ddl->activate( name = lv_ddl prid = 0 ).
+        CATCH cx_root INTO DATA(lx_act).
+          log( iv_kind = 'DDLS' iv_name = iv_name
+               iv_action = lcl_t=>ui( d = `angelegt, inaktiv` e = `created, inactive` )
+               iv_text   = lx_act->get_text( ) ).
+          RETURN.
+      ENDTRY.
+    ENDIF.
+
+    log( iv_kind = 'DDLS' iv_name = iv_name
+         iv_action = COND #( WHEN lv_ex = abap_true
+                             THEN lcl_t=>ui( d = `geaendert` e = `changed` )
+                             ELSE lcl_t=>ui( d = `angelegt` e = `created` ) ) ).
 
   ENDMETHOD.
 
@@ -2962,6 +3193,14 @@ CLASS lcl_collector_dev DEFINITION.
       IMPORTING iv_name    TYPE sobj_name
                 io_chapter TYPE REF TO lcl_chapter
       RETURNING VALUE(rv_ok) TYPE abap_bool.
+    METHODS def_view
+      IMPORTING iv_name    TYPE sobj_name
+                io_chapter TYPE REF TO lcl_chapter
+      RETURNING VALUE(rv_ok) TYPE abap_bool.
+    METHODS def_ddls
+      IMPORTING iv_name    TYPE sobj_name
+                io_chapter TYPE REF TO lcl_chapter
+      RETURNING VALUE(rv_ok) TYPE abap_bool.
     METHODS def_clif
       IMPORTING iv_type    TYPE trobjtype
                 iv_name    TYPE sobj_name
@@ -3175,14 +3414,13 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       WHEN 'DOMA'. lv_ok = def_doma( iv_name = iv_name io_chapter = io_chapter ).
       WHEN 'DTEL'. lv_ok = def_dtel( iv_name = iv_name io_chapter = io_chapter ).
       WHEN 'TABL'. lv_ok = def_tabl( iv_name = iv_name io_chapter = io_chapter ).
+      WHEN 'VIEW'. lv_ok = def_view( iv_name = iv_name io_chapter = io_chapter ).
+      WHEN 'DDLS'. lv_ok = def_ddls( iv_name = iv_name io_chapter = io_chapter ).
       WHEN 'PROG'. lv_ok = def_prog( iv_name = iv_name io_chapter = io_chapter ).
       WHEN 'CLAS' OR 'INTF'.
         lv_ok = def_clif( iv_type = iv_type iv_name = iv_name io_chapter = io_chapter ).
       WHEN 'FUGR'. lv_ok = def_fugr( iv_name = iv_name io_chapter = io_chapter ).
       WHEN OTHERS.
-*       Views and CDS sources are described in the document but cannot be
-*       rebuilt from it yet. Saying so is better than writing half a
-*       definition the importer would trip on.
         RETURN.
     ENDCASE.
 
@@ -3358,6 +3596,105 @@ CLASS lcl_collector_dev IMPLEMENTATION.
           ( name = 'TEXT'  value = lv_title ) ) ) ).
     ENDIF.
 
+    rv_ok = abap_true.
+
+  ENDMETHOD.
+
+  METHOD def_view.
+
+    DATA ls_dd25v TYPE dd25v.
+    DATA ls_dd09v TYPE dd09v.
+    DATA lt_dd26v TYPE STANDARD TABLE OF dd26v WITH EMPTY KEY.
+    DATA lt_dd27p TYPE STANDARD TABLE OF dd27p WITH EMPTY KEY.
+    DATA lt_dd28j TYPE STANDARD TABLE OF dd28j WITH EMPTY KEY.
+    DATA lt_dd28v TYPE STANDARD TABLE OF dd28v WITH EMPTY KEY.
+    DATA lt_dd35v TYPE STANDARD TABLE OF dd35v WITH EMPTY KEY.
+    DATA lt_dd36m TYPE STANDARD TABLE OF dd36m WITH EMPTY KEY.
+    DATA lv_obj   TYPE ddobjname.
+
+    lv_obj = iv_name.
+    CALL FUNCTION 'DDIF_VIEW_GET'
+      EXPORTING  name          = lv_obj
+                 state         = 'A'
+                 langu         = mv_langu
+      IMPORTING  dd25v_wa      = ls_dd25v
+                 dd09l_wa      = ls_dd09v
+      TABLES     dd26v_tab     = lt_dd26v
+                 dd27p_tab     = lt_dd27p
+                 dd28j_tab     = lt_dd28j
+                 dd28v_tab     = lt_dd28v
+                 dd35v_tab     = lt_dd35v
+                 dd36m_tab     = lt_dd36m
+      EXCEPTIONS illegal_input = 1
+                 OTHERS        = 2.
+    IF sy-subrc <> 0 OR ls_dd25v-viewname IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    io_chapter->set_definition( iv_kind = 'VIEW'
+                                it_head = lcl_attr=>from_struct( ls_dd25v ) ).
+
+    IF ls_dd09v-tabname IS NOT INITIAL.
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag = 'DD09V' attrs = lcl_attr=>from_struct( ls_dd09v ) ) ).
+    ENDIF.
+    LOOP AT lt_dd26v INTO DATA(ls_dd26v).
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag = 'DD26V' attrs = lcl_attr=>from_struct( ls_dd26v ) ) ).
+    ENDLOOP.
+    LOOP AT lt_dd27p INTO DATA(ls_dd27p).
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag = 'DD27P' attrs = lcl_attr=>from_struct( ls_dd27p ) ) ).
+    ENDLOOP.
+    LOOP AT lt_dd28j INTO DATA(ls_dd28j).
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag = 'DD28J' attrs = lcl_attr=>from_struct( ls_dd28j ) ) ).
+    ENDLOOP.
+    LOOP AT lt_dd28v INTO DATA(ls_dd28v).
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag = 'DD28V' attrs = lcl_attr=>from_struct( ls_dd28v ) ) ).
+    ENDLOOP.
+    LOOP AT lt_dd35v INTO DATA(ls_dd35v).
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag = 'DD35V' attrs = lcl_attr=>from_struct( ls_dd35v ) ) ).
+    ENDLOOP.
+    LOOP AT lt_dd36m INTO DATA(ls_dd36m).
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag = 'DD36M' attrs = lcl_attr=>from_struct( ls_dd36m ) ) ).
+    ENDLOOP.
+
+    rv_ok = abap_true.
+
+  ENDMETHOD.
+
+  METHOD def_ddls.
+
+    DATA ls_src TYPE ddddlsrcv.
+    DATA lv_ddl TYPE ddlname.
+
+    lv_ddl = iv_name.
+    TRY.
+        cl_dd_ddl_handler_factory=>create( )->read(
+          EXPORTING name         = lv_ddl
+                    get_state    = 'A'
+                    withtext     = abap_true
+                    langu        = mv_langu
+          IMPORTING ddddlsrcv_wa = ls_src ).
+      CATCH cx_root.
+        RETURN.
+    ENDTRY.
+    IF ls_src-source IS INITIAL.
+      RETURN.
+    ENDIF.
+
+*   The CDS text is a string. As an attribute value it would not survive
+*   the trip: XML turns line breaks inside an attribute into blanks. It
+*   therefore travels as an element of its own, like every other source.
+    DATA(lt_head) = lcl_attr=>from_struct( ls_src ).
+    DELETE lt_head WHERE name = 'SOURCE'.
+
+    io_chapter->set_definition( iv_kind = 'DDLS' it_head = lt_head ).
+    io_chapter->set_defsource( ls_src-source ).
     rv_ok = abap_true.
 
   ENDMETHOD.

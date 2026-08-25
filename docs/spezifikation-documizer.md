@@ -588,11 +588,24 @@ Applikationsserver —, über denselben Parser ins Modell, dann die Objekte anle
 | Domäne | `DDIF_DOMA_PUT` + `DDIF_DOMA_ACTIVATE` | umgesetzt |
 | Datenelement | `DDIF_DTEL_PUT` + `DDIF_DTEL_ACTIVATE` | umgesetzt |
 | Tabelle, Struktur | `DDIF_TABL_PUT` + `DDIF_TABL_ACTIVATE` | umgesetzt |
+| View | `DDIF_VIEW_PUT` + `DDIF_VIEW_ACTIVATE` | umgesetzt |
+| CDS-Quelle | `IF_DD_DDL_HANDLER` (`save`, `write_tadir`, `activate`) | umgesetzt |
 | Report, Include | `INSERT REPORT … DIRECTORY ENTRY`, `INSERT TEXTPOOL` | umgesetzt |
 | Interface, Klasse | `SEO_*_CREATE_COMPLETE` + `IF_OO_CLIF_SOURCE` | umgesetzt |
 | Funktionsgruppe, Funktionsbaustein | `RS_FUNCTION_POOL_INSERT`, `RPY_FUNCTIONMODULE_INSERT` | umgesetzt |
 | Objektdokumentation | `DOCU_UPDATE` | umgesetzt für Report und Datenelement |
-| View, CDS-Quelle | — | offen, siehe 9 |
+
+**Views** laufen wie Tabellen: `DDIF_VIEW_GET` liefert `DD25V`, `DD09V`, `DD26V`, `DD27P`,
+`DD28J`, `DD28V`, `DD35V` und `DD36M`, `DDIF_VIEW_PUT` nimmt dieselben Strukturen wieder an.
+
+**CDS-Quellen** haben keinen `DDIF_*`-Baustein. Der einzige Weg führt über
+`CL_DD_DDL_HANDLER_FACTORY=>CREATE( )` und läuft in drei Schritten: Quelle sichern, Objekt in
+den Katalog hängen, aktivieren. Beim Sichern ist `PUT_STATE = 'N'` zu setzen — die neue, noch
+inaktive Fassung; `'M'` ist ein Lesezustand, den der Handler an dieser Stelle ablehnt. Die
+Aktivierung erzeugt den SQL-View und das Strukturobjekt von selbst. Der DDL-Text ist ein
+String und reist deshalb wie jeder Quelltext als eigenes Element, nicht als Attribut. Das ist
+die einzige Stelle, an der der Importer eine SAP-interne Klasse verwendet statt eines
+Funktionsbausteins — anders ist eine CDS-Quelle nicht anzulegen.
 
 **Klassen und Interfaces** wandern als **quelltextbasierte Fassung** — der eine Text, den SE24
 und ADT zeigen, mit Definition und Implementierung zusammen. Gelesen und geschrieben wird er
@@ -720,20 +733,16 @@ Namensauflösungen gegen `TADIR` laufen gebündelt, nicht mit einem `SELECT SING
 
 1. **Markdown-Ausgabe** — geplant war ATX-Überschriften, Pipe-Tabellen, Codefences mit
    Sprachkennzeichen `abap`. Bisher nur XML und HTML.
-2. **Reimport von Views und CDS-Quellen** — alles Übrige wird angelegt (siehe 5.6). Für Views
-   liegt `DDIF_VIEW_PUT` nahe, samt `DD25V`/`DD26V`/`DD27P`. CDS-Quellen haben keinen
-   entsprechenden Funktionsbaustein; dort führt der Weg über `CL_DD_DDL_HANDLER`, was eine
-   engere Bindung an interne API bedeutet als alles bisher Verwendete.
-3. **Sekundärindizes beim Reimport** — `DDIF_TABL_GET` liefert `DD12V`/`DD17V`, `DDIF_TABL_PUT`
+2. **Sekundärindizes beim Reimport** — `DDIF_TABL_GET` liefert `DD12V`/`DD17V`, `DDIF_TABL_PUT`
    nimmt sie nicht an. Für Indizes wäre `DDIF_INDX_PUT` nötig.
-4. **Anzeigen ohne Anlegen** — eine XML-Datei nur einlesen und nach HTML rendern, ohne
+3. **Anzeigen ohne Anlegen** — eine XML-Datei nur einlesen und nach HTML rendern, ohne
    Systemzugriff. Parser und Renderer sind da, es fehlt der Schalter.
-5. **BAL-Anwendungsprotokoll** — gelesene Knoten/Objekte, übersprungene wegen Berechtigung,
+4. **BAL-Anwendungsprotokoll** — gelesene Knoten/Objekte, übersprungene wegen Berechtigung,
    abgeschnittene Tabellen, Laufzeit.
-6. **`S_DEVELOP`-Prüfung** im Entwicklerreport.
-7. **Funktionsbausteine im Verwendungsnachweis** — für die Richtung „welcher Baustein wird von
+5. **`S_DEVELOP`-Prüfung** im Entwicklerreport.
+6. **Funktionsbausteine im Verwendungsnachweis** — für die Richtung „welcher Baustein wird von
    wem gerufen" gibt es keinen Index; ein Quelltext-Scan über alle Programme wäre zu teuer.
-8. **Mandantenabhängiges Customizing** — der Export bezieht sich auf den Anmeldemandanten.
+7. **Mandantenabhängiges Customizing** — der Export bezieht sich auf den Anmeldemandanten.
    Mandantenübergreifendes Customizing ist noch nicht gesondert gekennzeichnet.
-9. **Dokumentationsobjekte im Transport** — die von `ZDOCUMIZER_DOCU` erzeugte
+8. **Dokumentationsobjekte im Transport** — die von `ZDOCUMIZER_DOCU` erzeugte
    Reportdokumentation liegt nicht im Transportauftrag.

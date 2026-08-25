@@ -1,0 +1,9 @@
+# Vom Documizer erzeugte Dokumente. Sie stammen aus echten Systemen und
+# koennen Kundendaten enthalten - sie gehoeren nicht in ein oeffentliches
+# Repository.
+documizer_*.html
+documizer_*.xml
+documizer_*.md
+
+# Oertliche Startskripte
+startclaude_*.bat

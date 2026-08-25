@@ -13,19 +13,25 @@ ist, steht es unter [9. Offene Punkte](#9-offene-punkte).
 |---|---|
 | Deployment | **On-Premise** (kein Public Cloud, `SPRO` verfügbar) |
 | Programmiermodell | **Klassisches ABAP** (freier `TADIR`-/DDIC-Zugriff, `DOCU_GET` nutzbar) |
-| Reimport | **Phase 2**; Rückschreiben über **BC-Sets** (Customizing) und **abapGit** (Repository-Objekte) statt Eigenbau |
+| Reimport | Repository-Objekte legt der DEV-Report selbst an (siehe 5.6); Customizing bleibt bei **BC-Sets** |
 | Mengengerüst | Filter und Mengengrenzen als Selektionsparameter; **Vollexport ganzer Tabellen muss möglich sein** |
 | Ausgabeformate | **XML** (führend, transportabel) + **HTML** (lesbar) |
 | Verteilung | Jeder Report ist **eine einzige Quelle**, per Copy/Paste in SE38 lauffähig |
 
 ### 1.1 Phasenschnitt
 
-- **Phase 1** — beide Reports, Export nach XML und HTML, Reimport nur als *Anzeige/Rendern*.
-- **Phase 2** — Rückschreiben ins System: Customizing über BC-Sets (`SCPR3`/`SCPR20`),
-  Repository-Objekte über abapGit.
+- **Phase 1** — beide Reports, Export nach XML und HTML.
+- **Phase 2** — Rückschreiben ins System.
 
-Diese Aufteilung vermeidet Doppelentwicklung: BC-Sets und abapGit lösen das Zurückschreiben
-bereits vollständig und sind im Fehlerfall belastbarer als eine Eigenentwicklung.
+Für **Customizing** bleibt es bei der ursprünglichen Abgrenzung: das lösen BC-Sets
+(`SCPR3`/`SCPR20`), und sie sind im Fehlerfall belastbarer als eine Eigenentwicklung. Der
+Documizer schreibt nicht in Customizing-Tabellen.
+
+Für **Repository-Objekte** hat sich die Abgrenzung verschoben. abapGit setzt eine Installation
+im Zielsystem voraus — genau das, was in einem fremden Kundensystem oft nicht geht und weshalb
+der Documizer aus einer einzigen Quelle besteht. Der DEV-Report legt die Objekte deshalb selbst
+an, aus Definitionsdaten im XML (5.5) über die `DDIF_*_PUT`-Bausteine (5.6). Was er nicht
+originalgetreu anlegen kann, sagt er, statt es halb zu tun.
 
 ### 1.2 Die Copy/Paste-Bedingung
 
@@ -318,8 +324,22 @@ Pseudotyp `FUNC`: Kurztext aus `TFTIT`, Doku über Dokuklasse `FU`, Schnittstell
 | `P_MAXUSE` | 50 | Maximale Verwendungen je Objekt |
 | `P_MAXHIT` | 40 | Maximale Fundstellen je Stelle |
 | `P_FSRC` | | Fundstellen im ganzen Quelltext |
+| `P_DEF` | X | Definitionsdaten für den Reimport (siehe 5.5) |
 
 **Block: Ausgabe** — wie Report A.
+
+**Block: Import in dieses System** — schaltet den Report auf die Gegenrichtung (siehe 5.6).
+
+| Parameter | Vorbelegung | Bedeutung |
+|---|---|---|
+| `P_IMP` | | Importieren statt dokumentieren |
+| `P_IFILE` | | XML-Datei |
+| `P_ISRV` | | Datei liegt auf dem Applikationsserver |
+| `P_ITEST` | **X** | Testlauf — es wird nichts angelegt |
+| `P_IOVER` | | Bestehende Objekte überschreiben |
+| `P_IACT` | X | Nach dem Anlegen aktivieren |
+| `P_IPACK` | `$TMP` | Zielpaket |
+| `P_ITR` | | Auftrag (bei nicht-lokalem Paket) |
 
 ### 4.3 Ablauf
 
@@ -453,7 +473,7 @@ Serialisierung über **sXML** (`cl_sxml_string_writer`), Rücklesen über
 ### 5.2 Aufbau
 
 ```xml
-<documizer version="1.0" type="IMG">
+<documizer version="1.1" type="IMG">
   <meta>
     <system>S4H</system>
     <client>100</client>
@@ -514,14 +534,83 @@ mit dem bestehenden Schema auskommen müssen.
 Nebenwirkung: das XML wird auch dann erzeugt, wenn `P_XML` aus ist — sonst gäbe es nichts zu
 prüfen.
 
-### 5.5 Reimport
+### 5.5 Definitionsdaten
 
-**Phase 1** (offen) — XML zurück ins Modell lesen und nach HTML rendern, ohne Systemzugriff.
-Der Parser dafür existiert bereits; es fehlt nur der Report.
+Bis Formatversion 1.0 trug das XML die *Beschreibung* eines Objekts, nicht seine *Definition*.
+Eine Feldliste mit Name, Datenelement und Schlüsselkennzeichen liest sich gut, reicht aber
+nicht, um eine Tabelle anzulegen: Auslieferungsklasse, Tabellenart, technische Einstellungen
+und Fremdschlüssel fehlen, und die Listen sind im Dokument nur durch einen **übersetzten**
+Vermerk („Feldliste" / „Field list") unterschieden.
 
-**Phase 2** (offen) — Customizing über BC-Sets, Repository-Objekte über abapGit. Der Documizer
-schreibt nicht selbst in Customizing-Tabellen oder ins Repository. Diese Abgrenzung hält ihn
-auf der Leseseite und damit risikoarm.
+Ab Version 1.1 steht deshalb neben der Beschreibung ein eigenes Element:
+
+```xml
+<definition kind="TABL">
+  <attr name="TABNAME"  value="ZSCANTEST"/>
+  <attr name="TABCLASS" value="TRANSP"/>
+  <attr name="CONTFLAG" value="A"/>
+  <row tag="DD09V"/>
+  <row tag="DD03P">
+    <attr name="FIELDNAME" value="MANDT"/>
+    <attr name="POSITION"  value="0001"/>
+    <attr name="KEYFLAG"   value="X"/>
+    <attr name="ROLLNAME"  value="MANDT"/>
+  </row>
+  <defsource>…</defsource>
+</definition>
+```
+
+Drei Entscheidungen dahinter:
+
+- **Dieselben Strukturen in beide Richtungen.** Der Export liest, was `DDIF_TABL_GET` liefert,
+  der Import gibt es an `DDIF_TABL_PUT` zurück — `DD02V`, `DD09V`, `DD03P`, `DD05M`, `DD08V`,
+  `DD35V`, `DD36M`, für Domänen `DD01V`/`DD07V`, für Datenelemente `DD04V`. Eine Feldliste, die
+  zwischen zwei Releases auseinanderlaufen könnte, gibt es nicht.
+- **Name/Wert statt Struktur je Objekttyp.** Die Struktur wird zur Laufzeit über RTTI
+  durchlaufen. Renderer und Parser bleiben ohne Typwissen, ein neuer Objekttyp kostet je eine
+  Methode im Sammler und im Importer. Ein Feld, das das Zielrelease nicht kennt, wird beim
+  Import übergangen statt zum Abbruch zu führen.
+- **Eigener Quelltext.** `<defsource>` steht neben dem Quelltext für den Leser, den `P_MAXSRC`
+  gekürzt haben kann. Ein halber Report liest sich noch, einspielen lässt er sich nicht.
+
+Initiale Felder werden weggelassen; der Importer beginnt mit einer initialen Struktur, ein
+fehlendes Feld bedeutet also auf beiden Seiten dasselbe.
+
+Geschrieben wird das Ganze nur mit `P_DEF` (Vorbelegung an).
+
+### 5.6 Reimport
+
+Der DEV-Report kann **importieren statt dokumentieren** (`P_IMP`): Datei lesen — vom PC oder vom
+Applikationsserver —, über denselben Parser ins Modell, dann die Objekte anlegen.
+
+| Objekttyp | Weg | Stand |
+|---|---|---|
+| Domäne | `DDIF_DOMA_PUT` + `DDIF_DOMA_ACTIVATE` | umgesetzt |
+| Datenelement | `DDIF_DTEL_PUT` + `DDIF_DTEL_ACTIVATE` | umgesetzt |
+| Tabelle, Struktur | `DDIF_TABL_PUT` + `DDIF_TABL_ACTIVATE` | umgesetzt |
+| Report, Include | `INSERT REPORT … DIRECTORY ENTRY`, `INSERT TEXTPOOL` | umgesetzt |
+| Objektdokumentation | `DOCU_UPDATE` | umgesetzt für Report und Datenelement |
+| View, CDS, Klasse, Interface, Funktionsgruppe | — | offen, siehe 9 |
+
+Der Objektkatalogeintrag entsteht über `TR_TADIR_INTERFACE`; bei einem lokalen Paket (`$*`)
+ohne Auftrag, sonst mit dem angegebenen.
+
+**Die Reihenfolge ist festgelegt** — Domänen, dann Datenelemente, dann Tabellen, dann
+Programme. Eine Tabelle, deren Datenelemente noch nicht existieren, lässt sich nicht
+aktivieren; die Arbeit vorher zu sortieren ist billiger, als sie zu wiederholen.
+
+**Zwei Schutzregeln:**
+
+- `P_ITEST` (Vorbelegung **an**) legt nichts an. Jeder Schritt meldet, was er getan hätte.
+  Wer schreiben will, muss den Haken bewusst entfernen.
+- Ein vorhandenes Objekt bleibt unangetastet, solange `P_IOVER` nicht gesetzt ist. Ein
+  Dokumentationswerkzeug darf keine Tabelle stillschweigend ersetzen.
+
+Das Protokoll nennt je Objekt Typ, Name, was geschehen ist (angelegt, geändert, übersprungen,
+Fehler, nicht möglich) und den Grund.
+
+**Nicht umgesetzt und bewusst nicht:** Customizing-Inhalte. Dafür gibt es BC-Sets; der
+Documizer schreibt nicht in Customizing-Tabellen.
 
 ---
 
@@ -601,14 +690,22 @@ Namensauflösungen gegen `TADIR` laufen gebündelt, nicht mit einem `SELECT SING
 
 1. **Markdown-Ausgabe** — geplant war ATX-Überschriften, Pipe-Tabellen, Codefences mit
    Sprachkennzeichen `abap`. Bisher nur XML und HTML.
-2. **Reimport-Report (Phase 1)** — der Parser existiert, der Report, der eine XML-Datei einliest
-   und rendert, fehlt.
-3. **BAL-Anwendungsprotokoll** — gelesene Knoten/Objekte, übersprungene wegen Berechtigung,
+2. **Reimport weiterer Objekttypen** — Domänen, Datenelemente, Tabellen, Strukturen und
+   Programme werden angelegt (siehe 5.6). Offen sind Views, CDS-Quellen, Klassen, Interfaces
+   und Funktionsgruppen. Für Views liegt der Weg mit `DDIF_VIEW_PUT` nahe; bei Klassen und
+   Funktionsgruppen reicht der heutige Export nicht — er hängt die Includes des Klassenpools
+   aneinander, und daraus lässt sich keine Klasse rekonstruieren. Dafür müssten die
+   `SEO*`-Strukturen bzw. die Bausteinschnittstelle in die Definitionsdaten wandern.
+3. **Sekundärindizes beim Reimport** — `DDIF_TABL_GET` liefert `DD12V`/`DD17V`, `DDIF_TABL_PUT`
+   nimmt sie nicht an. Für Indizes wäre `DDIF_INDX_PUT` nötig.
+4. **Anzeigen ohne Anlegen** — eine XML-Datei nur einlesen und nach HTML rendern, ohne
+   Systemzugriff. Parser und Renderer sind da, es fehlt der Schalter.
+5. **BAL-Anwendungsprotokoll** — gelesene Knoten/Objekte, übersprungene wegen Berechtigung,
    abgeschnittene Tabellen, Laufzeit.
-4. **`S_DEVELOP`-Prüfung** im Entwicklerreport.
-5. **Funktionsbausteine im Verwendungsnachweis** — für die Richtung „welcher Baustein wird von
+6. **`S_DEVELOP`-Prüfung** im Entwicklerreport.
+7. **Funktionsbausteine im Verwendungsnachweis** — für die Richtung „welcher Baustein wird von
    wem gerufen" gibt es keinen Index; ein Quelltext-Scan über alle Programme wäre zu teuer.
-6. **Mandantenabhängiges Customizing** — der Export bezieht sich auf den Anmeldemandanten.
+8. **Mandantenabhängiges Customizing** — der Export bezieht sich auf den Anmeldemandanten.
    Mandantenübergreifendes Customizing ist noch nicht gesondert gekennzeichnet.
-7. **Dokumentationsobjekte im Transport** — die von `ZDOCUMIZER_DOCU` erzeugte
+9. **Dokumentationsobjekte im Transport** — die von `ZDOCUMIZER_DOCU` erzeugte
    Reportdokumentation liegt nicht im Transportauftrag.

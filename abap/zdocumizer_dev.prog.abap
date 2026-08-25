@@ -1184,14 +1184,24 @@ CLASS lcl_importer IMPLEMENTATION.
 
   METHOD tadir.
 
+*   The parameters of TR_TADIR_INTERFACE are typed against the fields of
+*   TADIR. A merely convertible field is not enough there - SY-SYSID is
+*   eight characters, TADIR-SRCSYSTEM ten, and the call ends in
+*   CALL_FUNCTION_CONFLICT_TYPE. Hence one local per field, typed after
+*   the table.
+    DATA lv_corr TYPE tadir-korrnum.
+    DATA lv_srcs TYPE tadir-srcsystem.
+    DATA lv_auth TYPE tadir-author.
+    DATA lv_lang TYPE tadir-masterlang.
+
 *   $TMP and the other local packages carry no transport, and asking the
 *   correction system for one there ends in a dialog nobody sees.
-    DATA lv_corr TYPE trkorr.
-    IF mv_pack CP '$*'.
-      CLEAR lv_corr.
-    ELSE.
+    IF mv_pack NP '$*'.
       lv_corr = mv_tr.
     ENDIF.
+    lv_srcs = sy-sysid.
+    lv_auth = sy-uname.
+    lv_lang = sy-langu.
 
     CALL FUNCTION 'TR_TADIR_INTERFACE'
       EXPORTING  wi_test_modus                  = abap_false
@@ -1199,10 +1209,10 @@ CLASS lcl_importer IMPLEMENTATION.
                  wi_tadir_object                = iv_object
                  wi_tadir_obj_name              = iv_name
                  wi_tadir_devclass              = mv_pack
-                 wi_tadir_masterlang            = sy-langu
-                 iv_set_genflag                 = abap_false
-                 wi_tadir_srcsystem             = sy-sysid
-                 iv_korrnum                     = lv_corr
+                 wi_tadir_masterlang            = lv_lang
+                 wi_tadir_author                = lv_auth
+                 wi_tadir_srcsystem             = lv_srcs
+                 wi_tadir_korrnum               = lv_corr
       EXCEPTIONS tadir_entry_not_existing       = 1
                  tadir_entry_ill_type           = 2
                  no_systemname                  = 3
@@ -5483,7 +5493,10 @@ FORM import.
   DATA lv_xml  TYPE string.
   DATA lv_x    TYPE xstring.
   DATA lv_file TYPE string.
-  DATA lt_bin  TYPE STANDARD TABLE OF x255 WITH EMPTY KEY.
+* GUI_UPLOAD and SCMS_BINARY_TO_XSTRING both expect the row structure
+* SOLIX, not a plain X field. A table of elementary rows ends in
+* CALL_FUNCTION_CONFLICT_TAB_TYP.
+  DATA lt_bin  TYPE solix_tab.
   DATA lv_len  TYPE i.
 
   lv_file = p_ifile.
@@ -5576,10 +5589,19 @@ FORM import.
                                    iv_tr   = p_itr ).
   lo_imp->run( lo_doc ).
 
-  DATA lv_n TYPE i.
+* Fixed-width columns through typed fields, not through offsets on the
+* string itself - a name shorter than the column would end the run in
+* STRING_LENGTH_TOO_LARGE.
+  DATA lv_n    TYPE i.
+  DATA lv_ckind TYPE c LENGTH 6.
+  DATA lv_cname TYPE c LENGTH 40.
+  DATA lv_cact  TYPE c LENGTH 24.
   LOOP AT lo_imp->get_log( ) INTO DATA(ls_log).
     lv_n = lv_n + 1.
-    WRITE: / ls_log-kind, ls_log-name(40), ls_log-action(22), ls_log-text.
+    lv_ckind = ls_log-kind.
+    lv_cname = ls_log-name.
+    lv_cact  = ls_log-action.
+    WRITE: / lv_ckind, lv_cname, lv_cact, ls_log-text.
   ENDLOOP.
   IF lv_n = 0.
     WRITE: / lcl_t=>ui( d = `Nichts verarbeitet.` e = `Nothing processed.` ).

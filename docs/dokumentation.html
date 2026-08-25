@@ -803,6 +803,49 @@
           verloren. Der Dateiname entsteht aus System, Datum und Uhrzeit, damit
           aufeinanderfolgende Läufe sich nicht überschreiben.
         </p>
+
+        <h3>Import: die Gegenrichtung</h3>
+        <p>
+          Der Entwickler-Report kann statt zu dokumentieren auch <b>importieren</b>: ein in
+          System A erzeugtes XML einlesen und die darin beschriebenen Objekte in System B
+          anlegen. Der Haken <em>Importieren statt dokumentieren</em> schaltet um, alles Weitere
+          steht im selben Block.
+        </p>
+        <p>
+          Damit das gehen kann, muss beim Export <em>Definitionsdaten für den Reimport</em>
+          angehakt sein — das ist die Vorbelegung. Das Dokument trägt dann neben der Beschreibung
+          für den Leser die technische Definition: für eine Tabelle die Auslieferungsklasse, die
+          Tabellenart, die technischen Einstellungen, alle Felder mit Datenelement und
+          Schlüsselkennzeichen, Fremdschlüssel und Suchhilfen; für einen Report die
+          Programmattribute, den vollständigen Quelltext und die Textelemente. Gelesen wird das
+          mit denselben Bausteinen, mit denen es beim Import wieder eingespielt wird — was
+          herauskommt, passt garantiert wieder hinein.
+        </p>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Objekttyp</th><th>wird angelegt</th></tr></thead>
+            <tbody>
+              <tr><td>Domäne, Datenelement</td><td>ja, mit Festwerten und Texten</td></tr>
+              <tr><td>Tabelle, Struktur</td><td>ja, samt technischen Einstellungen</td></tr>
+              <tr><td>Report, Include</td><td>ja, mit Textelementen und Dokumentation</td></tr>
+              <tr><td>View, CDS, Klasse, Funktionsgruppe</td><td>nein — im Protokoll als nicht möglich vermerkt</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note">
+          <p><b>Zwei Schutzregeln, und beide sind Absicht.</b> Der <em>Testlauf</em> ist
+          vorbelegt: der Report meldet, was er anlegen würde, und legt nichts an. Wer schreiben
+          will, nimmt den Haken bewusst heraus. Und ein Objekt, das es im Zielsystem schon gibt,
+          bleibt unangetastet, solange <em>Bestehende Objekte überschreiben</em> nicht gesetzt
+          ist. Ein Werkzeug, das Dokumentation erzeugt, darf keine Tabelle stillschweigend
+          ersetzen.</p>
+        </div>
+        <p>
+          Die Reihenfolge legt der Report selbst fest: erst Domänen, dann Datenelemente, dann
+          Tabellen, dann Programme. Eine Tabelle, deren Datenelemente noch fehlen, ließe sich
+          nicht aktivieren. Das Protokoll nennt je Objekt, was geschehen ist — angelegt,
+          geändert, übersprungen, Fehler — und warum.
+        </p>
       </section>
 
       <!-- 7 -->
@@ -945,8 +988,8 @@
               <tr><td>DOCX</td><td>bewusst zurückgestellt — ZIP-Container mit OOXML, deutlich mehr Aufwand als HTML. Für „im Word öffnen" reicht oft HTML</td></tr>
               <tr><td>Anwendungsprotokoll (BAL)</td><td>offen: gelesene Knoten, übersprungene wegen Berechtigung, abgeschnittene Tabellen, Laufzeit</td></tr>
               <tr><td><code>S_DEVELOP</code>-Prüfung im DEV-Report</td><td>offen; der IMG-Report prüft bereits <code>S_TABU_NAM</code></td></tr>
-              <tr><td>Reimport ins System</td><td>Phase 2 über BC-Sets und abapGit — der Documizer schreibt bewusst nicht selbst</td></tr>
-              <tr><td>Reimport-Report (Phase 1)</td><td>offen; der XML-Parser existiert bereits, es fehlt der Report, der eine Datei einliest und rendert</td></tr>
+              <tr><td>Reimport von Customizing</td><td>bleibt bei BC-Sets — der Documizer schreibt bewusst nicht in Customizing-Tabellen</td></tr>
+              <tr><td>Reimport weiterer Objekttypen</td><td>offen für Views, CDS-Quellen, Klassen und Funktionsgruppen; Domänen, Datenelemente, Tabellen und Reports werden bereits angelegt</td></tr>
               <tr><td>Bausteine im Verwendungsnachweis</td><td>für die Richtung „welcher Baustein wird von wem gerufen" gibt es keinen Index; ein Scan über alle Programme wäre zu teuer</td></tr>
               <tr><td>Mandantenabhängiges Customizing</td><td>der Export bezieht sich auf den Anmeldemandanten; mandantenübergreifendes Customizing ist nicht gesondert gekennzeichnet</td></tr>
               <tr><td>Tabs Mitarbeiter und Stichwörter</td><td>liegen in Nachbartabellen von <code>CUSSTAT</code>, mit demselben Muster anbindbar</td></tr>

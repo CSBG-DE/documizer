@@ -13,6 +13,12 @@ Gemeinsam ist beiden das Kapitelmodell und der XML-Roundtrip: der Export ist wie
 Jeder Report ist eine einzige Quelle und lässt sich per Copy/Paste in SE38 in ein beliebiges
 System bringen — ohne Textelemente, ohne Zusatzobjekte.
 
+`ZDOCUMIZER_DEV` kann die Richtung auch umkehren: ein in System A erzeugtes XML einlesen und die
+darin definierten Objekte in System B **anlegen** — Domänen, Datenelemente, Tabellen,
+Strukturen, Reports samt Textelementen und Dokumentation. Testlauf ist Vorbelegung, vorhandene
+Objekte bleiben unangetastet. Siehe
+[Reimport](docs/spezifikation-documizer.md#56-reimport).
+
 ## Dokumente
 
 | Datei | Inhalt |
@@ -35,8 +41,9 @@ System bringen — ohne Textelemente, ohne Zusatzobjekte.
 Beide Reports laufen und sind gegen das System S4H (SAP_BASIS 758, S/4HANA 2023) verifiziert.
 Ausgabe als XML und HTML, Ablage auf PC oder Applikationsserver.
 
-Offen sind Markdown als drittes Format, der Reimport-Report der Phase 1, das BAL-Protokoll und
-die `S_DEVELOP`-Prüfung — siehe [Offene Punkte](docs/spezifikation-documizer.md#9-offene-punkte).
+Offen sind Markdown als drittes Format, der Reimport von Views, CDS-Quellen, Klassen und
+Funktionsgruppen, das BAL-Protokoll und die `S_DEVELOP`-Prüfung — siehe
+[Offene Punkte](docs/spezifikation-documizer.md#9-offene-punkte).
 
 ## Lizenz
 

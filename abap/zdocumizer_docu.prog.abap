@@ -221,6 +221,10 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'Listing aus und hebt die Trefferzeilen hervor.' ).
     a( iv_f = 'B1' iv_t = 'Max. Verwendungen je Objekt begrenzt den Nachweis getrennt von der' ).
     a( iv_f = '=' iv_t = 'Objektgrenze.' ).
+    a( iv_f = 'B1' iv_t = 'Definitionsdaten fuer Reimport: nimmt neben der Beschreibung die' ).
+    a( iv_f = '=' iv_t = 'technische Definition mit auf - Tabellenart, Auslieferungsklasse,' ).
+    a( iv_f = '=' iv_t = 'technische Einstellungen, Felder, Fremdschluessel, Programmattribute' ).
+    a( iv_f = '=' iv_t = 'und Textelemente. Ohne diese Daten kann der Import nichts anlegen.' ).
 
     a( iv_f = 'U1' iv_t = 'Ausgabe' ).
     a( iv_f = 'B1' iv_t = 'HTML erzeugen/anzeigen: lesbare Fassung mit Inhaltsverzeichnis.' ).
@@ -235,6 +239,24 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'und vergleicht. Schreibt nichts in das System zurueck.' ).
     a( iv_f = 'B1' iv_t = 'Download auf PC und Ablage Appl.-Server schreiben dieselbe Datei in' ).
     a( iv_f = '=' iv_t = 'UTF-8. Der Dateiname enthaelt System, Datum und Uhrzeit.' ).
+
+    a( iv_f = 'U1' iv_t = 'Import in dieses System' ).
+    a( iv_f = 'AS' iv_t = 'Der Report kann die Richtung umkehren: eine in einem anderen System' ).
+    a( iv_f = '=' iv_t = 'erzeugte XML-Datei einlesen und die darin definierten Objekte hier' ).
+    a( iv_f = '=' iv_t = 'anlegen. Voraussetzung ist, dass beim Export die Definitionsdaten' ).
+    a( iv_f = '=' iv_t = 'mitgeschrieben wurden.' ).
+    a( iv_f = 'B1' iv_t = 'Angelegt werden Domaenen, Datenelemente, Tabellen, Strukturen und' ).
+    a( iv_f = '=' iv_t = 'Programme samt Textelementen und Dokumentation. Views, CDS-Quellen,' ).
+    a( iv_f = '=' iv_t = 'Klassen und Funktionsgruppen stehen im Protokoll als nicht moeglich.' ).
+    a( iv_f = 'B1' iv_t = 'Testlauf ist vorbelegt: der Report meldet, was er anlegen wuerde, und' ).
+    a( iv_f = '=' iv_t = 'legt nichts an. Wer schreiben will, nimmt den Haken heraus.' ).
+    a( iv_f = 'B1' iv_t = 'Ein Objekt, das es hier schon gibt, bleibt unangetastet, solange' ).
+    a( iv_f = '=' iv_t = 'Bestehende Objekte ueberschreiben nicht gesetzt ist.' ).
+    a( iv_f = 'B1' iv_t = 'Die Reihenfolge legt der Report fest: Domaenen, Datenelemente,' ).
+    a( iv_f = '=' iv_t = 'Tabellen, Programme. Eine Tabelle ohne ihre Datenelemente liesse sich' ).
+    a( iv_f = '=' iv_t = 'nicht aktivieren.' ).
+    a( iv_f = 'B1' iv_t = 'Bei einem lokalen Paket wird kein Auftrag angefordert, sonst der' ).
+    a( iv_f = '=' iv_t = 'angegebene verwendet.' ).
 
     a( iv_f = 'U1' iv_t = 'Hinweise' ).
     a( iv_f = 'AS' iv_t = 'Objektdokumentation und Verwendungsnachweis erzeugen je Objekt eigene' ).

@@ -888,6 +888,32 @@
           Das Protokoll nennt je Objekt, was geschehen ist — angelegt, geändert, übersprungen,
           Fehler, nicht möglich — und warum.
         </p>
+
+        <h3>Prüfung nach dem Lauf</h3>
+        <p>
+          Angelegt heißt nicht brauchbar. Eine Struktur, der ein Datenelement fehlt, wird
+          geschrieben und aktiviert dann nicht. Ein Programm, das früh geschrieben wurde, kann
+          von einem später geschriebenen Objekt gebrochen werden. Deshalb geht der Importer am
+          Ende die Arbeitsliste noch einmal durch und stellt fest, was <em>tatsächlich</em> im
+          System steht.
+        </p>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Objekttyp</th><th>Prüfung</th></tr></thead>
+            <tbody>
+              <tr><td>Domäne, Datenelement, Tabelle, View</td><td>aktive Fassung vorhanden</td></tr>
+              <tr><td>CDS-Quelle</td><td>Abhängigkeiten im Zustand aktiv</td></tr>
+              <tr><td>Klasse, Interface</td><td>aktive Version vorhanden</td></tr>
+              <tr><td>Funktionsgruppe</td><td>nichts von ihr ist mehr inaktiv</td></tr>
+              <tr><td>Report, Include</td><td><code>SYNTAX-CHECK</code> — merkt als einziger, wenn etwas fehlt, das das Programm benutzt</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Gemeldet wird nur, was auffällt; am Ende steht eine Zeile mit der Zahl der geprüften
+          und der beanstandeten Objekte. Im Testlauf entfällt die Prüfung — es wurde nichts
+          geschrieben.
+        </p>
         <div class="note">
           <p><b>Aktiviert wird gezielt.</b> Klassen und Funktionsgruppen entstehen zunächst
           inaktiv. Die Liste der inaktiven Objekte gehört aber dem Benutzer und enthält im
@@ -1054,6 +1080,10 @@
               <tr>
                 <td>Index nannte die Tabelle des Quellsystems</td>
                 <td><code>DD12V-DBINDEX</code> ist der Name auf der Datenbank und wird aus dem Tabellennamen gebildet. Beim Import leeren — die Aktivierung setzt den richtigen.</td>
+              </tr>
+              <tr>
+                <td>Struktur importiert, aber genau ein Datenelement fehlte</td>
+                <td>Die Mengengrenze für den Verwendungsnachweis lag auch auf dem <b>Aufbau</b> eines Objekts: 53 verschiedene Datenelemente gegen eine Grenze von 50. Welche drei wegfielen, entschied die Datenbank — ein <code>SELECT</code> ohne <code>ORDER BY</code> hat keine verlässliche Reihenfolge. Was ein Objekt verwendet, ist zu begrenzen; woraus es besteht, nicht.</td>
               </tr>
             </tbody>
           </table>

@@ -220,7 +220,9 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = 'B1' iv_t = 'Fundstellen im ganzen Quelltext: gibt statt der Trefferzeilen das ganze' ).
     a( iv_f = '=' iv_t = 'Listing aus und hebt die Trefferzeilen hervor.' ).
     a( iv_f = 'B1' iv_t = 'Max. Verwendungen je Objekt begrenzt den Nachweis getrennt von der' ).
-    a( iv_f = '=' iv_t = 'Objektgrenze.' ).
+    a( iv_f = '=' iv_t = 'Objektgrenze. Auf den Aufbau eines Objekts greift die Grenze nicht:' ).
+    a( iv_f = '=' iv_t = 'die Datenelemente einer Tabelle werden immer vollstaendig gesammelt,' ).
+    a( iv_f = '=' iv_t = 'sonst laesst sich die Tabelle spaeter nicht aktivieren.' ).
     a( iv_f = 'B1' iv_t = 'Definitionsdaten fuer Reimport: nimmt neben der Beschreibung die' ).
     a( iv_f = '=' iv_t = 'technische Definition mit auf - Tabellenart, Auslieferungsklasse,' ).
     a( iv_f = '=' iv_t = 'technische Einstellungen, Felder, Fremdschluessel, Programmattribute' ).
@@ -267,6 +269,10 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'Angefangene Arbeit anderer bleibt unberuehrt.' ).
     a( iv_f = 'B1' iv_t = 'Bei einem lokalen Paket wird kein Auftrag angefordert, sonst der' ).
     a( iv_f = '=' iv_t = 'angegebene verwendet.' ).
+    a( iv_f = 'B1' iv_t = 'Nach dem Lauf wird jedes Objekt geprueft: DDIC-Objekte auf die' ).
+    a( iv_f = '=' iv_t = 'aktive Fassung, Programme mit einem Syntax-Check. Gemeldet wird nur,' ).
+    a( iv_f = '=' iv_t = 'was auffaellt. Angelegt heisst nicht brauchbar - einer Struktur kann' ).
+    a( iv_f = '=' iv_t = 'ein Datenelement fehlen, und dann aktiviert sie nicht.' ).
 
     a( iv_f = 'U1' iv_t = 'Hinweise' ).
     a( iv_f = 'AS' iv_t = 'Objektdokumentation und Verwendungsnachweis erzeugen je Objekt eigene' ).

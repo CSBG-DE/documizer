@@ -335,7 +335,7 @@ Pseudotyp `FUNC`: Kurztext aus `TFTIT`, Doku über Dokuklasse `FU`, Schnittstell
 | `P_CALLS` | | Ausgehende Aufrufe |
 | `P_RDEP` | 1 | Verweistiefe, 0 = keine |
 | `P_NOSAP` | | SAP-Standard ausschließen |
-| `P_MAXUSE` | 50 | Maximale Verwendungen je Objekt |
+| `P_MAXUSE` | 50 | Maximale **Verwendungen** je Objekt — greift nicht auf den Aufbau, siehe 4.5 |
 | `P_UDEP` | 0 | Verwendungstiefe — dokumentiert die gefundenen Verwender selbst mit |
 | `P_MAXHIT` | 40 | Maximale Fundstellen je Stelle |
 | `P_FSRC` | | Fundstellen im ganzen Quelltext |
@@ -431,6 +431,18 @@ Querverweise werden **unter dem Include** geführt, nicht unter dem Objektnamen.
 
 Die Aufrufliste wird nur für Objekte gezogen, deren Verweise auch verfolgt wurden. Für die
 Blätter des Baums wäre sie totes Gewicht und kostet je Objekt einen Scan über `WBCROSSGT`.
+
+**Verwendung ist begrenzt, Aufbau nicht.** `P_MAXUSE` deckelt, wie viele *Verwendungen* je
+Objekt gesammelt werden — dort ist die Zahl offen und der Scan teuer. Woraus ein Objekt
+*besteht*, wird dagegen vollständig gesammelt: die Datenelemente einer Tabelle, die Domäne
+eines Datenelements, die Basisobjekte einer CDS-Quelle. Diese Zahl ist durch das Objekt selbst
+begrenzt.
+
+Das war anfangs anders und hat einen Fehler erzeugt, der schwer zu sehen ist: eine Struktur mit
+53 verschiedenen Datenelementen gegen eine Grenze von 50 — drei fielen weg, und da ein `SELECT`
+ohne `ORDER BY` keine verlässliche Reihenfolge hat, entschied die Datenbank, welche. Im Dokument
+stand die Struktur vollständig, nur eines ihrer Datenelemente fehlte. Beim Import ließ sie sich
+dann nicht aktivieren.
 
 ### 4.6 Verwendungsnachweis
 
@@ -707,6 +719,22 @@ aktivieren; die Arbeit vorher zu sortieren ist billiger, als sie zu wiederholen.
 
 Das Protokoll nennt je Objekt Typ, Name, was geschehen ist (angelegt, geändert, übersprungen,
 Fehler, nicht möglich) und den Grund.
+
+**Prüfung nach dem Lauf.** Angelegt heißt nicht brauchbar. Eine Struktur, der ein Datenelement
+fehlt, wird geschrieben und aktiviert dann nicht; ein Programm, das früh geschrieben wurde, kann
+von einem später geschriebenen Objekt gebrochen werden. Deshalb geht der Importer am Ende die
+Arbeitsliste noch einmal durch und stellt fest, was tatsächlich im System steht:
+
+| Objekttyp | Prüfung |
+|---|---|
+| Domäne, Datenelement, Tabelle, View | aktive Fassung vorhanden (`AS4LOCAL = 'A'`) |
+| CDS-Quelle | `DDLDEPENDENCY` mit `STATE = 'A'` |
+| Klasse, Interface | `SEOCLASSDF` mit `VERSION = '1'` |
+| Funktionsgruppe | nichts von ihr steht mehr in `DWINACTIV` |
+| Report, Include | `SYNTAX-CHECK` — der merkt als einziger, wenn etwas fehlt, das das Programm benutzt |
+
+Gemeldet wird nur, was auffällt; am Ende steht eine Zeile mit der Zahl der geprüften und der
+beanstandeten Objekte. Im Testlauf entfällt die Prüfung — es wurde nichts geschrieben.
 
 **Nicht umgesetzt und bewusst nicht:** Customizing-Inhalte. Dafür gibt es BC-Sets; der
 Documizer schreibt nicht in Customizing-Tabellen.

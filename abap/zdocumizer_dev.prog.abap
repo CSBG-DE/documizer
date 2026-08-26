@@ -1087,6 +1087,14 @@ CLASS lcl_importer DEFINITION.
                                iv_name    TYPE string.
     METHODS put_prog IMPORTING io_chapter TYPE REF TO lcl_chapter
                                iv_name    TYPE string.
+*   Checks after the run what actually stands in the system. An object
+*   can be created and still be unusable - a structure whose data
+*   element is missing activates with rc 8 - and an object written early
+*   can be broken by one written later.
+    METHODS verify IMPORTING it_work TYPE ty_impwork.
+    METHODS verify_one
+      IMPORTING is_work        TYPE ty_impwork_row
+      RETURNING VALUE(rv_text) TYPE string.
     METHODS put_index IMPORTING io_chapter TYPE REF TO lcl_chapter
                                 iv_name    TYPE string.
     METHODS put_view IMPORTING io_chapter TYPE REF TO lcl_chapter
@@ -1178,6 +1186,123 @@ CLASS lcl_importer IMPLEMENTATION.
         WHEN 'FUGR'. put_fugr( io_chapter = ls_work-chapter iv_name = ls_work-name ).
       ENDCASE.
     ENDLOOP.
+
+*   A test run wrote nothing, so there is nothing to check.
+    IF mv_test = abap_false.
+      verify( lt_work ).
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD verify.
+
+    DATA lv_ok  TYPE i.
+    DATA lv_bad TYPE i.
+
+    LOOP AT it_work INTO DATA(ls_work).
+      DATA(lv_text) = verify_one( ls_work ).
+      IF lv_text IS INITIAL.
+        lv_ok = lv_ok + 1.
+      ELSE.
+        lv_bad = lv_bad + 1.
+        log( iv_kind   = ls_work-kind
+             iv_name   = ls_work-name
+             iv_action = lcl_t=>ui( d = `PRUEFUNG` e = `CHECK` )
+             iv_text   = lv_text ).
+      ENDIF.
+    ENDLOOP.
+
+    log( iv_kind   = ''
+         iv_name   = ''
+         iv_action = lcl_t=>ui( d = `Pruefung` e = `Check` )
+         iv_text   = |{ lv_ok } { lcl_t=>ui( d = `in Ordnung` e = `fine` ) }, | &&
+                     |{ lv_bad } { lcl_t=>ui( d = `mit Befund` e = `with findings` ) }| ).
+
+  ENDMETHOD.
+
+  METHOD verify_one.
+
+    DATA lv_obj  TYPE ddobjname.
+    DATA lv_act  TYPE abap_bool.
+    DATA lv_prog TYPE progname.
+
+    lv_obj = is_work-name.
+
+    CASE is_work-kind.
+
+      WHEN 'DOMA'.
+        SELECT SINGLE @abap_true FROM dd01l
+          WHERE domname = @lv_obj AND as4local = 'A' INTO @lv_act.
+      WHEN 'DTEL'.
+        SELECT SINGLE @abap_true FROM dd04l
+          WHERE rollname = @lv_obj AND as4local = 'A' INTO @lv_act.
+      WHEN 'TABL'.
+        SELECT SINGLE @abap_true FROM dd02l
+          WHERE tabname = @lv_obj AND as4local = 'A' INTO @lv_act.
+      WHEN 'VIEW'.
+        SELECT SINGLE @abap_true FROM dd25l
+          WHERE viewname = @lv_obj AND as4local = 'A' INTO @lv_act.
+
+      WHEN 'DDLS'.
+        DATA lv_ddl TYPE ddldependency-ddlname.
+        lv_ddl = is_work-name.
+        SELECT SINGLE @abap_true FROM ddldependency
+          WHERE ddlname = @lv_ddl AND state = 'A' INTO @lv_act.
+
+      WHEN 'CLAS' OR 'INTF'.
+        DATA lv_cls TYPE seoclassdf-clsname.
+        lv_cls = is_work-name.
+        SELECT SINGLE @abap_true FROM seoclassdf
+          WHERE clsname = @lv_cls AND version = '1' INTO @lv_act.
+
+      WHEN 'FUGR'.
+*       A function group is active when nothing of it is left inactive.
+        lv_act = abap_true.
+        SELECT COUNT(*) FROM dwinactiv WHERE uname = @sy-uname.
+        IF sy-subrc = 0.
+          SELECT obj_name FROM dwinactiv WHERE uname = @sy-uname
+            INTO TABLE @DATA(lt_in).
+          LOOP AT lt_in INTO DATA(ls_in).
+            IF prefix( iv_text = CONV string( ls_in-obj_name )
+                       iv_pref = |SAPL{ is_work-name }| ) = abap_true
+               OR prefix( iv_text = CONV string( ls_in-obj_name )
+                          iv_pref = |L{ is_work-name }| ) = abap_true.
+              CLEAR lv_act.
+              EXIT.
+            ENDIF.
+          ENDLOOP.
+        ENDIF.
+
+      WHEN 'PROG'.
+*       For a program the real check is the syntax check - it is the one
+*       that notices when something the program uses is missing.
+        DATA lt_code TYPE ty_code.
+        DATA lv_msg  TYPE string.
+        DATA lv_lin  TYPE i.
+        DATA lv_wrd  TYPE string.
+
+        lv_prog = is_work-name.
+        READ REPORT lv_prog INTO lt_code.
+        IF sy-subrc <> 0.
+          rv_text = lcl_t=>ui( d = `nicht vorhanden` e = `does not exist` ).
+          RETURN.
+        ENDIF.
+        SYNTAX-CHECK FOR lt_code PROGRAM lv_prog
+                     MESSAGE lv_msg LINE lv_lin WORD lv_wrd.
+        IF sy-subrc <> 0.
+          rv_text = |{ lcl_t=>ui( d = `Syntaxfehler Zeile` e = `syntax error line` ) }| &&
+                    | { lv_lin }: { lv_msg }|.
+        ENDIF.
+        RETURN.
+
+      WHEN OTHERS.
+        RETURN.
+
+    ENDCASE.
+
+    IF lv_act = abap_false.
+      rv_text = lcl_t=>ui( d = `nicht aktiv` e = `not active` ).
+    ENDIF.
 
   ENDMETHOD.
 
@@ -5951,13 +6076,22 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
 *   Data elements of a table or structure, and the domain of a data
 *   element - the chain the user actually wants to read through.
+*
+*   No limit here, and that is deliberate. P_MAXUSE caps the where-used
+*   list, where the number of hits is open-ended. What a structure is
+*   built from is not a usage but its composition: it is bounded by the
+*   number of fields, and cutting it produces a document that cannot be
+*   imported - one data element short, and the structure does not
+*   activate. It cost a structure with 53 distinct data elements against
+*   a limit of 50 to find that out, and which three fell away was up to
+*   the database, since a SELECT without ORDER BY has no order to speak
+*   of.
     IF iv_type = 'TABL' OR iv_type = 'VIEW'.
       DATA lv_tab TYPE dd03l-tabname.
       lv_tab = iv_name.
       SELECT DISTINCT rollname FROM dd03l
         WHERE tabname = @lv_tab AND as4local = 'A' AND rollname <> ''
-        INTO TABLE @DATA(lt_rol)
-        UP TO @lv_max ROWS.
+        INTO TABLE @DATA(lt_rol).
       LOOP AT lt_rol INTO DATA(ls_rol).
         APPEND VALUE #( type = 'DTEL' name = ls_rol-rollname ) TO rt_ref.
       ENDLOOP.
@@ -5977,10 +6111,10 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     IF iv_type = 'DDLS'.
       DATA lv_ddl2 TYPE ddldependency-ddlname.
       lv_ddl2 = iv_name.
+*     Also composition, not usage - no limit, see above.
       SELECT objectname FROM ddldependency
         WHERE ddlname = @lv_ddl2 AND state = 'A' AND objectname <> @lv_ddl2
-        INTO TABLE @DATA(lt_dep)
-        UP TO @lv_max ROWS.
+        INTO TABLE @DATA(lt_dep).
       LOOP AT lt_dep INTO DATA(ls_dep).
         DATA(ls_res2) = resolve_repo_object( CONV string( ls_dep-objectname ) ).
         IF ls_res2-name IS NOT INITIAL.

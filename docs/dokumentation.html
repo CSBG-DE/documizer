@@ -324,7 +324,7 @@
       in einem anderen System auch wieder anlegen.
     </p>
     <div class="factbar">
-      <span><b>Stand</b> 25.08.2026</span>
+      <span><b>Stand</b> 26.08.2026</span>
       <span><b>System</b> S4H · SAP_BASIS 758</span>
       <span><b>Pakete</b> ZCONS_DOCUMIZER</span>
       <span><b>Transport</b> S4HK901757</span>
@@ -677,6 +677,32 @@
           Objektname aussieht, landet mit im Dokument. Der Preis dafür ist gering — und der
           Gewinn ist der Unterschied zwischen einem Dokument, das sich importieren lässt, und
           einem, dem beim Aktivieren ein Objekt fehlt.</p>
+        </div>
+
+        <h3>Includes</h3>
+        <p>
+          <code>INCLUDE ZBBC_ZAI0003.</code> ist ein statischer Verweis, steht aber in keinem
+          Querverweisindex und passt auf keins der Aufrufmuster. Ohne das Include übersetzt das
+          Programm nicht — nach einem Import fällt genau das als
+          <code>SYNTAX_ERROR</code> auf.
+        </p>
+        <p>
+          Ermittelt wird aus dem <b>Quelltext</b>, nicht über
+          <code>RS_GET_ALL_INCLUDES</code>. Der Baustein antwortet aus <code>D010INC</code>, und
+          diese Tabelle wird beim Generieren gefüllt: ein transportiertes, aber noch nie
+          gelaufenes Programm meldet dort gar keine Includes. Umgekehrt führt
+          <code>D010INC</code> auch die generierten Einheiten jeder benutzten Klasse
+          (<code>CL_…====CU</code>) — für den Übersetzer Includes, für sonst niemanden.
+          <code>INCLUDE TYPE</code> und <code>INCLUDE STRUCTURE</code> sind etwas anderes und
+          bleiben außen vor.
+        </p>
+        <div class="note">
+          <p>Beim Filter <em>SAP-Standard ausschließen</em> ist ein Include ein Sonderfall: es
+          hat oft <b>gar keinen Katalogeintrag</b>, und dann steht kein Paket zur Verfügung, um
+          zu entscheiden. Es kam aus dem Quelltext eines Objekts, das bereits im Dokument steht,
+          also gehört es dorthin — was niemand katalogisiert hat, ist kein SAP-Standard.
+          SAP-eigene Includes haben einen <code>TADIR</code>-Eintrag und werden ganz normal
+          gefiltert.</p>
         </div>
 
         <h3>Verwendungsnachweis</h3>
@@ -1084,6 +1110,18 @@
               <tr>
                 <td>Struktur importiert, aber genau ein Datenelement fehlte</td>
                 <td>Die Mengengrenze für den Verwendungsnachweis lag auch auf dem <b>Aufbau</b> eines Objekts: 53 verschiedene Datenelemente gegen eine Grenze von 50. Welche drei wegfielen, entschied die Datenbank — ein <code>SELECT</code> ohne <code>ORDER BY</code> hat keine verlässliche Reihenfolge. Was ein Objekt verwendet, ist zu begrenzen; woraus es besteht, nicht.</td>
+              </tr>
+              <tr>
+                <td>Importiertes Programm bricht mit <code>SYNTAX_ERROR</code> ab: <code>INCLUDE report … not found</code></td>
+                <td><code>INCLUDE</code> ist ein statischer Verweis, steht aber in keinem Querverweisindex und passt auf keins der Aufrufmuster. Die Includes werden aus dem Quelltext gelesen — <code>RS_GET_ALL_INCLUDES</code> antwortet aus <code>D010INC</code>, und die ist bei einem nie generierten Programm leer.</td>
+              </tr>
+              <tr>
+                <td>Include wurde erkannt, fehlte aber trotzdem im Export</td>
+                <td>Der Filter „SAP-Standard ausschließen" entscheidet über das Paket. Ein Include hat oft <b>gar keinen</b> <code>TADIR</code>-Eintrag und wurde deshalb als „nicht unser eigenes" verworfen. Ohne Katalogeintrag ist es kein SAP-Standard — es bleibt drin.</td>
+              </tr>
+              <tr>
+                <td>Import-Ankreuzfeld nicht erreichbar, ohne vorher einen Startpunkt einzugeben</td>
+                <td><code>OBLIGATORY</code> prüft die Laufzeit im PAI, und zwar bei <b>jedem</b> Roundtrip — auch bei dem, der das Ankreuzfeld setzt. Das PBO kommt zu spät, um <code>SCREEN-REQUIRED</code> noch abzuräumen. Die Pflicht gehört nach <code>AT SELECTION-SCREEN</code>, abgesichert über <code>SY-UCOMM</code>.</td>
               </tr>
             </tbody>
           </table>

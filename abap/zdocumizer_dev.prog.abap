@@ -2697,12 +2697,17 @@ DATA gv_dummy_nam TYPE tadir-obj_name.
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE gv_blk1.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tstyp FOR FIELD p_stype.
-    PARAMETERS p_stype TYPE char2 DEFAULT 'K' OBLIGATORY.
+*   Deliberately not OBLIGATORY. The runtime check runs in the PAI, and
+*   it runs on every round trip - including the one that ticks the import
+*   flag. The user could then never reach the checkbox without first
+*   filling a field the import does not use. The start point is checked
+*   in AT SELECTION-SCREEN instead, and only when the run really starts.
+    PARAMETERS p_stype TYPE char2 DEFAULT 'K'.
     SELECTION-SCREEN COMMENT 38(40) gv_tstyt.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tsval FOR FIELD p_sval.
-    PARAMETERS p_sval TYPE tadir-obj_name OBLIGATORY.
+    PARAMETERS p_sval TYPE tadir-obj_name.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_trec FOR FIELD p_recur.
@@ -2973,9 +2978,20 @@ AT SELECTION-SCREEN OUTPUT.
   PERFORM screen_mode.
 
 AT SELECTION-SCREEN.
-* Only the documentation run needs a start point.
-  IF p_imp = abap_false.
-    PERFORM check_stype.
+* Only when the run really starts. This event also fires on a plain
+* round trip - ticking the import flag is one - and checking there would
+* block the very box the user is trying to reach.
+  IF sy-ucomm = 'ONLI' OR sy-ucomm = 'SJOB' OR sy-ucomm = 'PRIN'.
+    IF p_imp = abap_false.
+      IF p_sval IS INITIAL.
+        MESSAGE lcl_t=>ui( d = `Bitte einen Startpunkt angeben.`
+                           e = `Please enter a start point.` ) TYPE 'E'.
+      ENDIF.
+      PERFORM check_stype.
+    ELSEIF p_ifile IS INITIAL.
+      MESSAGE lcl_t=>ui( d = `Bitte die XML-Datei angeben.`
+                         e = `Please enter the XML file.` ) TYPE 'E'.
+    ENDIF.
   ENDIF.
 
 AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_ifile.
@@ -5795,6 +5811,45 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     DELETE ADJACENT DUPLICATES FROM lt_name COMPARING table_line.
     DATA(lt_own) = own_names( lt_name ).
 
+*   An include may have no catalog entry at all, and then the package is
+*   not available to decide with. It got here from the source of an
+*   object that is already in the document, so it belongs to that
+*   object - an include nobody catalogued is not SAP standard, and
+*   without it the including program does not compile. SAP's own
+*   includes do have a catalog entry and are filtered normally above.
+    DATA lt_unkn TYPE ty_names.
+    LOOP AT ct_ref INTO ls_r WHERE type = 'PROG'.
+      READ TABLE lt_own TRANSPORTING NO FIELDS
+           WITH KEY table_line = ls_r-name BINARY SEARCH.
+      IF sy-subrc <> 0.
+        APPEND ls_r-name TO lt_unkn.
+      ENDIF.
+    ENDLOOP.
+
+    IF lt_unkn IS NOT INITIAL.
+      SELECT obj_name FROM tadir
+        FOR ALL ENTRIES IN @lt_unkn
+        WHERE pgmid = 'R3TR' AND object = 'PROG'
+          AND obj_name = @lt_unkn-table_line
+        INTO TABLE @DATA(lt_cat).
+      SORT lt_cat BY table_line.
+
+      SELECT name, subc FROM trdir
+        FOR ALL ENTRIES IN @lt_unkn
+        WHERE name = @lt_unkn-table_line
+        INTO TABLE @DATA(lt_dir).
+
+      LOOP AT lt_dir INTO DATA(ls_dir) WHERE subc = 'I'.
+        READ TABLE lt_cat TRANSPORTING NO FIELDS
+             WITH KEY table_line = ls_dir-name BINARY SEARCH.
+        IF sy-subrc <> 0.
+          APPEND ls_dir-name TO lt_own.
+        ENDIF.
+      ENDLOOP.
+      SORT lt_own BY table_line.
+      DELETE ADJACENT DUPLICATES FROM lt_own COMPARING table_line.
+    ENDIF.
+
 *   Building a new table instead of deleting inside the loop - DELETE
 *   shifts the index under the cursor.
     DATA lt_keep TYPE ty_objrefs.
@@ -6095,6 +6150,41 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       LOOP AT lt_rol INTO DATA(ls_rol).
         APPEND VALUE #( type = 'DTEL' name = ls_rol-rollname ) TO rt_ref.
       ENDLOOP.
+    ENDIF.
+
+*   The includes of a program. INCLUDE ZBBC_ZAI0003. is a static
+*   reference, but it is in no cross-reference index and matches none of
+*   the usage patterns - and without the include the program does not
+*   compile. Composition again, so no limit.
+*
+*   Read from the source, not from RS_GET_ALL_INCLUDES. That function
+*   answers from D010INC, which is filled when the program is generated;
+*   a program that has been transported but not yet run reports no
+*   includes at all. D010INC also lists the generated units of every
+*   class the program uses, which are includes to the compiler and to
+*   nobody else. The source has neither problem.
+    IF iv_type = 'PROG'.
+      DATA lv_pmain TYPE syrepid.
+      lv_pmain = iv_name.
+      DATA(lv_psrc) = report_source( lv_pmain ).
+      IF lv_psrc IS NOT INITIAL.
+*       INCLUDE TYPE and INCLUDE STRUCTURE are something else entirely -
+*       they add components to a structure definition. The optional
+*       IF FOUND and the trailing period are not part of the name.
+        FIND ALL OCCURRENCES OF PCRE
+             `(?im)^\s*INCLUDE\s+(?!TYPE\b|STRUCTURE\b)([A-Za-z][\w/]*)`
+             IN lv_psrc RESULTS DATA(lt_pinc).
+        LOOP AT lt_pinc INTO DATA(ls_pinc).
+          READ TABLE ls_pinc-submatches INTO DATA(ls_psub) INDEX 1.
+          IF sy-subrc <> 0.
+            CONTINUE.
+          ENDIF.
+          DATA(lv_pi) = to_upper( substring( val = lv_psrc
+                                             off = ls_psub-offset
+                                             len = ls_psub-length ) ).
+          APPEND VALUE #( type = 'PROG' name = lv_pi ) TO rt_ref.
+        ENDLOOP.
+      ENDIF.
     ENDIF.
 
     IF iv_type = 'DTEL'.
@@ -6885,12 +6975,13 @@ FORM screen_mode.
   LOOP AT SCREEN.
     CASE screen-name.
       WHEN 'P_STYPE' OR 'P_SVAL'.
+*       Only greyed out, never marked required. A required flag is
+*       enforced by the runtime on the next round trip, and the next
+*       round trip may well be the one that ticks the import flag.
         IF p_imp = abap_true.
-          screen-required = 0.
-          screen-input    = 0.
+          screen-input = 0.
         ELSE.
-          screen-required = 1.
-          screen-input    = 1.
+          screen-input = 1.
         ENDIF.
         MODIFY SCREEN.
       WHEN 'P_IFILE' OR 'P_ISRV' OR 'P_ITEST' OR 'P_IOVER'

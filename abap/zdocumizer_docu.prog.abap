@@ -212,10 +212,16 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = 'B1' iv_t = 'Ausgehende Aufrufe: die Gegenrichtung. Neben den Querverweistabellen' ).
     a( iv_f = '=' iv_t = 'wird der Quelltext nach CALL FUNCTION, SUBMIT, Tabellenzugriffen und' ).
     a( iv_f = '=' iv_t = 'Klassen durchsucht; Funktionsbausteine stehen in keinem Index.' ).
+    a( iv_f = '=' iv_t = 'Ebenfalls aus dem Quelltext gelesen werden die INCLUDE-Anweisungen' ).
+    a( iv_f = '=' iv_t = 'eines Programms. Ohne seine Includes laesst sich ein importiertes' ).
+    a( iv_f = '=' iv_t = 'Programm nicht uebersetzen. Includes sind Aufbau, nicht Verwendung,' ).
+    a( iv_f = '=' iv_t = 'und werden deshalb nicht begrenzt.' ).
     a( iv_f = 'B1' iv_t = 'Verweistiefe: wie weit die Verweise verfolgt werden. Null bedeutet' ).
     a( iv_f = '=' iv_t = 'nicht verfolgen, eins die direkten Nachbarn dokumentieren.' ).
     a( iv_f = 'B1' iv_t = 'SAP-Standard ausschliessen: laesst nur Objekte der Eigenentwicklung' ).
-    a( iv_f = '=' iv_t = 'stehen. Massstab ist die Auslieferungseinheit des Pakets.' ).
+    a( iv_f = '=' iv_t = 'stehen. Massstab ist die Auslieferungseinheit des Pakets. Ein' ).
+    a( iv_f = '=' iv_t = 'Include hat oft gar keinen Katalogeintrag; dann bleibt es stehen,' ).
+    a( iv_f = '=' iv_t = 'denn was niemand katalogisiert hat, ist kein SAP-Standard.' ).
     a( iv_f = 'B1' iv_t = 'Max. Fundstellen je Stelle begrenzt die Quelltextzeilen je Verwendung.' ).
     a( iv_f = 'B1' iv_t = 'Fundstellen im ganzen Quelltext: gibt statt der Trefferzeilen das ganze' ).
     a( iv_f = '=' iv_t = 'Listing aus und hebt die Trefferzeilen hervor.' ).
@@ -247,6 +253,11 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'erzeugte XML-Datei einlesen und die darin definierten Objekte hier' ).
     a( iv_f = '=' iv_t = 'anlegen. Voraussetzung ist, dass beim Export die Definitionsdaten' ).
     a( iv_f = '=' iv_t = 'mitgeschrieben wurden.' ).
+    a( iv_f = 'B1' iv_t = 'Ist der Import angekreuzt, sind Typ und Name des Startpunkts inaktiv;' ).
+    a( iv_f = '=' iv_t = 'ein Importlauf hat keinen Startpunkt. Beide Felder sind deshalb' ).
+    a( iv_f = '=' iv_t = 'keine Mussfelder - sonst waere das Ankreuzfeld nicht erreichbar,' ).
+    a( iv_f = '=' iv_t = 'ohne vorher etwas einzugeben, was der Import gar nicht verwendet.' ).
+    a( iv_f = '=' iv_t = 'Geprueft wird erst beim Ausfuehren.' ).
     a( iv_f = 'B1' iv_t = 'Angelegt werden Domaenen, Datenelemente, Tabellen, Strukturen,' ).
     a( iv_f = '=' iv_t = 'Views, CDS-Quellen, Programme samt Textelementen, Klassen,' ).
     a( iv_f = '=' iv_t = 'Interfaces und Funktionsgruppen mit ihren Bausteinen.' ).

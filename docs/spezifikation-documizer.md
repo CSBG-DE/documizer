@@ -1,6 +1,6 @@
 # Spezifikation: Documizer — IMG- und Entwicklerdokumentationsreports
 
-**Stand:** 25.08.2026
+**Stand:** 26.08.2026
 **Grundlage:** [Recherche](recherche-img-und-entwicklerdoku.md)
 **Zielsystem:** S/4HANA On-Premise, SAP_BASIS 758, klassisches ABAP
 
@@ -344,9 +344,13 @@ Pseudotyp `FUNC`: Kurztext aus `TFTIT`, Doku über Dokuklasse `FU`, Schnittstell
 **Block: Ausgabe** — wie Report A.
 
 **Block: Import in dieses System** — schaltet den Report auf die Gegenrichtung (siehe 5.6).
-Ist `P_IMP` gesetzt, verlieren `P_STYPE` und `P_SVAL` ihre Eingabepflicht und werden inaktiv
-gesetzt; ein Importlauf hat keinen Startpunkt. `OBLIGATORY` lässt sich nicht bedingt
-deklarieren, das Kennzeichen wird deshalb im PBO abgeräumt. Umgekehrt sind die Importfelder
+Ist `P_IMP` gesetzt, werden `P_STYPE` und `P_SVAL` inaktiv gesetzt; ein Importlauf hat keinen
+Startpunkt. Beide sind deshalb **nicht** `OBLIGATORY` deklariert: die Laufzeit prüft das
+Mussfeld im PAI, und zwar bei *jedem* Roundtrip — auch bei dem, der das Importkennzeichen
+setzt. Der Benutzer käme sonst nie an das Ankreuzfeld, ohne vorher ein Feld zu füllen, das der
+Import gar nicht verwendet. Aus demselben Grund setzt das PBO auch kein `SCREEN-REQUIRED`.
+Geprüft wird stattdessen in `AT SELECTION-SCREEN`, und nur wenn der Lauf wirklich startet
+(`SY-UCOMM` = `ONLI`, `SJOB`, `PRIN`). Umgekehrt sind die Importfelder
 inaktiv, solange dokumentiert wird. `P_IFILE` hat eine Wertehilfe mit Dateidialog — außer bei
 `P_ISRV`, denn ein Pfad auf dem Applikationsserver lässt sich vom Frontend nicht durchsuchen.
 
@@ -422,6 +426,21 @@ Gefundene Objekte tragen den Vermerk **„dynamisch verwendet"**.
 
 Das ist eine Vermutung, keine Feststellung — und sie ist der Unterschied zwischen einem
 Dokument, das sich importieren lässt, und einem, dem beim Aktivieren ein Objekt fehlt.
+
+**Includes.** `INCLUDE ZBBC_ZAI0003.` ist ein statischer Verweis, steht aber in keinem
+Querverweisindex und passt auf keins der Aufrufmuster. Ohne das Include übersetzt das Programm
+nicht. Ermittelt wird aus dem **Quelltext**, nicht über `RS_GET_ALL_INCLUDES`: der Baustein
+antwortet aus `D010INC`, und die Tabelle wird beim Generieren gefüllt — ein transportiertes,
+aber noch nie gelaufenes Programm meldet dort gar keine Includes. `D010INC` führt umgekehrt
+auch die generierten Einheiten jeder benutzten Klasse (`CL_…====CU`), die für den Übersetzer
+Includes sind und sonst für niemanden. `INCLUDE TYPE` und `INCLUDE STRUCTURE` sind etwas
+anderes und werden ausgenommen. Includes sind Aufbau, nicht Verwendung — also keine Grenze.
+
+Beim Filter „SAP-Standard ausschließen" ist ein Include ein Sonderfall: es hat oft **gar keinen
+Katalogeintrag**, und dann steht kein Paket zur Verfügung, um zu entscheiden. Es kam aus dem
+Quelltext eines Objekts, das bereits im Dokument steht, also gehört es dorthin — was niemand
+katalogisiert hat, ist kein SAP-Standard. SAP-eigene Includes haben einen `TADIR`-Eintrag und
+werden ganz normal gefiltert.
 
 Die Liste ist nach Art sortiert — Bausteine und Reports, Tabellenzugriffe, Methodenaufrufe,
 Typen, Datenobjekte. Greift die Mengengrenze, bleibt oben stehen, was der Leser zuerst sucht.

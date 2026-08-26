@@ -891,6 +891,7 @@
               <tr><td>Funktionsgruppe</td><td>ja, mit Includes, Bausteinen und deren Schnittstelle</td></tr>
               <tr><td>View</td><td>ja, mit Basistabellen, Feldern und Join-Bedingungen</td></tr>
               <tr><td>CDS-Quelle</td><td>ja; SQL-View und Strukturobjekt entstehen beim Aktivieren von selbst</td></tr>
+              <tr><td>Nachrichtenklasse</td><td>ja, mit allen Nachrichten in allen gepflegten Sprachen</td></tr>
             </tbody>
           </table>
         </div>
@@ -931,6 +932,27 @@
           Kopfsatz. Jede wird ein Zeilen-Tag im Dokument — dieselbe Form wie die Feldliste einer
           Tabelle. Ein Programm ohne Status ist der Normalfall und keine Meldung wert.
         </p>
+
+        <h3>Nachrichtenklassen</h3>
+        <p>
+          Fehlt die Nachrichtenklasse im Zielsystem, zeigt der Report statt des Textes den
+          nackten Schlüssel: <code>S:ZBLE_0001:006</code>. Das ist <b>kein</b> Sprachproblem —
+          ist die Klasse da, aber in der Anmeldesprache nicht gepflegt, fällt die Laufzeit auf
+          Englisch zurück. Die Schlüsselform heißt immer: Klasse oder Nummer sind gar nicht da.
+        </p>
+        <p>
+          Gefunden wird die Klasse aus dem Quelltext — sie steht in keinem Querverweisindex, und
+          die beiden Formen, auf die es ankommt, sind nicht in Anführungszeichen: der
+          <code>MESSAGE-ID</code>-Zusatz des Programmkopfs und die Klammerform hinter der
+          Nummer.
+        </p>
+        <div class="note">
+          <p><b>Alle Sprachen, nicht die Ausgabesprache.</b> Nachrichten sind Definitionsdaten,
+          keine Beschreibung. Eine nur englisch gepflegte Klasse, in ein deutsches Dokument
+          exportiert, käme sonst ohne eine einzige Nachricht an — und genau das ist der
+          Normalfall. Beim Import werden fehlende Nummern und fehlende Sprachen ergänzt;
+          vorhandene Texte bleiben, sie können hier übersetzt oder korrigiert worden sein.</p>
+        </div>
 
         <h3>Prüfung nach dem Lauf</h3>
         <p>
@@ -1139,6 +1161,14 @@
               <tr>
                 <td>Importierter Report bricht in <code>CX_SALV_OBJECT_NOT_FOUND</code> ab</td>
                 <td>Der GUI-Status ist ein eigener Programmbestandteil und reist nicht mit dem Quelltext. Über <code>RS_CUA_INTERNAL_FETCH</code>/<code>_WRITE</code> nachgezogen.</td>
+              </tr>
+              <tr>
+                <td>Importierter Report zeigt <code>S:ZBLE_0001:006</code> statt des Nachrichtentextes</td>
+                <td>Die Nachrichtenklasse fehlt im Zielsystem — kein Sprachproblem. Auf S4H nachgemessen: bei nur englisch gepflegtem Text und deutscher Anmeldung zeigt die Laufzeit den englischen Text. Die Schlüsselform bedeutet immer, dass Klasse oder Nummer gar nicht da sind.</td>
+              </tr>
+              <tr>
+                <td><code>RPY_MESSAGE_ID_INSERT</code> blieb im Importlauf stehen</td>
+                <td>Der Baustein öffnet den Dialog „Objektkatalogeintrag anlegen", auch mit <code>$TMP</code> als Paket. Ein unbeaufsichtigter Lauf kann keinen Dialog beantworten. Geschrieben wird direkt in <code>T100A</code>/<code>T100</code>, der Katalogeintrag über denselben Helfer wie überall sonst.</td>
               </tr>
               <tr>
                 <td>Alle Felder einer Definitionszeile kamen leer an, die Zeile selbst war da</td>

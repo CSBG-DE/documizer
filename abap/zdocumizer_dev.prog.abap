@@ -1095,6 +1095,8 @@ CLASS lcl_importer DEFINITION.
                                iv_name    TYPE string.
     METHODS put_cua  IMPORTING io_chapter TYPE REF TO lcl_chapter
                                iv_prog    TYPE progname.
+    METHODS put_msag IMPORTING io_chapter TYPE REF TO lcl_chapter
+                               iv_name    TYPE string.
 *   Checks after the run what actually stands in the system. An object
 *   can be created and still be unusable - a structure whose data
 *   element is missing activates with rc 8 - and an object written early
@@ -1192,6 +1194,7 @@ CLASS lcl_importer IMPLEMENTATION.
                     iv_kind    = ls_work-kind
                     iv_name    = ls_work-name ).
         WHEN 'FUGR'. put_fugr( io_chapter = ls_work-chapter iv_name = ls_work-name ).
+        WHEN 'MSAG'. put_msag( io_chapter = ls_work-chapter iv_name = ls_work-name ).
       ENDCASE.
     ENDLOOP.
 
@@ -1250,6 +1253,14 @@ CLASS lcl_importer IMPLEMENTATION.
       WHEN 'VIEW'.
         SELECT SINGLE @abap_true FROM dd25l
           WHERE viewname = @lv_obj AND as4local = 'A' INTO @lv_act.
+
+      WHEN 'MSAG'.
+*       The class alone is not enough - a class without its numbers
+*       leaves the report showing the bare key just the same.
+        DATA lv_arb TYPE t100a-arbgb.
+        lv_arb = is_work-name.
+        SELECT COUNT(*) FROM t100 WHERE arbgb = @lv_arb.
+        lv_act = boolc( sy-dbcnt > 0 ).
 
       WHEN 'DDLS'.
         DATA lv_ddl TYPE ddldependency-ddlname.
@@ -1320,6 +1331,9 @@ CLASS lcl_importer IMPLEMENTATION.
       DATA(lv_kind) = io_chapter->get_defkind( ).
       DATA lv_seq TYPE i.
       CASE lv_kind.
+*       A message class stands on nothing and everything else may raise
+*       one of its messages, so it goes first.
+        WHEN 'MSAG'. lv_seq = 1.
         WHEN 'DOMA'. lv_seq = 1.
         WHEN 'DTEL'. lv_seq = 2.
         WHEN 'TABL'. lv_seq = 3.
@@ -1349,6 +1363,7 @@ CLASS lcl_importer IMPLEMENTATION.
         WHEN 'CLAS' OR 'INTF'.
           lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'CLSNAME' ).
         WHEN 'FUGR'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'AREA' ).
+        WHEN 'MSAG'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'ARBGB' ).
       ENDCASE.
 
       IF lv_name IS NOT INITIAL AND lv_seq < 99.
@@ -1403,6 +1418,11 @@ CLASS lcl_importer IMPLEMENTATION.
         lv_are = iv_name.
         SELECT SINGLE @abap_true FROM tlibg
           WHERE area = @lv_are INTO @rv_flag.
+      WHEN 'MSAG'.
+        DATA lv_arb TYPE t100a-arbgb.
+        lv_arb = iv_name.
+        SELECT SINGLE @abap_true FROM t100a
+          WHERE arbgb = @lv_arb INTO @rv_flag.
     ENDCASE.
 
   ENDMETHOD.
@@ -2056,6 +2076,93 @@ CLASS lcl_importer IMPLEMENTATION.
 
     put_cua( io_chapter = io_chapter iv_prog = lv_prog ).
     put_docu( io_chapter = io_chapter iv_kind = 'PROG' iv_name = iv_name ).
+
+  ENDMETHOD.
+
+  METHOD put_msag.
+
+    DATA lt_t100 TYPE STANDARD TABLE OF t100 WITH EMPTY KEY.
+    DATA ls_head TYPE t100a.
+
+    DATA(lv_ex) = exists( iv_kind = 'MSAG' iv_name = iv_name ).
+    IF lv_ex = abap_true AND mv_over = abap_false.
+      log( iv_kind = 'MSAG' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+           iv_text   = lcl_t=>ui( d = `existiert bereits` e = `already exists` ) ).
+      RETURN.
+    ENDIF.
+
+    lcl_attr=>to_struct( EXPORTING it_attrs = io_chapter->get_defhead( )
+                         CHANGING  cs_data  = ls_head ).
+    ls_head-arbgb = iv_name.
+
+    LOOP AT io_chapter->get_defrows( ) INTO DATA(ls_row) WHERE tag = 'T100'.
+      DATA ls_t100 TYPE t100.
+      CLEAR ls_t100.
+      lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs
+                           CHANGING  cs_data  = ls_t100 ).
+      ls_t100-arbgb = iv_name.
+      APPEND ls_t100 TO lt_t100.
+    ENDLOOP.
+
+    IF lt_t100 IS INITIAL.
+      log( iv_kind = 'MSAG' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `nicht moeglich` e = `not possible` )
+           iv_text   = lcl_t=>ui( d = `keine Nachrichten im Dokument`
+                                  e = `no messages in the document` ) ).
+      RETURN.
+    ENDIF.
+
+    IF mv_test = abap_true.
+      log( iv_kind = 'MSAG' iv_name = iv_name
+           iv_action = COND #( WHEN lv_ex = abap_true
+                               THEN lcl_t=>ui( d = `wuerde ergaenzt` e = `would be extended` )
+                               ELSE lcl_t=>ui( d = `wuerde angelegt` e = `would create` ) )
+           iv_text   = |{ lines( lt_t100 ) } { lcl_t=>ui( d = `Nachrichten` e = `messages` ) }| ).
+      RETURN.
+    ENDIF.
+
+*   Written to T100A and T100 directly. RPY_MESSAGE_ID_INSERT would be
+*   the API, but it opens the object catalog popup - "Objektkatalog-
+*   eintrag anlegen" - even with $TMP as the package, and an unattended
+*   import cannot answer a dialog. T100A and T100 are where SE91 keeps
+*   the class; the catalog entry is written by the same helper that
+*   every other object type here uses.
+    ls_head-lastuser = sy-uname.
+    ls_head-ldate    = sy-datum.
+    ls_head-ltime    = sy-uzeit.
+    IF ls_head-masterlang IS INITIAL.
+      ls_head-masterlang = sy-langu.
+    ENDIF.
+    MODIFY t100a FROM ls_head.
+
+*   Existing texts are not touched. Somebody may have translated or
+*   corrected them here, and a documentation tool has no business
+*   overwriting that; missing numbers and missing languages are added.
+    DATA lv_add TYPE i.
+    LOOP AT lt_t100 INTO ls_t100.
+      SELECT SINGLE @abap_true FROM t100
+        WHERE sprsl = @ls_t100-sprsl AND arbgb = @ls_t100-arbgb
+          AND msgnr = @ls_t100-msgnr
+        INTO @DATA(lv_there).
+      IF lv_there = abap_true.
+        CONTINUE.
+      ENDIF.
+      INSERT t100 FROM ls_t100.
+      IF sy-subrc = 0.
+        lv_add = lv_add + 1.
+      ENDIF.
+    ENDLOOP.
+
+    tadir( iv_object = 'MSAG' iv_name = CONV sobj_name( iv_name ) ).
+
+    log( iv_kind = 'MSAG' iv_name = iv_name
+         iv_action = COND #( WHEN lv_ex = abap_true
+                             THEN lcl_t=>ui( d = `ergaenzt` e = `extended` )
+                             ELSE lcl_t=>ui( d = `angelegt` e = `created` ) )
+         iv_text   = |{ lv_add } { lcl_t=>ui( d = `Nachrichten neu von`
+                                              e = `messages added of` ) } | &&
+                     |{ lines( lt_t100 ) }| ).
 
   ENDMETHOD.
 
@@ -3580,6 +3687,10 @@ CLASS lcl_collector_dev DEFINITION.
     METHODS def_cua
       IMPORTING io_chapter TYPE REF TO lcl_chapter
                 iv_prog    TYPE progname.
+    METHODS def_msag
+      IMPORTING iv_name    TYPE sobj_name
+                io_chapter TYPE REF TO lcl_chapter
+      RETURNING VALUE(rv_ok) TYPE abap_bool.
     METHODS def_view
       IMPORTING iv_name    TYPE sobj_name
                 io_chapter TYPE REF TO lcl_chapter
@@ -3807,6 +3918,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       WHEN 'CLAS' OR 'INTF'.
         lv_ok = def_clif( iv_type = iv_type iv_name = iv_name io_chapter = io_chapter ).
       WHEN 'FUGR'. lv_ok = def_fugr( iv_name = iv_name io_chapter = io_chapter ).
+      WHEN 'MSAG'. lv_ok = def_msag( iv_name = iv_name io_chapter = io_chapter ).
       WHEN OTHERS.
         RETURN.
     ENDCASE.
@@ -4000,6 +4112,49 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     ENDIF.
 
     def_cua( io_chapter = io_chapter iv_prog = lv_prog ).
+
+    rv_ok = abap_true.
+
+  ENDMETHOD.
+
+  METHOD def_msag.
+
+*   A message class. Without it a report that raises one of its own
+*   messages shows the bare key - S:ZBLE_0001:006 - because the runtime
+*   cannot resolve the text. That is not a translation gap: a missing
+*   language falls back, a missing class has nothing to fall back to.
+*
+*   Read from T100A and T100 directly, not through RPY_MESSAGE_ID_READ.
+*   Its counterpart RPY_MESSAGE_ID_INSERT opens the object catalog popup
+*   even for $TMP, which an unattended import cannot answer, so the
+*   write side goes to the tables anyway - and a pair that reads one way
+*   and writes another is worth nothing.
+    DATA lv_arb TYPE t100a-arbgb.
+
+    lv_arb = iv_name.
+    SELECT SINGLE * FROM t100a WHERE arbgb = @lv_arb INTO @DATA(ls_head).
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    io_chapter->set_definition( iv_kind = 'MSAG'
+                                it_head = lcl_attr=>from_struct( ls_head ) ).
+
+*   Every language, not just the output language. This is definition
+*   data, not description: a class maintained in English only, exported
+*   into a German document, would otherwise arrive without a single
+*   message - and the report that raises one shows the bare key again.
+    SELECT * FROM t100 WHERE arbgb = @lv_arb
+      ORDER BY sprsl, msgnr
+      INTO TABLE @DATA(lt_t100).
+    IF lt_t100 IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    LOOP AT lt_t100 INTO DATA(ls_t100).
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag = 'T100' attrs = lcl_attr=>from_struct( ls_t100 ) ) ).
+    ENDLOOP.
 
     rv_ok = abap_true.
 
@@ -6141,6 +6296,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     DATA lt_tab  TYPE STANDARD TABLE OF sobj_name.
     DATA lt_cls  TYPE STANDARD TABLE OF sobj_name.
     DATA lt_lit  TYPE STANDARD TABLE OF sobj_name.
+    DATA lt_msg  TYPE STANDARD TABLE OF t100a-arbgb.
     DATA lt_fun  TYPE STANDARD TABLE OF rs38l_fnam.
 
     LOOP AT lt_src INTO DATA(lv_line).
@@ -6225,7 +6381,42 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         APPEND CONV sobj_name( lv_up+ls_sub5-offset(ls_sub5-length) ) TO lt_lit.
       ENDLOOP.
 
+*     Message classes. They stand in no cross-reference index, and the
+*     two forms that matter are not quoted, so the literal scan above
+*     misses them: the MESSAGE-ID addition of the program header, and
+*     the class in parentheses behind the message number. Without the
+*     class the imported report shows the bare key - S:ZBLE_0001:006 -
+*     instead of the text.
+      FIND ALL OCCURRENCES OF PCRE `MESSAGE-ID\s+([A-Z0-9_/]+)`
+        IN lv_up RESULTS DATA(lt_r6).
+      LOOP AT lt_r6 INTO DATA(ls_r6).
+        DATA(ls_sub6) = ls_r6-submatches[ 1 ].
+        APPEND CONV sobj_name( lv_up+ls_sub6-offset(ls_sub6-length) ) TO lt_msg.
+      ENDLOOP.
+
+      FIND ALL OCCURRENCES OF PCRE `MESSAGE\s+[A-Z]?\d{3}\(([A-Z0-9_/]+)\)`
+        IN lv_up RESULTS DATA(lt_r7).
+      LOOP AT lt_r7 INTO DATA(ls_r7).
+        DATA(ls_sub7) = ls_r7-submatches[ 1 ].
+        APPEND CONV sobj_name( lv_up+ls_sub7-offset(ls_sub7-length) ) TO lt_msg.
+      ENDLOOP.
+
     ENDLOOP.
+
+    SORT lt_msg. DELETE ADJACENT DUPLICATES FROM lt_msg.
+    IF lt_msg IS NOT INITIAL.
+      SELECT arbgb FROM t100a
+        FOR ALL ENTRIES IN @lt_msg
+        WHERE arbgb = @lt_msg-table_line
+        INTO TABLE @DATA(lt_mok).
+      LOOP AT lt_mok INTO DATA(ls_mok).
+        CLEAR ls_ref.
+        ls_ref-type = 'MSAG'.
+        ls_ref-name = ls_mok-arbgb.
+        ls_ref-kind = lcl_t=>t( d = 'Nachrichtenklasse' e = 'message class' ).
+        APPEND ls_ref TO rt_ref.
+      ENDLOOP.
+    ENDIF.
 
 *   Function modules against TFDIR, the rest against the object catalog.
 *   One query per kind instead of one per hit.

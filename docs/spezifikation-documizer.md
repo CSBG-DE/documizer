@@ -677,6 +677,7 @@ Applikationsserver —, über denselben Parser ins Modell, dann die Objekte anle
 | CDS-Quelle | `IF_DD_DDL_HANDLER` (`save`, `write_tadir`, `activate`) | umgesetzt |
 | Report, Include | `INSERT REPORT … DIRECTORY ENTRY`, `INSERT TEXTPOOL` | umgesetzt |
 | GUI-Status eines Programms | `RS_CUA_INTERNAL_FETCH` / `_WRITE` | umgesetzt |
+| Nachrichtenklasse | `T100A` / `T100` direkt, Katalogeintrag über `TR_TADIR_INTERFACE` | umgesetzt |
 | Interface, Klasse | `SEO_*_CREATE_COMPLETE` + `IF_OO_CLIF_SOURCE` | umgesetzt |
 | Funktionsgruppe, Funktionsbaustein | `RS_FUNCTION_POOL_INSERT`, `RPY_FUNCTIONMODULE_INSERT` | umgesetzt |
 | Objektdokumentation | `DOCU_UPDATE` | umgesetzt für Report und Datenelement |
@@ -699,6 +700,38 @@ Paar über elf Tabellen — `STA`, `FUN`, `MEN`, `MTX`, `ACT`, `BUT`, `PFK`, `SE
 `BIV` — plus den Kopfsatz `RSMPE_ADM`. Jede Tabelle wird ein Zeilen-Tag (`CUA_STA`, `CUA_FUN`,
 …), der Kopf `CUA_ADM`; dieselbe Form wie die Feldliste einer Tabelle, dieselbe RTTI-Abbildung.
 Ein Programm ohne Status ist der Normalfall und keine Meldung wert.
+
+**Nachrichtenklassen** waren bis dahin dokumentiert, aber nicht anlegbar — sie standen in der
+Objektliste und trugen keine Definitionsdaten. Ein Report, dessen Klasse im Zielsystem fehlt,
+zeigt statt des Textes den nackten Schlüssel: `S:ZBLE_0001:006`.
+
+Drei Punkte sind daran nicht offensichtlich:
+
+- **Der Baustein ist unbrauchbar.** `RPY_MESSAGE_ID_INSERT` wäre die API, öffnet aber den Dialog
+  „Objektkatalogeintrag anlegen" — auch mit `$TMP` als Paket. Ein unbeaufsichtigter Importlauf
+  kann keinen Dialog beantworten; dieselbe Falle wie seinerzeit `RS_WORKING_OBJECT_ACTIVATE`.
+  Geschrieben wird deshalb direkt in `T100A` und `T100`, wo SE91 die Klasse ohnehin ablegt, und
+  der Katalogeintrag über denselben Helfer wie bei jedem anderen Objekttyp. Gelesen wird aus
+  denselben Tabellen — ein Paar, das anders liest als es schreibt, ist keins.
+- **Alle Sprachen, nicht die Ausgabesprache.** Dies sind Definitionsdaten, keine Beschreibung.
+  Eine nur englisch gepflegte Klasse, in ein deutsches Dokument exportiert, käme sonst ohne eine
+  einzige Nachricht an. Genau dieser Fall ist der Normalfall: gemessen an einer Kundenklasse mit
+  194 Nachrichten, alle nur `EN`.
+- **Bestehende Texte bleiben.** Fehlende Nummern und fehlende Sprachen werden ergänzt, schon
+  vorhandene nicht angefasst. Sie können hier übersetzt oder korrigiert worden sein.
+
+Die Klasse ist **kein** Sprachproblem: ist sie da, aber in der Anmeldesprache nicht gepflegt,
+fällt die Laufzeit auf Englisch zurück. Auf S4H nachgemessen — `SY-LANGU` = DE, nur ein
+`EN`-Text in `T100`, angezeigt wird der englische Text. Die Schlüsselform bedeutet immer, dass
+Klasse oder Nummer überhaupt nicht da sind.
+
+**Gefunden** wird eine Nachrichtenklasse aus dem Quelltext. Sie steht in keinem Querverweis-
+index, und die beiden Formen, auf die es ankommt, sind nicht in Anführungszeichen — der
+`MESSAGE-ID`-Zusatz des Programmkopfs und die Klammerform hinter der Nummer (`MESSAGE s006(zble_0001)`).
+Die Literalsuche greift dort nicht.
+
+**Nicht mitgenommen** wird `T100U`: wer eine Nummer angelegt hat und ob sie selbsterklärend
+ist. Das erste ist systemspezifisch, das zweite betrifft nur, ob SE91 einen Langtext erwartet.
 
 **Rückgabecodes der Aktivierung.** Die `DDIF_*_ACTIVATE`-Bausteine bewerten ihr Ergebnis: 0 ist
 sauber, 4 heißt „aktiviert mit Warnung", ab 8 hat es nicht geklappt. Nur ab 8 bleibt das Objekt

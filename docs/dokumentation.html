@@ -637,7 +637,7 @@
             <tbody>
               <tr><td><code>WBCROSSGT</code></td><td>Methodenaufrufe, globale Typen, Datenobjekte</td><td>kennt keine Bausteine, keinen <code>SELECT</code></td></tr>
               <tr><td><code>CROSS</code></td><td>klassische Verweise</td><td>auf S/4 ohne <code>SAPRSEUB</code>-Lauf <b>leer</b></td></tr>
-              <tr><td>Quelltext</td><td><code>CALL FUNCTION</code>, <code>SUBMIT</code>, Tabellenzugriffe, Klassen</td><td>Laufzeitnamen nicht auflösbar</td></tr>
+              <tr><td>Quelltext</td><td><code>CALL FUNCTION</code>, <code>SUBMIT</code>, Tabellenzugriffe, Klassen, Namen in Literalen</td><td>zusammengesetzte Namen nicht auflösbar</td></tr>
             </tbody>
           </table>
         </div>
@@ -654,6 +654,29 @@
           <p>Querverweise stehen unter dem <b>Include</b>, nicht unter dem Objektnamen. Für einen
           Baustein (<code>L&lt;gruppe&gt;U&lt;nn&gt;</code>) und eine Funktionsgruppe
           (<code>L&lt;gruppe&gt;</code>) ist das nicht dasselbe.</p>
+        </div>
+
+        <h3>Namen in Zeichenliteralen</h3>
+        <p>
+          Ein Objekt kann verwendet werden, ohne dass irgendein Verweis darauf existiert:
+        </p>
+<pre><code>MOVE 'ZBLE_S0211' TO lv_structure_name.   " ALV-Feldkatalog</code></pre>
+        <p>
+          Die Struktur wird zur Laufzeit gebraucht, statisch aber nirgends genannt. Kein Index
+          kennt sie — auch der Verwendungsnachweis der Werkbank führt dieses Programm nicht als
+          Verwender auf. Das Literal ist die einzige Spur.
+        </p>
+        <p>
+          Der Scan sammelt deshalb jedes Literal, das ein Objektname sein könnte, und prüft es
+          gegen <code>TADIR</code>. Was es dort nicht gibt, fällt weg; ein Literal mit
+          Leerzeichen passt nicht auf das Muster, gewöhnlicher Text scheidet also von selbst
+          aus. Gefundene Objekte tragen den Vermerk <em>dynamisch verwendet</em>.
+        </p>
+        <div class="note">
+          <p><b>Das ist eine Vermutung, keine Feststellung.</b> Ein Literal, das zufällig wie ein
+          Objektname aussieht, landet mit im Dokument. Der Preis dafür ist gering — und der
+          Gewinn ist der Unterschied zwischen einem Dokument, das sich importieren lässt, und
+          einem, dem beim Aktivieren ein Objekt fehlt.</p>
         </div>
 
         <h3>Verwendungsnachweis</h3>

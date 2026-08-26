@@ -344,6 +344,11 @@ Pseudotyp `FUNC`: Kurztext aus `TFTIT`, Doku über Dokuklasse `FU`, Schnittstell
 **Block: Ausgabe** — wie Report A.
 
 **Block: Import in dieses System** — schaltet den Report auf die Gegenrichtung (siehe 5.6).
+Ist `P_IMP` gesetzt, verlieren `P_STYPE` und `P_SVAL` ihre Eingabepflicht und werden inaktiv
+gesetzt; ein Importlauf hat keinen Startpunkt. `OBLIGATORY` lässt sich nicht bedingt
+deklarieren, das Kennzeichen wird deshalb im PBO abgeräumt. Umgekehrt sind die Importfelder
+inaktiv, solange dokumentiert wird. `P_IFILE` hat eine Wertehilfe mit Dateidialog — außer bei
+`P_ISRV`, denn ein Pfad auf dem Applikationsserver lässt sich vom Frontend nicht durchsuchen.
 
 | Parameter | Vorbelegung | Bedeutung |
 |---|---|---|
@@ -393,13 +398,30 @@ Was ein Objekt verwendet, steht in zwei Quellen — und beide sind für sich unv
 |---|---|---|
 | `WBCROSSGT` | Methodenaufrufe (`ME`), globale Typen (`TY`), Datenobjekte (`DA`) | kennt keine Funktionsbausteine, keinen `SELECT` |
 | `CROSS` | klassische Verweise | auf S/4 ohne `SAPRSEUB`-Lauf **leer** |
-| Quelltext | `CALL FUNCTION`, `SUBMIT`, Tabellenzugriffe, Klassen | Laufzeitnamen nicht auflösbar |
+| Quelltext | `CALL FUNCTION`, `SUBMIT`, Tabellenzugriffe, Klassen, Namen in Literalen | zusammengesetzte Namen nicht auflösbar |
 
 Deshalb wird zusätzlich der **Quelltext gescannt**. Jeder Treffer wird gegen den Katalog
 geprüft, bevor er ins Dokument kommt: Bausteine gegen `TFDIR`, Tabellen und Klassen gegen
 `TADIR`, je mit einer Abfrage statt einer je Treffer. Lokale Klassen, Arbeitsbereiche und zur
 Laufzeit zusammengesetzte Namen fallen damit heraus. Dynamische Zugriffe wie `FROM (lv_tab)`
 passen nicht auf das Muster. Kommentare werden vorher abgeschnitten.
+
+**Namen in Zeichenliteralen.** Ein Objekt kann verwendet werden, ohne dass irgendein Verweis
+darauf existiert:
+
+```abap
+MOVE 'ZBLE_S0211' TO lv_structure_name.   " ALV-Feldkatalog
+```
+
+Die Struktur wird zur Laufzeit gebraucht, statisch aber nirgends genannt. Kein Index kennt sie,
+und auch der Verwendungsnachweis der Werkbank führt dieses Programm nicht als Verwender. Das
+Literal ist die einzige Spur. Der Scan sammelt deshalb jedes Literal, das ein Objektname sein
+könnte, und prüft es gegen `TADIR` — was es dort nicht gibt, fällt weg. Ein Literal mit
+Leerzeichen passt nicht auf das Muster, gewöhnlicher Text fällt also von selbst heraus.
+Gefundene Objekte tragen den Vermerk **„dynamisch verwendet"**.
+
+Das ist eine Vermutung, keine Feststellung — und sie ist der Unterschied zwischen einem
+Dokument, das sich importieren lässt, und einem, dem beim Aktivieren ein Objekt fehlt.
 
 Die Liste ist nach Art sortiert — Bausteine und Reports, Tabellenzugriffe, Methodenaufrufe,
 Typen, Datenobjekte. Greift die Mengengrenze, bleibt oben stehen, was der Leser zuerst sucht.

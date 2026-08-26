@@ -2842,9 +2842,19 @@ AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_sval.
 AT SELECTION-SCREEN OUTPUT.
 * The plain code says little; the text next to it says what was picked.
   PERFORM stype_text USING p_stype CHANGING gv_tstyt.
+* On an import run there is no start point. The two fields are declared
+* OBLIGATORY for the documentation run; the required flag is taken off
+* here so that the screen does not insist on something the run ignores.
+  PERFORM screen_mode.
 
 AT SELECTION-SCREEN.
-  PERFORM check_stype.
+* Only the documentation run needs a start point.
+  IF p_imp = abap_false.
+    PERFORM check_stype.
+  ENDIF.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_ifile.
+  PERFORM f4_ifile.
 
 *----------------------------------------------------------------------*
 * lcl_renderer_html
@@ -5727,6 +5737,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     DATA lt_hits TYPE STANDARD TABLE OF string.
     DATA lt_tab  TYPE STANDARD TABLE OF sobj_name.
     DATA lt_cls  TYPE STANDARD TABLE OF sobj_name.
+    DATA lt_lit  TYPE STANDARD TABLE OF sobj_name.
     DATA lt_fun  TYPE STANDARD TABLE OF rs38l_fnam.
 
     LOOP AT lt_src INTO DATA(lv_line).
@@ -5795,6 +5806,22 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         APPEND CONV sobj_name( lv_up+ls_sub4-offset(ls_sub4-length) ) TO lt_cls.
       ENDLOOP.
 
+*     Dynamically used objects. A structure that only appears as a
+*     literal - MOVE 'ZBLE_S0211' TO lv_structure, handed to an ALV field
+*     catalogue - has no static reference anywhere. No index holds it,
+*     and the where-used list of the workbench does not know it either.
+*     The literal is the only trace there is.
+*
+*     Every literal that could be an object name is collected and checked
+*     against the catalogue below. A name with a blank in it cannot match
+*     the pattern, so ordinary text literals fall away by themselves.
+      FIND ALL OCCURRENCES OF PCRE `'([A-Z][A-Z0-9_/]{2,29})'`
+        IN lv_up RESULTS DATA(lt_r5).
+      LOOP AT lt_r5 INTO DATA(ls_r5).
+        DATA(ls_sub5) = ls_r5-submatches[ 1 ].
+        APPEND CONV sobj_name( lv_up+ls_sub5-offset(ls_sub5-length) ) TO lt_lit.
+      ENDLOOP.
+
     ENDLOOP.
 
 *   Function modules against TFDIR, the rest against the object catalog.
@@ -5842,6 +5869,26 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         ls_ref-type = ls_cok-object.
         ls_ref-name = ls_cok-obj_name.
         ls_ref-kind = lcl_t=>t( d = 'Klassenverwendung' e = 'class used' ).
+        APPEND ls_ref TO rt_ref.
+      ENDLOOP.
+    ENDIF.
+
+*   The literals last, so that a name found statically keeps its more
+*   precise label - the duplicate removal below keeps the first entry.
+    SORT lt_lit. DELETE ADJACENT DUPLICATES FROM lt_lit.
+    IF lt_lit IS NOT INITIAL.
+      SELECT object, obj_name FROM tadir
+        FOR ALL ENTRIES IN @lt_lit
+        WHERE pgmid = 'R3TR'
+          AND object IN ( 'TABL', 'VIEW', 'DDLS', 'CLAS', 'INTF',
+                          'PROG', 'DOMA', 'DTEL', 'FUGR' )
+          AND obj_name = @lt_lit-table_line
+        INTO TABLE @DATA(lt_lok).
+      LOOP AT lt_lok INTO DATA(ls_lok).
+        CLEAR ls_ref.
+        ls_ref-type = ls_lok-object.
+        ls_ref-name = ls_lok-obj_name.
+        ls_ref-kind = lcl_t=>t( d = 'dynamisch verwendet' e = 'used dynamically' ).
         APPEND ls_ref TO rt_ref.
       ENDLOOP.
     ENDIF.
@@ -6691,6 +6738,84 @@ ENDFORM.
 *----------------------------------------------------------------------*
 * Output helper routines
 *----------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*& FORM screen_mode
+*&---------------------------------------------------------------------*
+* Import and documentation are two runs on one screen. What the other
+* one needs is switched inactive, and above all the start point loses
+* its obligation - OBLIGATORY cannot be declared conditionally, but the
+* required flag can be taken off in the PBO.
+*----------------------------------------------------------------------*
+FORM screen_mode.
+
+  LOOP AT SCREEN.
+    CASE screen-name.
+      WHEN 'P_STYPE' OR 'P_SVAL'.
+        IF p_imp = abap_true.
+          screen-required = 0.
+          screen-input    = 0.
+        ELSE.
+          screen-required = 1.
+          screen-input    = 1.
+        ENDIF.
+        MODIFY SCREEN.
+      WHEN 'P_IFILE' OR 'P_ISRV' OR 'P_ITEST' OR 'P_IOVER'
+        OR 'P_IACT' OR 'P_IPACK' OR 'P_ITR'.
+        IF p_imp = abap_true.
+          screen-input = 1.
+        ELSE.
+          screen-input = 0.
+        ENDIF.
+        MODIFY SCREEN.
+    ENDCASE.
+  ENDLOOP.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& FORM f4_ifile
+*&---------------------------------------------------------------------*
+* File dialog for the import file. Only for the PC path - a file on the
+* application server cannot be browsed from the frontend.
+*----------------------------------------------------------------------*
+FORM f4_ifile.
+
+  DATA lt_file TYPE filetable.
+  DATA lv_rc   TYPE i.
+  DATA lv_act  TYPE i.
+
+  IF p_isrv = abap_true.
+    MESSAGE lcl_t=>ui(
+      d = `Die Datei liegt auf dem Applikationsserver - Pfad bitte eintippen (AL11).`
+      e = `The file is on the application server - please type the path (AL11).` )
+      TYPE 'S'.
+    RETURN.
+  ENDIF.
+
+  cl_gui_frontend_services=>file_open_dialog(
+    EXPORTING
+      window_title      = lcl_t=>ui( d = `Documizer-XML auswaehlen`
+                                     e = `Select Documizer XML` )
+      default_extension = 'xml'
+      multiselection    = abap_false
+    CHANGING
+      file_table        = lt_file
+      rc                = lv_rc
+      user_action       = lv_act
+    EXCEPTIONS
+      OTHERS            = 1 ).
+
+  IF sy-subrc <> 0 OR lv_act <> cl_gui_frontend_services=>action_ok.
+    RETURN.
+  ENDIF.
+
+  READ TABLE lt_file INTO DATA(ls_file) INDEX 1.
+  IF sy-subrc = 0.
+    p_ifile = ls_file-filename.
+  ENDIF.
+
+ENDFORM.
+
 FORM f4_verzeichnis.
 
   DATA lv_dir TYPE string.

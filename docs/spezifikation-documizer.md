@@ -650,6 +650,16 @@ Drei Entscheidungen dahinter:
 Initiale Felder werden weggelassen; der Importer beginnt mit einer initialen Struktur, ein
 fehlendes Feld bedeutet also auf beiden Seiten dasselbe.
 
+**`.INCLUDE` auflösen, nicht überspringen.** Der RTTI-Durchlauf nimmt
+`get_included_view( )`, nicht `get_components( )`. Letzteres liefert ein `.INCLUDE` als **eine
+verschachtelte Komponente**; die Prüfung „nur elementare Felder" wirft sie weg, und alles darin
+ist verloren — ohne Meldung, mit weiterhin gezählter Zeile. Die DDIF-Schnittstellenstrukturen
+sind flach und haben das nie gezeigt. `DD09V`, die technischen Einstellungen einer Tabelle, hat
+dagegen **eine** Komponente gegenüber **21** im aufgelösten Bild: Pufferung, Protokollierung,
+Tabellenart, Row/Column Store reisten überhaupt nicht mit. Aufgefallen ist es erst an
+`RSMPE_FUNT`, das aus drei Includes und fast nichts sonst besteht und mit lauter leeren Feldern
+ankam.
+
 Geschrieben wird das Ganze nur mit `P_DEF` (Vorbelegung an).
 
 ### 5.6 Reimport
@@ -666,6 +676,7 @@ Applikationsserver —, über denselben Parser ins Modell, dann die Objekte anle
 | View | `DDIF_VIEW_PUT` + `DDIF_VIEW_ACTIVATE` | umgesetzt |
 | CDS-Quelle | `IF_DD_DDL_HANDLER` (`save`, `write_tadir`, `activate`) | umgesetzt |
 | Report, Include | `INSERT REPORT … DIRECTORY ENTRY`, `INSERT TEXTPOOL` | umgesetzt |
+| GUI-Status eines Programms | `RS_CUA_INTERNAL_FETCH` / `_WRITE` | umgesetzt |
 | Interface, Klasse | `SEO_*_CREATE_COMPLETE` + `IF_OO_CLIF_SOURCE` | umgesetzt |
 | Funktionsgruppe, Funktionsbaustein | `RS_FUNCTION_POOL_INSERT`, `RPY_FUNCTIONMODULE_INSERT` | umgesetzt |
 | Objektdokumentation | `DOCU_UPDATE` | umgesetzt für Report und Datenelement |
@@ -679,6 +690,15 @@ als Zeilen der Tabellendefinition mit und werden angelegt, **nachdem** die Tabel
 ein Index auf einer Tabelle, die es noch nicht gibt, lässt sich nicht aktivieren. Das Feld
 `DBINDEX` bleibt dabei leer: es enthält den Namen auf der Datenbank, der aus dem Tabellennamen
 gebildet wird, und würde unverändert übernommen noch die Tabelle des Quellsystems nennen.
+
+**Der GUI-Status** ist ein eigener Programmbestandteil. `INSERT REPORT` trägt den Quelltext und
+sonst nichts; Menüs, Funktionstasten, Drucktastenleiste und Titel bleiben zurück. Ein Report,
+der seinen eigenen Status setzt, läuft im Zielsystem dann in `CX_SALV_OBJECT_NOT_FOUND` oder
+kurz dahinter in einen Abbruch. `RS_CUA_INTERNAL_FETCH` und `_WRITE` sind ein symmetrisches
+Paar über elf Tabellen — `STA`, `FUN`, `MEN`, `MTX`, `ACT`, `BUT`, `PFK`, `SET`, `DOC`, `TIT`,
+`BIV` — plus den Kopfsatz `RSMPE_ADM`. Jede Tabelle wird ein Zeilen-Tag (`CUA_STA`, `CUA_FUN`,
+…), der Kopf `CUA_ADM`; dieselbe Form wie die Feldliste einer Tabelle, dieselbe RTTI-Abbildung.
+Ein Programm ohne Status ist der Normalfall und keine Meldung wert.
 
 **Rückgabecodes der Aktivierung.** Die `DDIF_*_ACTIVATE`-Bausteine bewerten ihr Ergebnis: 0 ist
 sauber, 4 heißt „aktiviert mit Warnung", ab 8 hat es nicht geklappt. Nur ab 8 bleibt das Objekt

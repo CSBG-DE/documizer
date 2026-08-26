@@ -886,7 +886,7 @@
             <tbody>
               <tr><td>Domäne, Datenelement</td><td>ja, mit Festwerten und Texten</td></tr>
               <tr><td>Tabelle, Struktur</td><td>ja, samt technischen Einstellungen und Sekundärindizes</td></tr>
-              <tr><td>Report, Include</td><td>ja, mit Textelementen und Dokumentation</td></tr>
+              <tr><td>Report, Include</td><td>ja, mit Textelementen, GUI-Status und Dokumentation</td></tr>
               <tr><td>Interface, Klasse</td><td>ja, als quelltextbasierte Fassung</td></tr>
               <tr><td>Funktionsgruppe</td><td>ja, mit Includes, Bausteinen und deren Schnittstelle</td></tr>
               <tr><td>View</td><td>ja, mit Basistabellen, Feldern und Join-Bedingungen</td></tr>
@@ -913,6 +913,23 @@
         <p>
           Das Protokoll nennt je Objekt, was geschehen ist — angelegt, geändert, übersprungen,
           Fehler, nicht möglich — und warum.
+        </p>
+
+        <h3>Der GUI-Status</h3>
+        <p>
+          Menüs, Funktionstasten, Drucktastenleiste und Titel sind ein <b>eigener
+          Programmbestandteil</b>. <code>INSERT REPORT</code> trägt den Quelltext und sonst
+          nichts. Ein Report, der seinen eigenen Status setzt, läuft im Zielsystem deshalb in
+          <code>CX_SALV_OBJECT_NOT_FOUND</code> oder kurz dahinter in einen Abbruch — das
+          Programm ist da, die Oberfläche nicht.
+        </p>
+        <p>
+          <code>RS_CUA_INTERNAL_FETCH</code> und <code>_WRITE</code> sind ein symmetrisches Paar
+          über elf Tabellen (<code>STA</code>, <code>FUN</code>, <code>MEN</code>,
+          <code>MTX</code>, <code>ACT</code>, <code>BUT</code>, <code>PFK</code>,
+          <code>SET</code>, <code>DOC</code>, <code>TIT</code>, <code>BIV</code>) plus
+          Kopfsatz. Jede wird ein Zeilen-Tag im Dokument — dieselbe Form wie die Feldliste einer
+          Tabelle. Ein Programm ohne Status ist der Normalfall und keine Meldung wert.
         </p>
 
         <h3>Prüfung nach dem Lauf</h3>
@@ -1118,6 +1135,14 @@
               <tr>
                 <td>Include wurde erkannt, fehlte aber trotzdem im Export</td>
                 <td>Der Filter „SAP-Standard ausschließen" entscheidet über das Paket. Ein Include hat oft <b>gar keinen</b> <code>TADIR</code>-Eintrag und wurde deshalb als „nicht unser eigenes" verworfen. Ohne Katalogeintrag ist es kein SAP-Standard — es bleibt drin.</td>
+              </tr>
+              <tr>
+                <td>Importierter Report bricht in <code>CX_SALV_OBJECT_NOT_FOUND</code> ab</td>
+                <td>Der GUI-Status ist ein eigener Programmbestandteil und reist nicht mit dem Quelltext. Über <code>RS_CUA_INTERNAL_FETCH</code>/<code>_WRITE</code> nachgezogen.</td>
+              </tr>
+              <tr>
+                <td>Alle Felder einer Definitionszeile kamen leer an, die Zeile selbst war da</td>
+                <td><code>get_components( )</code> gibt ein <code>.INCLUDE</code> als <b>eine verschachtelte</b> Komponente zurück; der Filter „nur elementare Felder" wirft sie weg, samt allem darin. Richtig ist <code>get_included_view( )</code>. Die DDIF-Strukturen sind flach und haben es nie gezeigt — <code>DD09V</code> hat <b>1</b> Komponente gegenüber <b>21</b> im aufgelösten Bild, und die technischen Einstellungen jeder Tabelle sind bis dahin nie mitgereist.</td>
               </tr>
               <tr>
                 <td>Import-Ankreuzfeld nicht erreichbar, ohne vorher einen Startpunkt einzugeben</td>

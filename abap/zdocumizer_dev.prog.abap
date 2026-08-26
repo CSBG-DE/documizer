@@ -252,7 +252,13 @@ CLASS lcl_attr IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    LOOP AT CAST cl_abap_structdescr( lo_type )->get_components( )
+*   get_included_view, not get_components. The latter hands back a
+*   .INCLUDE as one nested component, and everything inside it would be
+*   skipped by the flat-field test below - silently, and with the row
+*   still counted. The DDIF interface structures are flat and never
+*   showed it; RSMPE_FUNT is three includes and almost nothing else,
+*   and came through with every field empty.
+    LOOP AT CAST cl_abap_structdescr( lo_type )->get_included_view( )
          INTO DATA(ls_comp).
 *     Only flat fields. A nested table or structure inside a DDIC
 *     interface structure carries no value the PUT would read back.
@@ -1087,6 +1093,8 @@ CLASS lcl_importer DEFINITION.
                                iv_name    TYPE string.
     METHODS put_prog IMPORTING io_chapter TYPE REF TO lcl_chapter
                                iv_name    TYPE string.
+    METHODS put_cua  IMPORTING io_chapter TYPE REF TO lcl_chapter
+                               iv_prog    TYPE progname.
 *   Checks after the run what actually stands in the system. An object
 *   can be created and still be unusable - a structure whose data
 *   element is missing activates with rc 8 - and an object written early
@@ -2010,13 +2018,18 @@ CLASS lcl_importer IMPLEMENTATION.
     ENDLOOP.
 
     IF mv_test = abap_true.
+      DATA(lv_ncua) = REDUCE i( INIT n = 0
+                                FOR ls_c IN io_chapter->get_defrows( )
+                                WHERE ( tag = 'CUA_STA' )
+                                NEXT n = n + 1 ).
       log( iv_kind = 'PROG' iv_name = iv_name
            iv_action = COND #( WHEN lv_ex = abap_true
                                THEN lcl_t=>ui( d = `wuerde geaendert` e = `would change` )
                                ELSE lcl_t=>ui( d = `wuerde angelegt` e = `would create` ) )
            iv_text   = |{ lcl_t=>ui( d = `Art` e = `type` ) } { ls_trdir-subc }, | &&
                        |{ lines( lt_code ) } { lcl_t=>ui( d = `Zeilen` e = `lines` ) }, | &&
-                       |{ lines( lt_tpool ) } { lcl_t=>ui( d = `Textelemente` e = `text elements` ) }| ).
+                       |{ lines( lt_tpool ) } { lcl_t=>ui( d = `Textelemente` e = `text elements` ) }, | &&
+                       |{ lv_ncua } { lcl_t=>ui( d = `GUI-Status` e = `GUI statuses` ) }| ).
       RETURN.
     ENDIF.
 
@@ -2040,7 +2053,123 @@ CLASS lcl_importer IMPLEMENTATION.
                              THEN lcl_t=>ui( d = `geaendert` e = `changed` )
                              ELSE lcl_t=>ui( d = `angelegt` e = `created` ) )
          iv_text   = |{ lines( lt_code ) } { lcl_t=>ui( d = `Zeilen` e = `lines` ) }| ).
+
+    put_cua( io_chapter = io_chapter iv_prog = lv_prog ).
     put_docu( io_chapter = io_chapter iv_kind = 'PROG' iv_name = iv_name ).
+
+  ENDMETHOD.
+
+  METHOD put_cua.
+
+*   The counterpart to def_cua. Eleven tables come back out of the rows
+*   they were written to, and RS_CUA_INTERNAL_WRITE puts them into the
+*   program. Without the status a report that sets its own PF-STATUS
+*   dumps at the first screen - the source alone is not the program.
+    DATA lt_sta TYPE STANDARD TABLE OF rsmpe_stat WITH EMPTY KEY.
+    DATA lt_fun TYPE STANDARD TABLE OF rsmpe_funt WITH EMPTY KEY.
+    DATA lt_men TYPE STANDARD TABLE OF rsmpe_men  WITH EMPTY KEY.
+    DATA lt_mtx TYPE STANDARD TABLE OF rsmpe_mnlt WITH EMPTY KEY.
+    DATA lt_act TYPE STANDARD TABLE OF rsmpe_act  WITH EMPTY KEY.
+    DATA lt_but TYPE STANDARD TABLE OF rsmpe_but  WITH EMPTY KEY.
+    DATA lt_pfk TYPE STANDARD TABLE OF rsmpe_pfk  WITH EMPTY KEY.
+    DATA lt_set TYPE STANDARD TABLE OF rsmpe_staf WITH EMPTY KEY.
+    DATA lt_doc TYPE STANDARD TABLE OF rsmpe_atrt WITH EMPTY KEY.
+    DATA lt_tit TYPE STANDARD TABLE OF rsmpe_titt WITH EMPTY KEY.
+    DATA lt_biv TYPE STANDARD TABLE OF rsmpe_buts WITH EMPTY KEY.
+    DATA ls_adm TYPE rsmpe_adm.
+    DATA ls_key TYPE trkey.
+    DATA lv_prg TYPE trdir-name.
+    DATA lr_tab TYPE REF TO data.
+    DATA lr_row TYPE REF TO data.
+
+    DATA(lt_rows) = io_chapter->get_defrows( ).
+    READ TABLE lt_rows INTO DATA(ls_adr) WITH KEY tag = 'CUA_ADM'.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+    lcl_attr=>to_struct( EXPORTING it_attrs = ls_adr-attrs
+                         CHANGING  cs_data  = ls_adm ).
+
+    FIELD-SYMBOLS <lt_any> TYPE STANDARD TABLE.
+    FIELD-SYMBOLS <ls_any> TYPE any.
+
+    LOOP AT lt_rows INTO DATA(ls_row) WHERE tag CP 'CUA_*' AND tag <> 'CUA_ADM'.
+      CASE ls_row-tag.
+        WHEN 'CUA_STA'. GET REFERENCE OF lt_sta INTO lr_tab.
+                        CREATE DATA lr_row TYPE rsmpe_stat.
+        WHEN 'CUA_FUN'. GET REFERENCE OF lt_fun INTO lr_tab.
+                        CREATE DATA lr_row TYPE rsmpe_funt.
+        WHEN 'CUA_MEN'. GET REFERENCE OF lt_men INTO lr_tab.
+                        CREATE DATA lr_row TYPE rsmpe_men.
+        WHEN 'CUA_MTX'. GET REFERENCE OF lt_mtx INTO lr_tab.
+                        CREATE DATA lr_row TYPE rsmpe_mnlt.
+        WHEN 'CUA_ACT'. GET REFERENCE OF lt_act INTO lr_tab.
+                        CREATE DATA lr_row TYPE rsmpe_act.
+        WHEN 'CUA_BUT'. GET REFERENCE OF lt_but INTO lr_tab.
+                        CREATE DATA lr_row TYPE rsmpe_but.
+        WHEN 'CUA_PFK'. GET REFERENCE OF lt_pfk INTO lr_tab.
+                        CREATE DATA lr_row TYPE rsmpe_pfk.
+        WHEN 'CUA_SET'. GET REFERENCE OF lt_set INTO lr_tab.
+                        CREATE DATA lr_row TYPE rsmpe_staf.
+        WHEN 'CUA_DOC'. GET REFERENCE OF lt_doc INTO lr_tab.
+                        CREATE DATA lr_row TYPE rsmpe_atrt.
+        WHEN 'CUA_TIT'. GET REFERENCE OF lt_tit INTO lr_tab.
+                        CREATE DATA lr_row TYPE rsmpe_titt.
+        WHEN 'CUA_BIV'. GET REFERENCE OF lt_biv INTO lr_tab.
+                        CREATE DATA lr_row TYPE rsmpe_buts.
+        WHEN OTHERS.    CONTINUE.
+      ENDCASE.
+      ASSIGN lr_tab->* TO <lt_any>.
+      ASSIGN lr_row->* TO <ls_any>.
+      lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs
+                           CHANGING  cs_data  = <ls_any> ).
+      INSERT <ls_any> INTO TABLE <lt_any>.
+    ENDLOOP.
+
+    IF lt_sta IS INITIAL AND lt_fun IS INITIAL AND lt_tit IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    ls_key-devclass = mv_pack.
+    ls_key-obj_type = 'PROG'.
+    ls_key-obj_name = iv_prog.
+    ls_key-sub_type = 'CUAD'.
+    ls_key-sub_name = iv_prog.
+
+    lv_prg = iv_prog.
+    CALL FUNCTION 'RS_CUA_INTERNAL_WRITE'
+      EXPORTING  program      = lv_prg
+                 language     = sy-langu
+                 tr_key       = ls_key
+                 adm          = ls_adm
+                 state        = 'A'
+      TABLES     sta          = lt_sta
+                 fun          = lt_fun
+                 men          = lt_men
+                 mtx          = lt_mtx
+                 act          = lt_act
+                 but          = lt_but
+                 pfk          = lt_pfk
+                 set          = lt_set
+                 doc          = lt_doc
+                 tit          = lt_tit
+                 biv          = lt_biv
+      EXCEPTIONS not_found    = 1
+                 invalid_data = 2
+                 OTHERS       = 3.
+    IF sy-subrc <> 0.
+      log( iv_kind = 'CUA' iv_name = CONV #( iv_prog )
+           iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+           iv_text   = |RS_CUA_INTERNAL_WRITE subrc { sy-subrc }| ).
+      RETURN.
+    ENDIF.
+
+    log( iv_kind = 'CUA' iv_name = CONV #( iv_prog )
+         iv_action = lcl_t=>ui( d = `Oberflaeche gesetzt`
+                                e = `GUI status written` )
+         iv_text   = |{ lines( lt_sta ) } { lcl_t=>ui( d = `Status` e = `statuses` ) }, | &&
+                     |{ lines( lt_fun ) } { lcl_t=>ui( d = `Funktionen` e = `functions` ) }, | &&
+                     |{ lines( lt_tit ) } { lcl_t=>ui( d = `Titel` e = `titles` ) }| ).
 
   ENDMETHOD.
 
@@ -3448,6 +3577,9 @@ CLASS lcl_collector_dev DEFINITION.
       IMPORTING iv_name    TYPE sobj_name
                 io_chapter TYPE REF TO lcl_chapter
       RETURNING VALUE(rv_ok) TYPE abap_bool.
+    METHODS def_cua
+      IMPORTING io_chapter TYPE REF TO lcl_chapter
+                iv_prog    TYPE progname.
     METHODS def_view
       IMPORTING iv_name    TYPE sobj_name
                 io_chapter TYPE REF TO lcl_chapter
@@ -3867,7 +3999,98 @@ CLASS lcl_collector_dev IMPLEMENTATION.
           ( name = 'TEXT'  value = lv_title ) ) ) ).
     ENDIF.
 
+    def_cua( io_chapter = io_chapter iv_prog = lv_prog ).
+
     rv_ok = abap_true.
+
+  ENDMETHOD.
+
+  METHOD def_cua.
+
+*   The GUI status of a program. Menus, function keys, application
+*   toolbar and titles are a separate program component - INSERT REPORT
+*   carries the source and nothing else. A report that sets its own
+*   status runs into CX_SALV_OBJECT_NOT_FOUND or a short dump at the
+*   first screen without it.
+*
+*   RS_CUA_INTERNAL_FETCH and _WRITE are a symmetric pair over eleven
+*   tables, the same shape as the DDIF_*_GET/PUT calls elsewhere. Each
+*   table becomes one row tag; the header goes in as CUA_ADM.
+    DATA lt_sta TYPE STANDARD TABLE OF rsmpe_stat WITH EMPTY KEY.
+    DATA lt_fun TYPE STANDARD TABLE OF rsmpe_funt WITH EMPTY KEY.
+    DATA lt_men TYPE STANDARD TABLE OF rsmpe_men  WITH EMPTY KEY.
+    DATA lt_mtx TYPE STANDARD TABLE OF rsmpe_mnlt WITH EMPTY KEY.
+    DATA lt_act TYPE STANDARD TABLE OF rsmpe_act  WITH EMPTY KEY.
+    DATA lt_but TYPE STANDARD TABLE OF rsmpe_but  WITH EMPTY KEY.
+    DATA lt_pfk TYPE STANDARD TABLE OF rsmpe_pfk  WITH EMPTY KEY.
+    DATA lt_set TYPE STANDARD TABLE OF rsmpe_staf WITH EMPTY KEY.
+    DATA lt_doc TYPE STANDARD TABLE OF rsmpe_atrt WITH EMPTY KEY.
+    DATA lt_tit TYPE STANDARD TABLE OF rsmpe_titt WITH EMPTY KEY.
+    DATA lt_biv TYPE STANDARD TABLE OF rsmpe_buts WITH EMPTY KEY.
+    DATA ls_adm TYPE rsmpe_adm.
+    DATA lv_prg TYPE trdir-name.
+
+    lv_prg = iv_prog.
+    CALL FUNCTION 'RS_CUA_INTERNAL_FETCH'
+      EXPORTING  program         = lv_prg
+                 language        = mv_langu
+                 state           = 'A'
+      IMPORTING  adm             = ls_adm
+      TABLES     sta             = lt_sta
+                 fun             = lt_fun
+                 men             = lt_men
+                 mtx             = lt_mtx
+                 act             = lt_act
+                 but             = lt_but
+                 pfk             = lt_pfk
+                 set             = lt_set
+                 doc             = lt_doc
+                 tit             = lt_tit
+                 biv             = lt_biv
+      EXCEPTIONS not_found       = 1
+                 unknown_version = 2
+                 OTHERS          = 3.
+*   A program without a status is the normal case, not an error.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+    IF lt_sta IS INITIAL AND lt_fun IS INITIAL AND lt_tit IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    io_chapter->add_defrow( VALUE ty_defrow(
+      tag = 'CUA_ADM' attrs = lcl_attr=>from_struct( ls_adm ) ) ).
+
+    FIELD-SYMBOLS <ls_any> TYPE any.
+    DATA lr_tab TYPE REF TO data.
+
+    DATA lt_part TYPE STANDARD TABLE OF string WITH EMPTY KEY.
+    lt_part = VALUE #( ( `STA` ) ( `FUN` ) ( `MEN` ) ( `MTX` ) ( `ACT` )
+                       ( `BUT` ) ( `PFK` ) ( `SET` ) ( `DOC` ) ( `TIT` )
+                       ( `BIV` ) ).
+
+    LOOP AT lt_part INTO DATA(lv_part).
+      CASE lv_part.
+        WHEN `STA`. GET REFERENCE OF lt_sta INTO lr_tab.
+        WHEN `FUN`. GET REFERENCE OF lt_fun INTO lr_tab.
+        WHEN `MEN`. GET REFERENCE OF lt_men INTO lr_tab.
+        WHEN `MTX`. GET REFERENCE OF lt_mtx INTO lr_tab.
+        WHEN `ACT`. GET REFERENCE OF lt_act INTO lr_tab.
+        WHEN `BUT`. GET REFERENCE OF lt_but INTO lr_tab.
+        WHEN `PFK`. GET REFERENCE OF lt_pfk INTO lr_tab.
+        WHEN `SET`. GET REFERENCE OF lt_set INTO lr_tab.
+        WHEN `DOC`. GET REFERENCE OF lt_doc INTO lr_tab.
+        WHEN `TIT`. GET REFERENCE OF lt_tit INTO lr_tab.
+        WHEN `BIV`. GET REFERENCE OF lt_biv INTO lr_tab.
+      ENDCASE.
+      FIELD-SYMBOLS <lt_any> TYPE STANDARD TABLE.
+      ASSIGN lr_tab->* TO <lt_any>.
+      LOOP AT <lt_any> ASSIGNING <ls_any>.
+        io_chapter->add_defrow( VALUE ty_defrow(
+          tag   = |CUA_{ lv_part }|
+          attrs = lcl_attr=>from_struct( <ls_any> ) ) ).
+      ENDLOOP.
+    ENDLOOP.
 
   ENDMETHOD.
 

@@ -261,6 +261,11 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = 'B1' iv_t = 'Angelegt werden Domaenen, Datenelemente, Tabellen, Strukturen,' ).
     a( iv_f = '=' iv_t = 'Views, CDS-Quellen, Programme samt Textelementen, Klassen,' ).
     a( iv_f = '=' iv_t = 'Interfaces und Funktionsgruppen mit ihren Bausteinen.' ).
+    a( iv_f = 'B1' iv_t = 'Der GUI-Status eines Programms reist mit: Menues, Funktionstasten,' ).
+    a( iv_f = '=' iv_t = 'Drucktastenleiste und Titel. Sie sind ein eigener' ).
+    a( iv_f = '=' iv_t = 'Programmbestandteil und kommen mit dem Quelltext allein nicht' ).
+    a( iv_f = '=' iv_t = 'mit; ein Report, der seinen Status setzt, liefe sonst auf einen' ).
+    a( iv_f = '=' iv_t = 'Abbruch. Ein Programm ohne Status ist der Normalfall.' ).
     a( iv_f = 'B1' iv_t = 'Bei einer CDS-Quelle entstehen SQL-View und Strukturobjekt beim' ).
     a( iv_f = '=' iv_t = 'Aktivieren von selbst; sie stehen nicht im Dokument.' ).
     a( iv_f = 'B1' iv_t = 'Sekundaerindizes einer Tabelle reisen mit und werden angelegt,' ).

@@ -1149,6 +1149,8 @@ CLASS lcl_importer DEFINITION.
     METHODS put_wbsrc IMPORTING io_chapter TYPE REF TO lcl_chapter
                                 iv_kind    TYPE string
                                 iv_name    TYPE string.
+    METHODS put_srvb  IMPORTING io_chapter TYPE REF TO lcl_chapter
+                                iv_name    TYPE string.
 *   Checks after the run what actually stands in the system. An object
 *   can be created and still be unusable - a structure whose data
 *   element is missing activates with rc 8 - and an object written early
@@ -1251,6 +1253,8 @@ CLASS lcl_importer IMPLEMENTATION.
           put_wbsrc( io_chapter = ls_work-chapter
                      iv_kind    = ls_work-kind
                      iv_name    = ls_work-name ).
+        WHEN 'SRVB'.
+          put_srvb( io_chapter = ls_work-chapter iv_name = ls_work-name ).
       ENDCASE.
     ENDLOOP.
 
@@ -1310,7 +1314,7 @@ CLASS lcl_importer IMPLEMENTATION.
         SELECT SINGLE @abap_true FROM dd25l
           WHERE viewname = @lv_obj AND as4local = 'A' INTO @lv_act.
 
-      WHEN 'BDEF' OR 'SRVD' OR 'DDLX'.
+      WHEN 'BDEF' OR 'SRVD' OR 'DDLX' OR 'SRVB'.
 *       Aktiv heisst hier: der Operator laedt es. Ein Katalogeintrag
 *       allein sagt bei diesen Arten nichts.
         TRY.
@@ -1424,6 +1428,7 @@ CLASS lcl_importer IMPLEMENTATION.
 *       A service definition exposes CDS views, a binding stands on the
 *       definition. Both at the end, they are the outermost layer.
         WHEN 'SRVD'. lv_seq = 12.
+        WHEN 'SRVB'. lv_seq = 13.
         WHEN OTHERS. lv_seq = 99.
       ENDCASE.
 
@@ -1442,7 +1447,7 @@ CLASS lcl_importer IMPLEMENTATION.
           lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'CLSNAME' ).
         WHEN 'FUGR'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'AREA' ).
         WHEN 'MSAG'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'ARBGB' ).
-        WHEN 'BDEF' OR 'SRVD' OR 'DDLX'.
+        WHEN 'BDEF' OR 'SRVD' OR 'DDLX' OR 'SRVB'.
           lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'NAME' ).
       ENDCASE.
 
@@ -1504,7 +1509,7 @@ CLASS lcl_importer IMPLEMENTATION.
         SELECT SINGLE @abap_true FROM t100a
           WHERE arbgb = @lv_arb INTO @rv_flag.
 
-      WHEN 'BDEF' OR 'SRVD' OR 'DDLX'.
+      WHEN 'BDEF' OR 'SRVD' OR 'DDLX' OR 'SRVB'.
 *       Der Katalog taugt hier nicht als Nachweis - auf S4H stehen
 *       reihenweise Eintraege ohne Objekt dahinter. Gefragt wird den
 *       Operator, der das Objekt tatsaechlich laden muesste.
@@ -2172,6 +2177,148 @@ CLASS lcl_importer IMPLEMENTATION.
 
     put_cua( io_chapter = io_chapter iv_prog = lv_prog ).
     put_docu( io_chapter = io_chapter iv_kind = 'PROG' iv_name = iv_name ).
+
+  ENDMETHOD.
+
+  METHOD put_srvb.
+
+*   Das Gegenstueck zu def_srvb. Aus dem Kopf und den beiden Zeilenarten
+*   entsteht die verschachtelte Struktur wieder: Services aus SRVB_SRV,
+*   ihre Versionen aus SRVB_VER, zugeordnet ueber den Servicenamen.
+    DATA ls_content TYPE cl_srvb_object_data=>ty_content.
+    DATA ls_srv     TYPE cl_srvb_object_data=>ty_service.
+    DATA ls_ver     TYPE cl_srvb_object_data=>ty_service_content.
+    DATA lo_data    TYPE REF TO if_wb_object_data_model.
+    DATA lv_corr    TYPE trkorr.
+
+    DATA(lv_ex) = exists( iv_kind = 'SRVB' iv_name = iv_name ).
+    IF lv_ex = abap_true AND mv_over = abap_false.
+      log( iv_kind = 'SRVB' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+           iv_text   = lcl_t=>ui( d = `existiert bereits` e = `already exists` ) ).
+      RETURN.
+    ENDIF.
+
+    DATA(lt_head) = io_chapter->get_defhead( ).
+    ls_content-bind_type          = lcl_attr=>value( it_attrs = lt_head iv_name = 'BIND_TYPE' ).
+    ls_content-bind_type_category = lcl_attr=>value( it_attrs = lt_head iv_name = 'BIND_TYPE_CATEGORY' ).
+    ls_content-bind_type_version  = lcl_attr=>value( it_attrs = lt_head iv_name = 'BIND_TYPE_VERSION' ).
+    IF ls_content-bind_type IS INITIAL.
+      log( iv_kind = 'SRVB' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `nicht moeglich` e = `not possible` )
+           iv_text   = lcl_t=>ui( d = `keine Bindungsart im Dokument`
+                                  e = `no binding type in the document` ) ).
+      RETURN.
+    ENDIF.
+*   Die Referenz auf die Bindungsart-Implementierung traegt den
+*   Bindingnamen. Im Quellsystem stand hier derselbe Wert.
+    ls_content-bind_type_impl-name = iv_name.
+
+    DATA(lt_rows) = io_chapter->get_defrows( ).
+    LOOP AT lt_rows INTO DATA(ls_row) WHERE tag = 'SRVB_SRV'.
+      CLEAR ls_srv.
+      ls_srv-service_name = lcl_attr=>value( it_attrs = ls_row-attrs
+                                             iv_name  = 'SERVICE_NAME' ).
+      LOOP AT lt_rows INTO DATA(ls_vrow) WHERE tag = 'SRVB_VER'.
+        IF lcl_attr=>value( it_attrs = ls_vrow-attrs iv_name = 'SERVICE_NAME' )
+           <> ls_srv-service_name.
+          CONTINUE.
+        ENDIF.
+        CLEAR ls_ver.
+        ls_ver-service_version = lcl_attr=>value( it_attrs = ls_vrow-attrs
+                                                  iv_name  = 'SERVICE_VERSION' ).
+        ls_ver-release_state   = lcl_attr=>value( it_attrs = ls_vrow-attrs
+                                                  iv_name  = 'RELEASE_STATE' ).
+        ls_ver-srvd_ref-name   = lcl_attr=>value( it_attrs = ls_vrow-attrs
+                                                  iv_name  = 'SRVD_NAME' ).
+        APPEND ls_ver TO ls_srv-service_content.
+      ENDLOOP.
+      APPEND ls_srv TO ls_content-services.
+    ENDLOOP.
+
+    IF ls_content-services IS INITIAL.
+      log( iv_kind = 'SRVB' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `nicht moeglich` e = `not possible` )
+           iv_text   = lcl_t=>ui( d = `kein Service im Dokument`
+                                  e = `no service in the document` ) ).
+      RETURN.
+    ENDIF.
+
+    IF mv_test = abap_true.
+      DATA lv_nver TYPE i.
+      LOOP AT lt_rows TRANSPORTING NO FIELDS WHERE tag = 'SRVB_VER'.
+        lv_nver = lv_nver + 1.
+      ENDLOOP.
+      log( iv_kind = 'SRVB' iv_name = iv_name
+           iv_action = COND #( WHEN lv_ex = abap_true
+                               THEN lcl_t=>ui( d = `wuerde geaendert` e = `would change` )
+                               ELSE lcl_t=>ui( d = `wuerde angelegt` e = `would create` ) )
+           iv_text   = |{ ls_content-bind_type } { ls_content-bind_type_version }, | &&
+                       |{ lines( ls_content-services ) } | &&
+                       |{ lcl_t=>ui( d = `Services` e = `services` ) }, | &&
+                       |{ lv_nver } { lcl_t=>ui( d = `Versionen` e = `versions` ) }| ).
+      RETURN.
+    ENDIF.
+
+    DATA(lv_desc) = lcl_attr=>value( it_attrs = lt_head iv_name = 'DESCRIPTION' ).
+    IF lv_desc IS INITIAL.
+      lv_desc = iv_name.
+    ENDIF.
+
+    IF mv_pack NP '$*'.
+      lv_corr = mv_tr.
+    ENDIF.
+
+    DATA(ls_type) = lcl_wb=>obj_type( 'SRVB' ).
+    IF ls_type-objtype_tr IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    TRY.
+        CREATE OBJECT lo_data TYPE ('CL_SRVB_OBJECT_DATA').
+        lo_data->set_object_name( CONV seu_objkey( iv_name ) ).
+        lo_data->set_description( lv_desc ).
+*       Nur der Inhalt wird gesetzt. Das Veroeffentlichungskennzeichen
+*       bleibt aus: ein Binding anzulegen ist eine Entwicklungsaufgabe,
+*       einen Dienst nach aussen bereitzustellen eine andere.
+        lo_data->set_content( ls_content ).
+
+        DATA(lo_op) = cl_wb_object_operator_factory=>create_object_operator(
+                        object_type       = ls_type
+                        object_key        = CONV seu_objkey( iv_name )
+                        transport_request = lv_corr ).
+        IF lv_ex = abap_true.
+          lo_op->update( io_object_data = lo_data ).
+        ELSE.
+          lo_op->create( io_object_data = lo_data
+                         package        = mv_pack ).
+        ENDIF.
+      CATCH cx_root INTO DATA(lx_put).
+        log( iv_kind = 'SRVB' iv_name = iv_name
+             iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+             iv_text   = lx_put->get_text( ) ).
+        RETURN.
+    ENDTRY.
+
+    IF mv_act = abap_true.
+      TRY.
+          lo_op->activate( ).
+        CATCH cx_root INTO DATA(lx_act).
+          log( iv_kind = 'SRVB' iv_name = iv_name
+               iv_action = lcl_t=>ui( d = `angelegt, inaktiv` e = `created, inactive` )
+               iv_text   = lx_act->get_text( ) ).
+          RETURN.
+      ENDTRY.
+    ENDIF.
+
+    log( iv_kind = 'SRVB' iv_name = iv_name
+         iv_action = COND #( WHEN lv_ex = abap_true
+                             THEN lcl_t=>ui( d = `geaendert` e = `changed` )
+                             ELSE lcl_t=>ui( d = `angelegt` e = `created` ) )
+         iv_text   = |{ ls_content-bind_type } { ls_content-bind_type_version }, | &&
+                     |{ lines( ls_content-services ) } | &&
+                     |{ lcl_t=>ui( d = `Services, nicht veroeffentlicht`
+                                   e = `services, not published` ) }| ).
 
   ENDMETHOD.
 
@@ -3901,6 +4048,10 @@ CLASS lcl_collector_dev DEFINITION.
                 iv_name      TYPE sobj_name
                 io_chapter   TYPE REF TO lcl_chapter
       RETURNING VALUE(rv_ok) TYPE abap_bool.
+    METHODS def_srvb
+      IMPORTING iv_name      TYPE sobj_name
+                io_chapter   TYPE REF TO lcl_chapter
+      RETURNING VALUE(rv_ok) TYPE abap_bool.
     METHODS def_msag
       IMPORTING iv_name    TYPE sobj_name
                 io_chapter TYPE REF TO lcl_chapter
@@ -4137,6 +4288,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         lv_ok = def_wbsrc( iv_type    = iv_type
                            iv_name    = iv_name
                            io_chapter = io_chapter ).
+      WHEN 'SRVB'. lv_ok = def_srvb( iv_name = iv_name io_chapter = io_chapter ).
       WHEN OTHERS.
         RETURN.
     ENDCASE.
@@ -4391,6 +4543,111 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     io_chapter->set_definition( iv_kind = CONV string( iv_type )
                                 it_head = lt_head ).
     io_chapter->set_defsource( lv_src ).
+    rv_ok = abap_true.
+
+  ENDMETHOD.
+
+  METHOD def_srvb.
+
+*   Ein Service-Binding ist kein Quelltext. Es ist eine verschachtelte
+*   Struktur mit zwei Tabellenebenen: unter dem Binding stehen Services,
+*   unter jedem Service seine Versionen. Der Kopf traegt die Bindungsart
+*   (ODATA V2, V4, ...), die beiden Ebenen werden Zeilen - dieselbe Form
+*   wie die Feldliste einer Tabelle.
+    DATA lo_data TYPE REF TO if_wb_object_data_model.
+    DATA ls_all  TYPE cl_srvb_object_data=>ty_object_data.
+
+    DATA(ls_type) = lcl_wb=>obj_type( 'SRVB' ).
+    IF ls_type-objtype_tr IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    TRY.
+        cl_wb_object_operator_factory=>create_object_operator(
+          object_type = ls_type
+          object_key  = CONV seu_objkey( iv_name )
+        )->read( EXPORTING version        = 'A'
+                           data_selection = if_wb_object_data_selection_co=>c_all_data
+                 IMPORTING eo_object_data = lo_data ).
+      CATCH cx_root.
+        RETURN.
+    ENDTRY.
+    IF lo_data IS NOT BOUND.
+      RETURN.
+    ENDIF.
+
+    TRY.
+        lo_data->get_selected_data(
+          EXPORTING p_data_selection = if_wb_object_data_selection_co=>c_all_data
+          IMPORTING p_data           = ls_all ).
+      CATCH cx_root.
+        RETURN.
+    ENDTRY.
+    IF ls_all-content-bind_type IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    DATA lt_head TYPE ty_attrs.
+    APPEND VALUE ty_attr( name = 'NAME' value = iv_name ) TO lt_head.
+*   Die Bezeichnung des Bindings ist ueber diesen Weg nicht zu bekommen:
+*   get_description( ) liefert nichts, der Metadatensatz beim Lesen der
+*   aktiven Fassung auch nicht. ADT zeigt sie, holt sie also woanders
+*   her. Beim Import tritt dann der Objektname an ihre Stelle - das
+*   Binding ist damit vollstaendig, nur seine Bezeichnung nicht.
+    DATA(lv_desc) = lo_data->get_description( ).
+    IF lv_desc IS INITIAL.
+      lv_desc = ls_all-metadata-description.
+    ENDIF.
+    IF lv_desc IS NOT INITIAL.
+      APPEND VALUE ty_attr( name = 'DESCRIPTION' value = lv_desc ) TO lt_head.
+    ENDIF.
+    APPEND VALUE ty_attr( name  = 'BIND_TYPE'
+                          value = ls_all-content-bind_type ) TO lt_head.
+    APPEND VALUE ty_attr( name  = 'BIND_TYPE_CATEGORY'
+                          value = ls_all-content-bind_type_category ) TO lt_head.
+    APPEND VALUE ty_attr( name  = 'BIND_TYPE_VERSION'
+                          value = ls_all-content-bind_type_version ) TO lt_head.
+*   Ob das Binding veroeffentlicht ist, steht als Information im
+*   Dokument. Angelegt wird es beim Import trotzdem unveroeffentlicht -
+*   Veroeffentlichen stellt einen Dienst nach aussen bereit, und das ist
+*   eine Entscheidung, die niemand nebenbei treffen sollte.
+    APPEND VALUE ty_attr( name  = 'PUBLISHED'
+                          value = COND #( WHEN ls_all-published = abap_true
+                                          THEN `true` ELSE `false` ) ) TO lt_head.
+
+    io_chapter->set_definition( iv_kind = 'SRVB' it_head = lt_head ).
+
+    LOOP AT ls_all-content-services INTO DATA(ls_srv).
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag   = 'SRVB_SRV'
+        attrs = VALUE ty_attrs(
+          ( name = 'SERVICE_NAME' value = ls_srv-service_name ) ) ) ).
+
+      LOOP AT ls_srv-service_content INTO DATA(ls_ver).
+        DATA lt_va TYPE ty_attrs.
+        CLEAR lt_va.
+*       Der Servicename steht in jeder Versionszeile mit. Zeilen sind im
+*       Dokument eine flache Liste; ohne den Rueckverweis liesse sich
+*       beim Import nicht sagen, zu welchem Service eine Version gehoert.
+        APPEND VALUE ty_attr( name  = 'SERVICE_NAME'
+                              value = ls_srv-service_name ) TO lt_va.
+        APPEND VALUE ty_attr( name  = 'SERVICE_VERSION'
+                              value = ls_ver-service_version ) TO lt_va.
+        IF ls_ver-release_state IS NOT INITIAL.
+          APPEND VALUE ty_attr( name  = 'RELEASE_STATE'
+                                value = ls_ver-release_state ) TO lt_va.
+        ENDIF.
+*       Von der Objektreferenz nur der Name. URI und Paket sind
+*       systemspezifisch und im Zielsystem ohnehin andere.
+        IF ls_ver-srvd_ref-name IS NOT INITIAL.
+          APPEND VALUE ty_attr( name  = 'SRVD_NAME'
+                                value = ls_ver-srvd_ref-name ) TO lt_va.
+        ENDIF.
+        io_chapter->add_defrow( VALUE ty_defrow(
+          tag = 'SRVB_VER' attrs = lt_va ) ).
+      ENDLOOP.
+    ENDLOOP.
+
     rv_ok = abap_true.
 
   ENDMETHOD.

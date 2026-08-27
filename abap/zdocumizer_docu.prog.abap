@@ -262,10 +262,14 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'Views, CDS-Quellen, Programme samt Textelementen, Klassen,' ).
     a( iv_f = '=' iv_t = 'Interfaces und Funktionsgruppen mit ihren Bausteinen.' ).
     a( iv_f = 'B1' iv_t = 'Verhaltensdefinition, Service-Definition und Metadata Extension' ).
-    a( iv_f = '=' iv_t = 'reisen als Quelltext mit. Damit ist das Backend einer' ).
-    a( iv_f = '=' iv_t = 'Fiori-Elements-Anwendung uebertragbar; beim Service-Binding' ).
-    a( iv_f = '=' iv_t = 'fehlt noch das letzte Stueck. Startpunkt-Typen dafuer: BD, SD,' ).
-    a( iv_f = '=' iv_t = 'MX und SB.' ).
+    a( iv_f = '=' iv_t = 'reisen als Quelltext mit, das Service-Binding mit Bindungsart,' ).
+    a( iv_f = '=' iv_t = 'Services und Versionen. Damit ist das Backend einer' ).
+    a( iv_f = '=' iv_t = 'Fiori-Elements-Anwendung vollstaendig uebertragbar.' ).
+    a( iv_f = '=' iv_t = 'Startpunkt-Typen dafuer: BD, SD, MX und SB.' ).
+    a( iv_f = 'B1' iv_t = 'Ein Service-Binding wird grundsaetzlich unveroeffentlicht' ).
+    a( iv_f = '=' iv_t = 'angelegt, auch wenn es im Quellsystem veroeffentlicht war. Ein' ).
+    a( iv_f = '=' iv_t = 'Binding anzulegen ist eine Entwicklungsaufgabe, einen Dienst' ).
+    a( iv_f = '=' iv_t = 'nach aussen bereitzustellen eine andere.' ).
     a( iv_f = 'B1' iv_t = 'Nachrichtenklassen reisen mit allen Nachrichten und allen' ).
     a( iv_f = '=' iv_t = 'gepflegten Sprachen - anders als der uebrige Inhalt, der der' ).
     a( iv_f = '=' iv_t = 'Ausgabesprache folgt. Eine nur englisch gepflegte Klasse kaeme in' ).

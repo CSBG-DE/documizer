@@ -895,7 +895,7 @@
               <tr><td>Verhaltensdefinition (BDEF)</td><td>ja, als Quelltext</td></tr>
               <tr><td>Service-Definition (SRVD)</td><td>ja, als Quelltext</td></tr>
               <tr><td>Metadata Extension (DDLX)</td><td>ja, samt <code>@UI</code>-Annotationen</td></tr>
-              <tr><td>Service-Binding (SRVB)</td><td>noch nicht — verschachtelte Struktur statt Quelltext</td></tr>
+              <tr><td>Service-Binding (SRVB)</td><td>ja, mit Bindungsart und Services — aber <b>unveröffentlicht</b></td></tr>
             </tbody>
           </table>
         </div>
@@ -941,10 +941,21 @@
         <p>
           Verhaltensdefinition, Service-Definition und Metadata Extension sind alle drei reine
           Quelltextobjekte und hängen am generischen Workbench-Objektoperator — ein Weg statt
-          drei. Zusammen mit den CDS-Views, die schon vorher mitreisten, ist damit das
-          <b>Backend</b> einer Fiori-Elements-Anwendung übertragbar; beim Service-Binding fehlt
-          noch das letzte Stück.
+          drei. Das Service-Binding ist kein Quelltext, sondern eine verschachtelte Struktur:
+          unter dem Binding stehen Services, unter jedem Service seine Versionen. Beide Ebenen
+          werden Zeilen im Dokument, und weil Zeilen eine flache Liste sind, trägt jede
+          Versionszeile den Servicenamen als Rückverweis mit.
         </p>
+        <p>
+          Zusammen mit den CDS-Views, die schon vorher mitreisten, ist damit das
+          <b>Backend</b> einer Fiori-Elements-Anwendung vollständig übertragbar.
+        </p>
+        <div class="note">
+          <p><b>Veröffentlicht wird nicht.</b> Ob ein Binding im Quellsystem veröffentlicht ist,
+          steht als Information im Dokument — angelegt wird es beim Import trotzdem
+          unveröffentlicht. Ein Binding anzulegen ist eine Entwicklungsaufgabe; einen
+          OData-Dienst nach außen bereitzustellen ist eine andere.</p>
+        </div>
         <div class="note">
           <p><b>Ein Katalogeintrag beweist bei diesen Arten nichts.</b> Auf S4H stehen
           reihenweise <code>BDEF</code>- und <code>DDLX</code>-Einträge in <code>TADIR</code>,

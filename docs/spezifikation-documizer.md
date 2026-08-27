@@ -682,7 +682,7 @@ Applikationsserver —, über denselben Parser ins Modell, dann die Objekte anle
 | GUI-Status eines Programms | `RS_CUA_INTERNAL_FETCH` / `_WRITE` | umgesetzt |
 | Nachrichtenklasse | `T100A` / `T100` direkt, Katalogeintrag über `TR_TADIR_INTERFACE` | umgesetzt |
 | Verhaltensdefinition, Service-Definition, Metadata Extension | `CL_WB_OBJECT_OPERATOR_FACTORY` + `IF_WB_OBJECT_DATA_MODEL` | umgesetzt |
-| Service-Binding | `CL_SRVB_OBJECT_DATA` | offen (siehe 9) |
+| Service-Binding | `CL_SRVB_OBJECT_DATA` über denselben Operator | umgesetzt |
 | Interface, Klasse | `SEO_*_CREATE_COMPLETE` + `IF_OO_CLIF_SOURCE` | umgesetzt |
 | Funktionsgruppe, Funktionsbaustein | `RS_FUNCTION_POOL_INSERT`, `RPY_FUNCTIONMODULE_INSERT` | umgesetzt |
 | Objektdokumentation | `DOCU_UPDATE` | umgesetzt für Report und Datenelement |
@@ -734,11 +734,38 @@ Drei Punkte sind daran nicht offensichtlich:
 - **Nur Name und Beschreibung im Kopf.** UUID, Änderer, Zeitstempel und Quellsystem stehen zwar
   im Metadatensatz, sind aber systemspezifisch und bleiben nach Grundsatz 2 draußen.
 
-**Service-Bindings** sind etwas anderes: kein Quelltext, sondern eine verschachtelte Struktur
-mit zwei Tabellenebenen (`services` → `service_content`) und Feldern wie `published`,
-`bind_type`, `bind_type_version`. `get_datatype_name( )` meldet für sie gar nichts; sie brauchen
-`cl_srvb_object_data=>ty_object_data` typisiert und eine Auflösung der Tabellen in Zeilen-Tags.
-Noch nicht gebaut.
+**Service-Bindings** sind etwas anderes: kein Quelltext, sondern eine verschachtelte Struktur.
+`get_datatype_name( )` meldet für sie gar nichts, der Zugriff läuft deshalb typisiert über
+`cl_srvb_object_data=>ty_object_data`. Zwei Tabellenebenen werden zu zwei Zeilenarten:
+
+```xml
+<definition kind="SRVB">
+  <attr name="BIND_TYPE"          value="ODATA"/>
+  <attr name="BIND_TYPE_VERSION"  value="V2"/>
+  <attr name="PUBLISHED"          value="true"/>
+  <row tag="SRVB_SRV"><attr name="SERVICE_NAME" value="…"/></row>
+  <row tag="SRVB_VER">
+    <attr name="SERVICE_NAME"    value="…"/>   <!-- Rueckverweis -->
+    <attr name="SERVICE_VERSION" value="0001"/>
+    <attr name="SRVD_NAME"       value="…"/>
+  </row>
+</definition>
+```
+
+Zeilen sind im Dokument eine flache Liste. Der **Servicename steht deshalb in jeder
+Versionszeile mit** — ohne diesen Rückverweis ließe sich beim Import nicht sagen, zu welchem
+Service eine Version gehört. Von der Objektreferenz auf die Service-Definition wandert nur der
+Name mit; URI und Paket sind systemspezifisch.
+
+**Veröffentlicht wird nicht.** Ob das Binding im Quellsystem veröffentlicht ist, steht als
+Information im Dokument, aber der Import legt es grundsätzlich *unveröffentlicht* an. Ein
+Binding anzulegen ist eine Entwicklungsaufgabe; einen OData-Dienst nach außen bereitzustellen
+ist eine andere, und die sollte niemand nebenbei treffen.
+
+**Was nicht mitkommt:** die Bezeichnung des Bindings. `get_description( )` liefert nichts, der
+Metadatensatz beim Lesen der aktiven Fassung auch nicht — ADT zeigt sie, holt sie also
+woanders her. Beim Import tritt der Objektname an ihre Stelle. Das Binding ist damit
+vollständig, nur seine Bezeichnung nicht.
 
 **Nachrichtenklassen** waren bis dahin dokumentiert, aber nicht anlegbar — sie standen in der
 Objektliste und trugen keine Definitionsdaten. Ein Report, dessen Klasse im Zielsystem fehlt,

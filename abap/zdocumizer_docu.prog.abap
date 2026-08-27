@@ -261,6 +261,11 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = 'B1' iv_t = 'Angelegt werden Domaenen, Datenelemente, Tabellen, Strukturen,' ).
     a( iv_f = '=' iv_t = 'Views, CDS-Quellen, Programme samt Textelementen, Klassen,' ).
     a( iv_f = '=' iv_t = 'Interfaces und Funktionsgruppen mit ihren Bausteinen.' ).
+    a( iv_f = 'B1' iv_t = 'Verhaltensdefinition, Service-Definition und Metadata Extension' ).
+    a( iv_f = '=' iv_t = 'reisen als Quelltext mit. Damit ist das Backend einer' ).
+    a( iv_f = '=' iv_t = 'Fiori-Elements-Anwendung uebertragbar; beim Service-Binding' ).
+    a( iv_f = '=' iv_t = 'fehlt noch das letzte Stueck. Startpunkt-Typen dafuer: BD, SD,' ).
+    a( iv_f = '=' iv_t = 'MX und SB.' ).
     a( iv_f = 'B1' iv_t = 'Nachrichtenklassen reisen mit allen Nachrichten und allen' ).
     a( iv_f = '=' iv_t = 'gepflegten Sprachen - anders als der uebrige Inhalt, der der' ).
     a( iv_f = '=' iv_t = 'Ausgabesprache folgt. Eine nur englisch gepflegte Klasse kaeme in' ).

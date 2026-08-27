@@ -892,6 +892,10 @@
               <tr><td>View</td><td>ja, mit Basistabellen, Feldern und Join-Bedingungen</td></tr>
               <tr><td>CDS-Quelle</td><td>ja; SQL-View und Strukturobjekt entstehen beim Aktivieren von selbst</td></tr>
               <tr><td>Nachrichtenklasse</td><td>ja, mit allen Nachrichten in allen gepflegten Sprachen</td></tr>
+              <tr><td>Verhaltensdefinition (BDEF)</td><td>ja, als Quelltext</td></tr>
+              <tr><td>Service-Definition (SRVD)</td><td>ja, als Quelltext</td></tr>
+              <tr><td>Metadata Extension (DDLX)</td><td>ja, samt <code>@UI</code>-Annotationen</td></tr>
+              <tr><td>Service-Binding (SRVB)</td><td>noch nicht — verschachtelte Struktur statt Quelltext</td></tr>
             </tbody>
           </table>
         </div>
@@ -932,6 +936,22 @@
           Kopfsatz. Jede wird ein Zeilen-Tag im Dokument — dieselbe Form wie die Feldliste einer
           Tabelle. Ein Programm ohne Status ist der Normalfall und keine Meldung wert.
         </p>
+
+        <h3>Die Fiori-Schichten</h3>
+        <p>
+          Verhaltensdefinition, Service-Definition und Metadata Extension sind alle drei reine
+          Quelltextobjekte und hängen am generischen Workbench-Objektoperator — ein Weg statt
+          drei. Zusammen mit den CDS-Views, die schon vorher mitreisten, ist damit das
+          <b>Backend</b> einer Fiori-Elements-Anwendung übertragbar; beim Service-Binding fehlt
+          noch das letzte Stück.
+        </p>
+        <div class="note">
+          <p><b>Ein Katalogeintrag beweist bei diesen Arten nichts.</b> Auf S4H stehen
+          reihenweise <code>BDEF</code>- und <code>DDLX</code>-Einträge in <code>TADIR</code>,
+          deren Inhalt sich nicht laden lässt. Existenzprüfung und Prüfung nach dem Lauf fragen
+          deshalb den Operator, nicht den Katalog — und jeder Zugriff ist abgefangen, sonst
+          reißt eine solche Karteileiche den ganzen Lauf mit.</p>
+        </div>
 
         <h3>Nachrichtenklassen</h3>
         <p>

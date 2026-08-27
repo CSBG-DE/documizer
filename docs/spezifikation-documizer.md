@@ -319,7 +319,10 @@ Pseudotyp `FUNC`: Kurztext aus `TFTIT`, Doku über Dokuklasse `FU`, Schnittstell
 ### 4.2 Selektionsbild
 
 **Block: Startpunkt** — `P_STYPE`, `P_SVAL`, `P_RECUR` (Unterpakete rekursiv, nur Paket),
-`P_LOCAL` (lokale Pakete einbeziehen).
+`P_LOCAL` (lokale Pakete einbeziehen). Typen: `K` Paket, `P` Programm, `C` Klasse/Interface,
+`FF` Baustein, `F` Funktionsgruppe, `T` Tabelle, `V` View, `D` Datenelement, `DO` Domäne,
+`W` CDS View, `MX` Metadata Extension, `BD` Verhaltensdefinition, `SD` Service-Definition,
+`SB` Service-Binding.
 
 **Block: Umfang**
 
@@ -678,6 +681,8 @@ Applikationsserver —, über denselben Parser ins Modell, dann die Objekte anle
 | Report, Include | `INSERT REPORT … DIRECTORY ENTRY`, `INSERT TEXTPOOL` | umgesetzt |
 | GUI-Status eines Programms | `RS_CUA_INTERNAL_FETCH` / `_WRITE` | umgesetzt |
 | Nachrichtenklasse | `T100A` / `T100` direkt, Katalogeintrag über `TR_TADIR_INTERFACE` | umgesetzt |
+| Verhaltensdefinition, Service-Definition, Metadata Extension | `CL_WB_OBJECT_OPERATOR_FACTORY` + `IF_WB_OBJECT_DATA_MODEL` | umgesetzt |
+| Service-Binding | `CL_SRVB_OBJECT_DATA` | offen (siehe 9) |
 | Interface, Klasse | `SEO_*_CREATE_COMPLETE` + `IF_OO_CLIF_SOURCE` | umgesetzt |
 | Funktionsgruppe, Funktionsbaustein | `RS_FUNCTION_POOL_INSERT`, `RPY_FUNCTIONMODULE_INSERT` | umgesetzt |
 | Objektdokumentation | `DOCU_UPDATE` | umgesetzt für Report und Datenelement |
@@ -700,6 +705,40 @@ Paar über elf Tabellen — `STA`, `FUN`, `MEN`, `MTX`, `ACT`, `BUT`, `PFK`, `SE
 `BIV` — plus den Kopfsatz `RSMPE_ADM`. Jede Tabelle wird ein Zeilen-Tag (`CUA_STA`, `CUA_FUN`,
 …), der Kopf `CUA_ADM`; dieselbe Form wie die Feldliste einer Tabelle, dieselbe RTTI-Abbildung.
 Ein Programm ohne Status ist der Normalfall und keine Meldung wert.
+
+**BDEF, SRVD und DDLX** — die Backend-Schichten einer Fiori-Anwendung — sind alle drei reine
+Quelltextobjekte und hängen am **generischen Workbench-Objektoperator**. Ein `def_`/`put_`-Paar
+bedient alle drei; der Unterschied zwischen ihnen ist eine Zuordnungstabelle:
+
+| Typ | `wbobjtype` | Datenmodell |
+|---|---|---|
+| Verhaltensdefinition | `BDEF` / `BDO` | `CL_BLUE_SOURCE_OBJECT_DATA` |
+| Service-Definition | `SRVD` / `SRV` | `CL_SRVD_WB_OBJECT_DATA` |
+| Metadata Extension | `DDLX` / `EX` | `CL_DDLX_WB_OBJECT_DATA` |
+
+Gelesen wird mit `read( data_selection = c_data_content )` — das liefert bei allen dreien einen
+String. Geschrieben wird über ein Datenmodell, das per `CREATE OBJECT … TYPE (klassenname)`
+entsteht, mit Name, Beschreibung und Quelltext gefüllt und an `create( )` bzw. `update( )`
+übergeben wird, gefolgt von `activate( )`.
+
+Drei Punkte sind daran nicht offensichtlich:
+
+- **Der Katalog beweist hier nichts.** Auf S4H stehen reihenweise `BDEF`- und `DDLX`-Einträge in
+  `TADIR`, deren Inhalt sich nicht laden lässt („Error while importing object from the
+  database"). Existenzprüfung und Prüfung nach dem Lauf fragen deshalb `check_existence( )` am
+  Operator, nicht den Katalog — und jeder Zugriff ist abgefangen, sonst reißt eine Karteileiche
+  den ganzen Lauf mit.
+- **Die Beschreibung kommt bei SRVD aus dem Quelltext.** Das Datenmodell liefert dort nichts,
+  die Bezeichnung steht als `@EndUserText.label` in der Quelle selbst. Ohne Beschreibung lehnt
+  `create( )` ab, also wird sie von dort geholt; notfalls dient der Objektname.
+- **Nur Name und Beschreibung im Kopf.** UUID, Änderer, Zeitstempel und Quellsystem stehen zwar
+  im Metadatensatz, sind aber systemspezifisch und bleiben nach Grundsatz 2 draußen.
+
+**Service-Bindings** sind etwas anderes: kein Quelltext, sondern eine verschachtelte Struktur
+mit zwei Tabellenebenen (`services` → `service_content`) und Feldern wie `published`,
+`bind_type`, `bind_type_version`. `get_datatype_name( )` meldet für sie gar nichts; sie brauchen
+`cl_srvb_object_data=>ty_object_data` typisiert und eine Auflösung der Tabellen in Zeilen-Tags.
+Noch nicht gebaut.
 
 **Nachrichtenklassen** waren bis dahin dokumentiert, aber nicht anlegbar — sie standen in der
 Objektliste und trugen keine Definitionsdaten. Ein Report, dessen Klasse im Zielsystem fehlt,

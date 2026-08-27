@@ -229,6 +229,55 @@ CONSTANTS gc_version TYPE string VALUE '1.1'.
 * structure, so an absent field means the same thing on both sides, and
 * the document stays readable.
 *----------------------------------------------------------------------*
+*----------------------------------------------------------------------*
+* Verhaltensdefinition, Service-Definition und Metadata Extension haengen
+* alle am generischen Workbench-Objektoperator. Die beiden Zuordnungen
+* dorthin stehen hier, weil sie der Sammler und der Importer brauchen -
+* und der Importer steht weiter oben.
+*----------------------------------------------------------------------*
+CLASS lcl_wb DEFINITION.
+  PUBLIC SECTION.
+    CLASS-METHODS data_class
+      IMPORTING iv_type       TYPE trobjtype
+      RETURNING VALUE(rv_cls) TYPE string.
+    CLASS-METHODS obj_type
+      IMPORTING iv_type        TYPE trobjtype
+      RETURNING VALUE(rs_type) TYPE wbobjtype.
+    CLASS-METHODS is_source
+      IMPORTING iv_type         TYPE clike
+      RETURNING VALUE(rv_flag)  TYPE abap_bool.
+ENDCLASS.
+
+CLASS lcl_wb IMPLEMENTATION.
+
+  METHOD data_class.
+*   Das Datenmodell je Objektart. Nur diese drei sind reine
+*   Quelltextobjekte; SRVB ist eine verschachtelte Struktur und geht
+*   einen eigenen Weg.
+    CASE iv_type.
+      WHEN 'BDEF'. rv_cls = 'CL_BLUE_SOURCE_OBJECT_DATA'.
+      WHEN 'SRVD'. rv_cls = 'CL_SRVD_WB_OBJECT_DATA'.
+      WHEN 'DDLX'. rv_cls = 'CL_DDLX_WB_OBJECT_DATA'.
+    ENDCASE.
+  ENDMETHOD.
+
+  METHOD obj_type.
+    cl_wb_object_type=>get_global_from_transport_type(
+      EXPORTING  p_transport_type  = iv_type
+      IMPORTING  p_global_type     = rs_type
+      EXCEPTIONS no_unique_mapping = 1
+                 OTHERS            = 2 ).
+    IF sy-subrc <> 0.
+      CLEAR rs_type.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD is_source.
+    rv_flag = boolc( iv_type = 'BDEF' OR iv_type = 'SRVD' OR iv_type = 'DDLX' ).
+  ENDMETHOD.
+
+ENDCLASS.
+
 CLASS lcl_attr DEFINITION.
   PUBLIC SECTION.
     CLASS-METHODS from_struct
@@ -1097,6 +1146,9 @@ CLASS lcl_importer DEFINITION.
                                iv_prog    TYPE progname.
     METHODS put_msag IMPORTING io_chapter TYPE REF TO lcl_chapter
                                iv_name    TYPE string.
+    METHODS put_wbsrc IMPORTING io_chapter TYPE REF TO lcl_chapter
+                                iv_kind    TYPE string
+                                iv_name    TYPE string.
 *   Checks after the run what actually stands in the system. An object
 *   can be created and still be unusable - a structure whose data
 *   element is missing activates with rc 8 - and an object written early
@@ -1195,6 +1247,10 @@ CLASS lcl_importer IMPLEMENTATION.
                     iv_name    = ls_work-name ).
         WHEN 'FUGR'. put_fugr( io_chapter = ls_work-chapter iv_name = ls_work-name ).
         WHEN 'MSAG'. put_msag( io_chapter = ls_work-chapter iv_name = ls_work-name ).
+        WHEN 'BDEF' OR 'SRVD' OR 'DDLX'.
+          put_wbsrc( io_chapter = ls_work-chapter
+                     iv_kind    = ls_work-kind
+                     iv_name    = ls_work-name ).
       ENDCASE.
     ENDLOOP.
 
@@ -1253,6 +1309,21 @@ CLASS lcl_importer IMPLEMENTATION.
       WHEN 'VIEW'.
         SELECT SINGLE @abap_true FROM dd25l
           WHERE viewname = @lv_obj AND as4local = 'A' INTO @lv_act.
+
+      WHEN 'BDEF' OR 'SRVD' OR 'DDLX'.
+*       Aktiv heisst hier: der Operator laedt es. Ein Katalogeintrag
+*       allein sagt bei diesen Arten nichts.
+        TRY.
+            DATA(ls_wbt) = lcl_wb=>obj_type( CONV trobjtype( is_work-kind ) ).
+            IF ls_wbt-objtype_tr IS NOT INITIAL.
+              lv_act = cl_wb_object_operator_factory=>create_object_operator(
+                         object_type = ls_wbt
+                         object_key  = CONV seu_objkey( is_work-name )
+                       )->check_existence( ).
+            ENDIF.
+          CATCH cx_root.
+            CLEAR lv_act.
+        ENDTRY.
 
       WHEN 'MSAG'.
 *       The class alone is not enough - a class without its numbers
@@ -1340,12 +1411,19 @@ CLASS lcl_importer IMPLEMENTATION.
 *       A view stands on tables, a CDS source on both.
         WHEN 'VIEW'. lv_seq = 4.
         WHEN 'DDLS'. lv_seq = 5.
-        WHEN 'PROG'. lv_seq = 6.
+*       A metadata extension extends a CDS view, a behaviour definition
+*       defines behaviour for one - both need it to be there first.
+        WHEN 'DDLX'. lv_seq = 6.
+        WHEN 'BDEF'. lv_seq = 7.
+        WHEN 'PROG'. lv_seq = 8.
 *       Interfaces before classes - a class implements them. Function
 *       groups last; their modules tend to use everything above.
-        WHEN 'INTF'. lv_seq = 7.
-        WHEN 'CLAS'. lv_seq = 8.
-        WHEN 'FUGR'. lv_seq = 9.
+        WHEN 'INTF'. lv_seq = 9.
+        WHEN 'CLAS'. lv_seq = 10.
+        WHEN 'FUGR'. lv_seq = 11.
+*       A service definition exposes CDS views, a binding stands on the
+*       definition. Both at the end, they are the outermost layer.
+        WHEN 'SRVD'. lv_seq = 12.
         WHEN OTHERS. lv_seq = 99.
       ENDCASE.
 
@@ -1364,6 +1442,8 @@ CLASS lcl_importer IMPLEMENTATION.
           lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'CLSNAME' ).
         WHEN 'FUGR'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'AREA' ).
         WHEN 'MSAG'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'ARBGB' ).
+        WHEN 'BDEF' OR 'SRVD' OR 'DDLX'.
+          lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'NAME' ).
       ENDCASE.
 
       IF lv_name IS NOT INITIAL AND lv_seq < 99.
@@ -1423,6 +1503,22 @@ CLASS lcl_importer IMPLEMENTATION.
         lv_arb = iv_name.
         SELECT SINGLE @abap_true FROM t100a
           WHERE arbgb = @lv_arb INTO @rv_flag.
+
+      WHEN 'BDEF' OR 'SRVD' OR 'DDLX'.
+*       Der Katalog taugt hier nicht als Nachweis - auf S4H stehen
+*       reihenweise Eintraege ohne Objekt dahinter. Gefragt wird den
+*       Operator, der das Objekt tatsaechlich laden muesste.
+        TRY.
+            DATA(ls_wbt) = lcl_wb=>obj_type( CONV trobjtype( iv_kind ) ).
+            IF ls_wbt-objtype_tr IS NOT INITIAL.
+              rv_flag = cl_wb_object_operator_factory=>create_object_operator(
+                          object_type = ls_wbt
+                          object_key  = CONV seu_objkey( iv_name )
+                        )->check_existence( ).
+            ENDIF.
+          CATCH cx_root.
+            CLEAR rv_flag.
+        ENDTRY.
     ENDCASE.
 
   ENDMETHOD.
@@ -2076,6 +2172,117 @@ CLASS lcl_importer IMPLEMENTATION.
 
     put_cua( io_chapter = io_chapter iv_prog = lv_prog ).
     put_docu( io_chapter = io_chapter iv_kind = 'PROG' iv_name = iv_name ).
+
+  ENDMETHOD.
+
+  METHOD put_wbsrc.
+
+*   Das Gegenstueck zu def_wbsrc. Das Datenmodell wird ueber seinen
+*   Klassennamen erzeugt, mit Name, Beschreibung und Quelltext gefuellt
+*   und dem Operator uebergeben. Die Beschreibung muss gesetzt sein -
+*   ohne sie lehnt create( ) ab.
+    DATA lo_data TYPE REF TO if_wb_object_data_model.
+    DATA lv_corr TYPE trkorr.
+
+    DATA(lv_ex) = exists( iv_kind = iv_kind iv_name = iv_name ).
+    IF lv_ex = abap_true AND mv_over = abap_false.
+      log( iv_kind = iv_kind iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+           iv_text   = lcl_t=>ui( d = `existiert bereits` e = `already exists` ) ).
+      RETURN.
+    ENDIF.
+
+    DATA(lv_source) = io_chapter->get_defsource( ).
+    IF lv_source IS INITIAL.
+      log( iv_kind = iv_kind iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `nicht moeglich` e = `not possible` )
+           iv_text   = lcl_t=>ui( d = `kein Quelltext im Dokument`
+                                  e = `no source in the document` ) ).
+      RETURN.
+    ENDIF.
+
+    IF mv_test = abap_true.
+      DATA lt_l TYPE STANDARD TABLE OF string WITH EMPTY KEY.
+      SPLIT lv_source AT cl_abap_char_utilities=>newline INTO TABLE lt_l.
+      log( iv_kind = iv_kind iv_name = iv_name
+           iv_action = COND #( WHEN lv_ex = abap_true
+                               THEN lcl_t=>ui( d = `wuerde geaendert` e = `would change` )
+                               ELSE lcl_t=>ui( d = `wuerde angelegt` e = `would create` ) )
+           iv_text   = |{ lines( lt_l ) } { lcl_t=>ui( d = `Zeilen` e = `lines` ) }| ).
+      RETURN.
+    ENDIF.
+
+    DATA(lv_cls)  = lcl_wb=>data_class( CONV trobjtype( iv_kind ) ).
+    DATA(ls_type) = lcl_wb=>obj_type( CONV trobjtype( iv_kind ) ).
+    IF lv_cls IS INITIAL OR ls_type-objtype_tr IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_desc) = lcl_attr=>value( it_attrs = io_chapter->get_defhead( )
+                                     iv_name  = 'DESCRIPTION' ).
+*   Bei einer Service-Definition liefert das Datenmodell keine
+*   Beschreibung - sie steht als Annotation im Quelltext selbst. Ohne
+*   Beschreibung lehnt create( ) ab, also wird sie von dort geholt.
+    IF lv_desc IS INITIAL.
+      FIND FIRST OCCURRENCE OF PCRE `@EndUserText\.label\s*:\s*'([^']*)'`
+        IN lv_source RESULTS DATA(ls_lbl).
+      IF sy-subrc = 0.
+        READ TABLE ls_lbl-submatches INTO DATA(ls_sub) INDEX 1.
+        IF sy-subrc = 0.
+          lv_desc = substring( val = lv_source
+                               off = ls_sub-offset
+                               len = ls_sub-length ).
+        ENDIF.
+      ENDIF.
+    ENDIF.
+    IF lv_desc IS INITIAL.
+      lv_desc = iv_name.
+    ENDIF.
+
+    IF mv_pack NP '$*'.
+      lv_corr = mv_tr.
+    ENDIF.
+
+    TRY.
+        CREATE OBJECT lo_data TYPE (lv_cls).
+        lo_data->set_object_name( CONV seu_objkey( iv_name ) ).
+        lo_data->set_description( lv_desc ).
+        lo_data->set_selected_data(
+          p_data_selection = if_wb_object_data_selection_co=>c_data_content
+          p_data           = lv_source ).
+
+        DATA(lo_op) = cl_wb_object_operator_factory=>create_object_operator(
+                        object_type       = ls_type
+                        object_key        = CONV seu_objkey( iv_name )
+                        transport_request = lv_corr ).
+        IF lv_ex = abap_true.
+          lo_op->update( io_object_data = lo_data ).
+        ELSE.
+          lo_op->create( io_object_data = lo_data
+                         package        = mv_pack ).
+        ENDIF.
+      CATCH cx_root INTO DATA(lx_put).
+        log( iv_kind = iv_kind iv_name = iv_name
+             iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+             iv_text   = lx_put->get_text( ) ).
+        RETURN.
+    ENDTRY.
+
+    IF mv_act = abap_true.
+      TRY.
+          lo_op->activate( ).
+        CATCH cx_root INTO DATA(lx_act).
+          log( iv_kind = iv_kind iv_name = iv_name
+               iv_action = lcl_t=>ui( d = `angelegt, inaktiv` e = `created, inactive` )
+               iv_text   = lx_act->get_text( ) ).
+          RETURN.
+      ENDTRY.
+    ENDIF.
+
+    log( iv_kind = iv_kind iv_name = iv_name
+         iv_action = COND #( WHEN lv_ex = abap_true
+                             THEN lcl_t=>ui( d = `geaendert` e = `changed` )
+                             ELSE lcl_t=>ui( d = `angelegt` e = `created` ) ) ).
 
   ENDMETHOD.
 
@@ -3687,6 +3894,13 @@ CLASS lcl_collector_dev DEFINITION.
     METHODS def_cua
       IMPORTING io_chapter TYPE REF TO lcl_chapter
                 iv_prog    TYPE progname.
+*   BDEF, SRVD und DDLX sind quelltextbasiert und haengen alle am
+*   generischen Workbench-Objektoperator - ein Weg statt drei.
+    METHODS def_wbsrc
+      IMPORTING iv_type      TYPE trobjtype
+                iv_name      TYPE sobj_name
+                io_chapter   TYPE REF TO lcl_chapter
+      RETURNING VALUE(rv_ok) TYPE abap_bool.
     METHODS def_msag
       IMPORTING iv_name    TYPE sobj_name
                 io_chapter TYPE REF TO lcl_chapter
@@ -3919,6 +4133,10 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         lv_ok = def_clif( iv_type = iv_type iv_name = iv_name io_chapter = io_chapter ).
       WHEN 'FUGR'. lv_ok = def_fugr( iv_name = iv_name io_chapter = io_chapter ).
       WHEN 'MSAG'. lv_ok = def_msag( iv_name = iv_name io_chapter = io_chapter ).
+      WHEN 'BDEF' OR 'SRVD' OR 'DDLX'.
+        lv_ok = def_wbsrc( iv_type    = iv_type
+                           iv_name    = iv_name
+                           io_chapter = io_chapter ).
       WHEN OTHERS.
         RETURN.
     ENDCASE.
@@ -4113,6 +4331,66 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
     def_cua( io_chapter = io_chapter iv_prog = lv_prog ).
 
+    rv_ok = abap_true.
+
+  ENDMETHOD.
+
+  METHOD def_wbsrc.
+
+*   Verhaltensdefinition, Service-Definition und Metadata Extension.
+*   Alle drei sind Quelltext und werden ueber denselben Operator
+*   gelesen: c_data_content liefert einen String, genau wie bei einer
+*   CDS-Quelle. Der Unterschied zwischen ihnen ist nur der Objekttyp.
+    DATA lo_data TYPE REF TO if_wb_object_data_model.
+    DATA lv_src  TYPE string.
+
+    DATA(ls_type) = lcl_wb=>obj_type( iv_type ).
+    IF ls_type-objtype_tr IS INITIAL.
+      RETURN.
+    ENDIF.
+
+*   Ein Katalogeintrag ist bei diesen Arten kein Beweis, dass es das
+*   Objekt gibt: auf S4H stehen reihenweise BDEF- und DDLX-Eintraege in
+*   TADIR, deren Inhalt sich nicht laden laesst. Der Lauf darf daran
+*   nicht scheitern, deshalb faengt hier alles ab.
+    TRY.
+        DATA(lo_op) = cl_wb_object_operator_factory=>create_object_operator(
+                        object_type = ls_type
+                        object_key  = CONV seu_objkey( iv_name ) ).
+        lo_op->read( EXPORTING version        = 'A'
+                               data_selection = if_wb_object_data_selection_co=>c_all_data
+                     IMPORTING eo_object_data = lo_data ).
+      CATCH cx_root.
+        RETURN.
+    ENDTRY.
+    IF lo_data IS NOT BOUND.
+      RETURN.
+    ENDIF.
+
+    TRY.
+        lo_data->get_selected_data(
+          EXPORTING p_data_selection = if_wb_object_data_selection_co=>c_data_content
+          IMPORTING p_data           = lv_src ).
+      CATCH cx_root.
+        RETURN.
+    ENDTRY.
+    IF lv_src IS INITIAL.
+      RETURN.
+    ENDIF.
+
+*   Der Kopf traegt nur Name und Beschreibung. Alles andere am
+*   Metadatensatz - UUID, Aenderer, Zeitstempel, Quellsystem - ist
+*   systemspezifisch und hat im Dokument nichts verloren.
+    DATA lt_head TYPE ty_attrs.
+    APPEND VALUE ty_attr( name = 'NAME' value = iv_name ) TO lt_head.
+    DATA(lv_desc) = lo_data->get_description( ).
+    IF lv_desc IS NOT INITIAL.
+      APPEND VALUE ty_attr( name = 'DESCRIPTION' value = lv_desc ) TO lt_head.
+    ENDIF.
+
+    io_chapter->set_definition( iv_kind = CONV string( iv_type )
+                                it_head = lt_head ).
+    io_chapter->set_defsource( lv_src ).
     rv_ok = abap_true.
 
   ENDMETHOD.
@@ -6078,6 +6356,10 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       WHEN 'D'.  rs_obj = VALUE #( type = 'DTEL' name = lv_name ).
       WHEN 'DO'. rs_obj = VALUE #( type = 'DOMA' name = lv_name ).
       WHEN 'W'.  rs_obj = VALUE #( type = 'DDLS' name = lv_name ).
+      WHEN 'MX'. rs_obj = VALUE #( type = 'DDLX' name = lv_name ).
+      WHEN 'BD'. rs_obj = VALUE #( type = 'BDEF' name = lv_name ).
+      WHEN 'SD'. rs_obj = VALUE #( type = 'SRVD' name = lv_name ).
+      WHEN 'SB'. rs_obj = VALUE #( type = 'SRVB' name = lv_name ).
       WHEN 'C'.
 *       A class and an interface share one input field, as in SE80. Which
 *       of the two it is comes from the catalog.
@@ -6262,7 +6544,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       WHERE pgmid = 'R3TR'
         AND object IN ( 'CLAS', 'INTF', 'TABL', 'VIEW', 'DTEL', 'DOMA',
                         'TTYP', 'DDLS', 'PROG', 'FUGR', 'MSAG', 'SHLP',
-                        'ENQU' )
+                        'ENQU', 'BDEF', 'SRVD', 'SRVB', 'DDLX' )
         AND obj_name = @lv_obj_name
       INTO @DATA(lv_type).
     IF sy-subrc = 0.
@@ -6530,7 +6812,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
           WHERE pgmid = 'R3TR'
             AND object IN ( 'CLAS', 'INTF', 'TABL', 'VIEW', 'DTEL', 'DOMA',
                             'TTYP', 'DDLS', 'PROG', 'FUGR', 'MSAG', 'SHLP',
-                            'ENQU' )
+                            'ENQU', 'BDEF', 'SRVD', 'SRVB', 'DDLX' )
             AND obj_name = @lt_name-table_line
           INTO TABLE @DATA(lt_cat).
         LOOP AT lt_cat INTO DATA(ls_cat).
@@ -7224,7 +7506,11 @@ FORM stype_list CHANGING ct_list TYPE ty_stypes.
       ( code = 'V'  text = 'View' )
       ( code = 'D'  text = 'Datenelement' )
       ( code = 'DO' text = 'Domäne' )
-      ( code = 'W'  text = 'CDS View' ) ).
+      ( code = 'W'  text = 'CDS View' )
+      ( code = 'MX' text = 'Metadata Extension' )
+      ( code = 'BD' text = 'Verhaltensdefinition' )
+      ( code = 'SD' text = 'Service-Definition' )
+      ( code = 'SB' text = 'Service-Binding' ) ).
   ELSE.
     ct_list = VALUE #(
       ( code = 'K'  text = 'Package' )
@@ -7236,7 +7522,11 @@ FORM stype_list CHANGING ct_list TYPE ty_stypes.
       ( code = 'V'  text = 'View' )
       ( code = 'D'  text = 'Data element' )
       ( code = 'DO' text = 'Domain' )
-      ( code = 'W'  text = 'CDS view' ) ).
+      ( code = 'W'  text = 'CDS view' )
+      ( code = 'MX' text = 'Metadata extension' )
+      ( code = 'BD' text = 'Behavior definition' )
+      ( code = 'SD' text = 'Service definition' )
+      ( code = 'SB' text = 'Service binding' ) ).
   ENDIF.
 
 ENDFORM.
@@ -7345,6 +7635,10 @@ FORM f4_sval.
         WHEN 'D'.  lv_obj = 'DTEL'.
         WHEN 'DO'. lv_obj = 'DOMA'.
         WHEN 'W'.  lv_obj = 'DDLS'.
+        WHEN 'MX'. lv_obj = 'DDLX'.
+        WHEN 'BD'. lv_obj = 'BDEF'.
+        WHEN 'SD'. lv_obj = 'SRVD'.
+        WHEN 'SB'. lv_obj = 'SRVB'.
         WHEN OTHERS. lv_obj = 'PROG'.
       ENDCASE.
       SELECT obj_name AS name, devclass AS text

@@ -896,6 +896,8 @@
               <tr><td>Service-Definition (SRVD)</td><td>ja, als Quelltext</td></tr>
               <tr><td>Metadata Extension (DDLX)</td><td>ja, samt <code>@UI</code>-Annotationen</td></tr>
               <tr><td>Service-Binding (SRVB)</td><td>ja, mit Bindungsart und Services — aber <b>unveröffentlicht</b></td></tr>
+              <tr><td>IDoc-Segmenttyp</td><td>ja, als Segment — nicht als Struktur</td></tr>
+              <tr><td>IDoc-Basistyp</td><td>ja, mit der ganzen Segmenthierarchie</td></tr>
             </tbody>
           </table>
         </div>
@@ -962,6 +964,28 @@
           deren Inhalt sich nicht laden lässt. Existenzprüfung und Prüfung nach dem Lauf fragen
           deshalb den Operator, nicht den Katalog — und jeder Zugriff ist abgefangen, sonst
           reißt eine solche Karteileiche den ganzen Lauf mit.</p>
+        </div>
+
+        <h3>IDoc</h3>
+        <p>
+          Ein IDoc-Segmenttyp trägt im Objektkatalog <code>TABL</code>, weil SAP zu jedem
+          Segment eine gleichnamige DDIC-Struktur erzeugt. Das ist die unangenehmste Sorte
+          Lücke: keine, die auffällt, sondern eine, die <em>richtig aussieht</em>. Als Struktur
+          importiert entstünde im Zielsystem etwas mit den korrekten Feldern, das WE31 nicht als
+          Segment kennt — Segmentdefinition und Freigabestände fehlten stillschweigend.
+        </p>
+        <p>
+          Deshalb prüft der Report bei jedem <code>TABL</code>, ob der Name in
+          <code>EDISEGMENT</code> steht, und behandelt ihn dann als Segment.
+          <code>SEGMENT_CREATE</code> legt Segmenttyp, Segmentdefinition und Struktur in einem
+          Zug an. Der Basistyp bringt die ganze Segmenthierarchie mit — den Baum, den WE30
+          zeigt, mit Vatersegment, Ebene, Muss-Kennzeichen und Wiederholbereich.
+        </p>
+        <div class="note">
+          <p><b>Ein bestehendes Segment wird nicht angefasst</b>, auch nicht mit „Bestehende
+          Objekte überschreiben". Eine neue Segmentdefinition anzuhängen heißt, eine neue
+          Version zu erzeugen — das ist eine Entscheidung des Entwicklers, nicht eines
+          Importlaufs.</p>
         </div>
 
         <h3>Nachrichtenklassen</h3>

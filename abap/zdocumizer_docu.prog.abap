@@ -270,6 +270,14 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'angelegt, auch wenn es im Quellsystem veroeffentlicht war. Ein' ).
     a( iv_f = '=' iv_t = 'Binding anzulegen ist eine Entwicklungsaufgabe, einen Dienst' ).
     a( iv_f = '=' iv_t = 'nach aussen bereitzustellen eine andere.' ).
+    a( iv_f = 'B1' iv_t = 'IDoc-Segmenttypen und -Basistypen reisen mit. Ein Segmenttyp' ).
+    a( iv_f = '=' iv_t = 'traegt im Katalog TABL, weil SAP dazu eine gleichnamige' ).
+    a( iv_f = '=' iv_t = 'Struktur erzeugt; als Struktur importiert entstuende etwas mit' ).
+    a( iv_f = '=' iv_t = 'den richtigen Feldern, das WE31 nicht als Segment kennt. Der' ).
+    a( iv_f = '=' iv_t = 'Report erkennt das und legt ein echtes Segment an. Ein' ).
+    a( iv_f = '=' iv_t = 'vorhandenes Segment bleibt unangetastet - eine neue' ).
+    a( iv_f = '=' iv_t = 'Segmentdefinition waere eine neue Version. Startpunkt-Typen:' ).
+    a( iv_f = '=' iv_t = 'IS und IT.' ).
     a( iv_f = 'B1' iv_t = 'Nachrichtenklassen reisen mit allen Nachrichten und allen' ).
     a( iv_f = '=' iv_t = 'gepflegten Sprachen - anders als der uebrige Inhalt, der der' ).
     a( iv_f = '=' iv_t = 'Ausgabesprache folgt. Eine nur englisch gepflegte Klasse kaeme in' ).

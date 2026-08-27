@@ -1151,6 +1151,10 @@ CLASS lcl_importer DEFINITION.
                                 iv_name    TYPE string.
     METHODS put_srvb  IMPORTING io_chapter TYPE REF TO lcl_chapter
                                 iv_name    TYPE string.
+    METHODS put_segm  IMPORTING io_chapter TYPE REF TO lcl_chapter
+                                iv_name    TYPE string.
+    METHODS put_idoc  IMPORTING io_chapter TYPE REF TO lcl_chapter
+                                iv_name    TYPE string.
 *   Checks after the run what actually stands in the system. An object
 *   can be created and still be unusable - a structure whose data
 *   element is missing activates with rc 8 - and an object written early
@@ -1255,6 +1259,10 @@ CLASS lcl_importer IMPLEMENTATION.
                      iv_name    = ls_work-name ).
         WHEN 'SRVB'.
           put_srvb( io_chapter = ls_work-chapter iv_name = ls_work-name ).
+        WHEN 'SEGM'.
+          put_segm( io_chapter = ls_work-chapter iv_name = ls_work-name ).
+        WHEN 'IDOC'.
+          put_idoc( io_chapter = ls_work-chapter iv_name = ls_work-name ).
       ENDCASE.
     ENDLOOP.
 
@@ -1328,6 +1336,31 @@ CLASS lcl_importer IMPLEMENTATION.
           CATCH cx_root.
             CLEAR lv_act.
         ENDTRY.
+
+      WHEN 'SEGM'.
+        DATA lv_vsg TYPE edisegment-segtyp.
+        lv_vsg = is_work-name.
+        SELECT SINGLE @abap_true FROM edisegment
+          WHERE segtyp = @lv_vsg INTO @lv_act.
+
+      WHEN 'IDOC'.
+*       Ein Basistyp ohne Segmenthierarchie ist kein Basistyp. Gefragt
+*       wird die API, nicht EDISYN: dort steht nur die freigegebene
+*       Syntax, und ein frisch angelegter Typ ist nicht freigegeben.
+        DATA lv_vid TYPE edi_iapi00-idoctyp.
+        DATA ls_vat TYPE edi_iapi01.
+        DATA lt_vsy TYPE STANDARD TABLE OF edi_iapi02 WITH EMPTY KEY.
+        lv_vid = is_work-name.
+        CALL FUNCTION 'IDOCTYPE_READ'
+          EXPORTING  pi_idoctyp         = lv_vid
+                     pi_check_authority = abap_true
+          IMPORTING  pe_attributes      = ls_vat
+          TABLES     pt_syntax          = lt_vsy
+          EXCEPTIONS object_not_found   = 1
+                     no_authority       = 2
+                     db_error           = 3
+                     OTHERS             = 4.
+        lv_act = boolc( sy-subrc = 0 AND lt_vsy IS NOT INITIAL ).
 
       WHEN 'MSAG'.
 *       The class alone is not enough - a class without its numbers
@@ -1412,6 +1445,10 @@ CLASS lcl_importer IMPLEMENTATION.
         WHEN 'DOMA'. lv_seq = 1.
         WHEN 'DTEL'. lv_seq = 2.
         WHEN 'TABL'. lv_seq = 3.
+*       Ein Segment steht auf Datenelementen, ein Basistyp auf seinen
+*       Segmenten. Mit Tabelle und View haben beide nichts zu tun.
+        WHEN 'SEGM'. lv_seq = 3.
+        WHEN 'IDOC'. lv_seq = 4.
 *       A view stands on tables, a CDS source on both.
         WHEN 'VIEW'. lv_seq = 4.
         WHEN 'DDLS'. lv_seq = 5.
@@ -1447,6 +1484,8 @@ CLASS lcl_importer IMPLEMENTATION.
           lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'CLSNAME' ).
         WHEN 'FUGR'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'AREA' ).
         WHEN 'MSAG'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'ARBGB' ).
+        WHEN 'SEGM'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'SEGTYP' ).
+        WHEN 'IDOC'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'IDOCTYP' ).
         WHEN 'BDEF' OR 'SRVD' OR 'DDLX' OR 'SRVB'.
           lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'NAME' ).
       ENDCASE.
@@ -1508,6 +1547,18 @@ CLASS lcl_importer IMPLEMENTATION.
         lv_arb = iv_name.
         SELECT SINGLE @abap_true FROM t100a
           WHERE arbgb = @lv_arb INTO @rv_flag.
+
+      WHEN 'SEGM'.
+        DATA lv_sgt TYPE edisegment-segtyp.
+        lv_sgt = iv_name.
+        SELECT SINGLE @abap_true FROM edisegment
+          WHERE segtyp = @lv_sgt INTO @rv_flag.
+
+      WHEN 'IDOC'.
+        DATA lv_idt TYPE edbas-idoctyp.
+        lv_idt = iv_name.
+        SELECT SINGLE @abap_true FROM edbas
+          WHERE idoctyp = @lv_idt INTO @rv_flag.
 
       WHEN 'BDEF' OR 'SRVD' OR 'DDLX' OR 'SRVB'.
 *       Der Katalog taugt hier nicht als Nachweis - auf S4H stehen
@@ -2177,6 +2228,202 @@ CLASS lcl_importer IMPLEMENTATION.
 
     put_cua( io_chapter = io_chapter iv_prog = lv_prog ).
     put_docu( io_chapter = io_chapter iv_kind = 'PROG' iv_name = iv_name ).
+
+  ENDMETHOD.
+
+  METHOD put_segm.
+
+*   SEGMENT_CREATE legt Segmenttyp, Segmentdefinition und die
+*   gleichnamige DDIC-Struktur in einem Zug an. Deshalb darf ein Segment
+*   nicht als Tabelle importiert werden: der Weg ueber DDIF_TABL_PUT
+*   erzeugte die Struktur ohne das Segment darum herum.
+    DATA ls_head TYPE edisegmhd.
+    DATA ls_def  TYPE edisegmdef.
+    DATA lt_stru TYPE STANDARD TABLE OF edisegstru WITH EMPTY KEY.
+    DATA lv_dev  TYPE tadir-devclass.
+    DATA lv_ord  TYPE e070-trkorr.
+    DATA lv_task TYPE e070-trkorr.
+
+    DATA(lv_ex) = exists( iv_kind = 'SEGM' iv_name = iv_name ).
+    IF lv_ex = abap_true AND mv_over = abap_false.
+      log( iv_kind = 'SEGM' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+           iv_text   = lcl_t=>ui( d = `existiert bereits` e = `already exists` ) ).
+      RETURN.
+    ENDIF.
+
+    lcl_attr=>to_struct( EXPORTING it_attrs = io_chapter->get_defhead( )
+                         CHANGING  cs_data  = ls_head ).
+    ls_head-segtyp = iv_name.
+    CLEAR: ls_head-credate, ls_head-cretime, ls_head-ldate, ls_head-ltime.
+
+    LOOP AT io_chapter->get_defrows( ) INTO DATA(ls_row) WHERE tag = 'SEGSTRU'.
+      DATA ls_stru TYPE edisegstru.
+      CLEAR ls_stru.
+      lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs
+                           CHANGING  cs_data  = ls_stru ).
+      ls_stru-segtyp = iv_name.
+      APPEND ls_stru TO lt_stru.
+    ENDLOOP.
+
+    IF lt_stru IS INITIAL.
+      log( iv_kind = 'SEGM' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `nicht moeglich` e = `not possible` )
+           iv_text   = lcl_t=>ui( d = `keine Felder im Dokument`
+                                  e = `no fields in the document` ) ).
+      RETURN.
+    ENDIF.
+
+    IF mv_test = abap_true.
+      log( iv_kind = 'SEGM' iv_name = iv_name
+           iv_action = COND #( WHEN lv_ex = abap_true
+                               THEN lcl_t=>ui( d = `wuerde geaendert` e = `would change` )
+                               ELSE lcl_t=>ui( d = `wuerde angelegt` e = `would create` ) )
+           iv_text   = |{ lines( lt_stru ) } { lcl_t=>ui( d = `Felder` e = `fields` ) }| ).
+      RETURN.
+    ENDIF.
+
+    IF lv_ex = abap_true.
+*     Ein bestehendes Segment wird nicht angefasst. SEGMENT_MODIFY
+*     haengt eine neue Segmentdefinition an, und das ist eine
+*     Versionsentscheidung, die dem Entwickler gehoert.
+      log( iv_kind = 'SEGM' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+           iv_text   = lcl_t=>ui( d = `vorhanden - neue Definition waere eine neue Version`
+                                  e = `exists - a new definition would be a new version` ) ).
+      RETURN.
+    ENDIF.
+
+    lv_dev = mv_pack.
+    IF mv_pack NP '$*'.
+      lv_ord = mv_tr.
+    ENDIF.
+
+    CALL FUNCTION 'SEGMENT_CREATE'
+      EXPORTING  devclass            = lv_dev
+                 segmenteditor       = space
+      IMPORTING  segmentdefinition   = ls_def
+                 task                = lv_task
+      TABLES     segmentstructure    = lt_stru
+      CHANGING   segmentheader       = ls_head
+      EXCEPTIONS lock_error          = 1
+                 no_authority        = 2
+                 creation_failed     = 3
+                 transport_error     = 4
+                 namespace_violation = 5
+                 OTHERS              = 6.
+    IF sy-subrc <> 0.
+      log( iv_kind = 'SEGM' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+           iv_text   = |SEGMENT_CREATE subrc { sy-subrc }| ).
+      RETURN.
+    ENDIF.
+
+    log( iv_kind = 'SEGM' iv_name = iv_name
+         iv_action = lcl_t=>ui( d = `angelegt` e = `created` )
+         iv_text   = |{ lines( lt_stru ) } { lcl_t=>ui( d = `Felder` e = `fields` ) }| ).
+
+  ENDMETHOD.
+
+  METHOD put_idoc.
+
+    DATA ls_attr TYPE edi_iapi05.
+    DATA ls_out  TYPE edi_iapi01.
+    DATA lt_syn  TYPE STANDARD TABLE OF edi_iapi02 WITH EMPTY KEY.
+    DATA lv_idoc TYPE edi_iapi00-idoctyp.
+    DATA lv_dev  TYPE edi_iapi00-devclass.
+    DATA lv_ord  TYPE edi_iapi00-trkorr.
+
+    DATA(lv_ex) = exists( iv_kind = 'IDOC' iv_name = iv_name ).
+    IF lv_ex = abap_true AND mv_over = abap_false.
+      log( iv_kind = 'IDOC' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+           iv_text   = lcl_t=>ui( d = `existiert bereits` e = `already exists` ) ).
+      RETURN.
+    ENDIF.
+
+    lcl_attr=>to_struct( EXPORTING it_attrs = io_chapter->get_defhead( )
+                         CHANGING  cs_data  = ls_attr ).
+    ls_attr-idoctyp = iv_name.
+
+    LOOP AT io_chapter->get_defrows( ) INTO DATA(ls_row) WHERE tag = 'SYNTAX'.
+      DATA ls_syn TYPE edi_iapi02.
+      CLEAR ls_syn.
+      lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs
+                           CHANGING  cs_data  = ls_syn ).
+      APPEND ls_syn TO lt_syn.
+    ENDLOOP.
+
+    IF lt_syn IS INITIAL.
+      log( iv_kind = 'IDOC' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `nicht moeglich` e = `not possible` )
+           iv_text   = lcl_t=>ui( d = `keine Segmenthierarchie im Dokument`
+                                  e = `no segment hierarchy in the document` ) ).
+      RETURN.
+    ENDIF.
+
+    IF mv_test = abap_true.
+      log( iv_kind = 'IDOC' iv_name = iv_name
+           iv_action = COND #( WHEN lv_ex = abap_true
+                               THEN lcl_t=>ui( d = `wuerde geaendert` e = `would change` )
+                               ELSE lcl_t=>ui( d = `wuerde angelegt` e = `would create` ) )
+           iv_text   = |{ lines( lt_syn ) } { lcl_t=>ui( d = `Segmente` e = `segments` ) }| ).
+      RETURN.
+    ENDIF.
+
+    lv_idoc = iv_name.
+    lv_dev  = mv_pack.
+    IF mv_pack NP '$*'.
+      lv_ord = mv_tr.
+    ENDIF.
+
+    IF lv_ex = abap_true.
+      CALL FUNCTION 'IDOCTYPE_UPDATE'
+        EXPORTING  pi_idoctyp          = lv_idoc
+                   pi_attributes       = ls_attr
+        IMPORTING  pe_attributes       = ls_out
+        TABLES     pt_syntax           = lt_syn
+        CHANGING   pc_order            = lv_ord
+        EXCEPTIONS object_not_found    = 1
+                   no_authority        = 2
+                   db_error            = 3
+                   object_exists       = 4
+                   syntax_error        = 5
+                   segment_error       = 6
+                   transport_error     = 7
+                   OTHERS              = 8.
+    ELSE.
+      CALL FUNCTION 'IDOCTYPE_CREATE'
+        EXPORTING  pi_idoctyp          = lv_idoc
+                   pi_attributes       = ls_attr
+                   pi_devclass         = lv_dev
+        IMPORTING  pe_attributes       = ls_out
+        TABLES     pt_syntax           = lt_syn
+        CHANGING   pc_order            = lv_ord
+        EXCEPTIONS object_not_found    = 1
+                   no_authority        = 2
+                   db_error            = 3
+                   object_exists       = 4
+                   action_not_possible = 5
+                   syntax_error        = 6
+                   segment_error       = 7
+                   transport_error     = 8
+                   OTHERS              = 9.
+    ENDIF.
+    IF sy-subrc <> 0.
+      log( iv_kind = 'IDOC' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+           iv_text   = |{ COND #( WHEN lv_ex = abap_true
+                                  THEN `IDOCTYPE_UPDATE` ELSE `IDOCTYPE_CREATE` ) } | &&
+                       |subrc { sy-subrc }| ).
+      RETURN.
+    ENDIF.
+
+    log( iv_kind = 'IDOC' iv_name = iv_name
+         iv_action = COND #( WHEN lv_ex = abap_true
+                             THEN lcl_t=>ui( d = `geaendert` e = `changed` )
+                             ELSE lcl_t=>ui( d = `angelegt` e = `created` ) )
+         iv_text   = |{ lines( lt_syn ) } { lcl_t=>ui( d = `Segmente` e = `segments` ) }| ).
 
   ENDMETHOD.
 
@@ -4052,6 +4299,14 @@ CLASS lcl_collector_dev DEFINITION.
       IMPORTING iv_name      TYPE sobj_name
                 io_chapter   TYPE REF TO lcl_chapter
       RETURNING VALUE(rv_ok) TYPE abap_bool.
+    METHODS def_segm
+      IMPORTING iv_name      TYPE sobj_name
+                io_chapter   TYPE REF TO lcl_chapter
+      RETURNING VALUE(rv_ok) TYPE abap_bool.
+    METHODS def_idoc
+      IMPORTING iv_name      TYPE sobj_name
+                io_chapter   TYPE REF TO lcl_chapter
+      RETURNING VALUE(rv_ok) TYPE abap_bool.
     METHODS def_msag
       IMPORTING iv_name    TYPE sobj_name
                 io_chapter TYPE REF TO lcl_chapter
@@ -4273,7 +4528,22 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
     DATA lv_ok TYPE abap_bool.
 
-    CASE iv_type.
+*   Ein IDoc-Segmenttyp traegt im Katalog TABL, weil SAP zu jedem
+*   Segment eine gleichnamige Struktur erzeugt. Fuer die Definition ist
+*   er aber etwas anderes: als Struktur angelegt kennt WE31 ihn nicht.
+    DATA lv_kind TYPE trobjtype.
+    lv_kind = iv_type.
+    IF lv_kind = 'TABL'.
+      DATA lv_seg TYPE edisegment-segtyp.
+      lv_seg = iv_name.
+      SELECT SINGLE @abap_true FROM edisegment
+        WHERE segtyp = @lv_seg INTO @DATA(lv_is_seg).
+      IF lv_is_seg = abap_true.
+        lv_kind = 'SEGM'.
+      ENDIF.
+    ENDIF.
+
+    CASE lv_kind.
       WHEN 'DOMA'. lv_ok = def_doma( iv_name = iv_name io_chapter = io_chapter ).
       WHEN 'DTEL'. lv_ok = def_dtel( iv_name = iv_name io_chapter = io_chapter ).
       WHEN 'TABL'. lv_ok = def_tabl( iv_name = iv_name io_chapter = io_chapter ).
@@ -4289,6 +4559,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
                            iv_name    = iv_name
                            io_chapter = io_chapter ).
       WHEN 'SRVB'. lv_ok = def_srvb( iv_name = iv_name io_chapter = io_chapter ).
+      WHEN 'SEGM'. lv_ok = def_segm( iv_name = iv_name io_chapter = io_chapter ).
+      WHEN 'IDOC'. lv_ok = def_idoc( iv_name = iv_name io_chapter = io_chapter ).
       WHEN OTHERS.
         RETURN.
     ENDCASE.
@@ -4543,6 +4815,97 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     io_chapter->set_definition( iv_kind = CONV string( iv_type )
                                 it_head = lt_head ).
     io_chapter->set_defsource( lv_src ).
+    rv_ok = abap_true.
+
+  ENDMETHOD.
+
+  METHOD def_segm.
+
+*   Ein IDoc-Segmenttyp. Im Objektkatalog steht er als TABL, weil SAP
+*   zu jedem Segment eine gleichnamige DDIC-Struktur erzeugt - und genau
+*   das ist die Falle: als TABL exportiert und importiert entstuende im
+*   Zielsystem eine Struktur mit den richtigen Feldern, die WE31 nicht
+*   als Segment kennt. Die Segmentdefinition und die Freigabestaende
+*   fehlten, ohne dass es jemandem auffiele.
+    DATA ls_head TYPE edisegmhd.
+    DATA lt_stru TYPE STANDARD TABLE OF edisegstru WITH EMPTY KEY.
+    DATA lt_def  TYPE STANDARD TABLE OF edisegmdef WITH EMPTY KEY.
+    DATA lv_seg  TYPE edisegmhd-segtyp.
+    DATA lv_rc   TYPE sy-subrc.
+
+    lv_seg = iv_name.
+    CALL FUNCTION 'SEGMENT_READ'
+      EXPORTING  segmenttyp           = lv_seg
+      IMPORTING  result               = lv_rc
+                 segmentheader        = ls_head
+      TABLES     segmentdefinition    = lt_def
+                 segmentstructure     = lt_stru
+      EXCEPTIONS no_authority         = 1
+                 segment_not_existing = 2
+                 OTHERS               = 3.
+    IF sy-subrc <> 0 OR ls_head-segtyp IS INITIAL.
+      RETURN.
+    ENDIF.
+
+*   Anlage- und Aenderungsstempel gehoeren dem Quellsystem.
+    CLEAR: ls_head-credate, ls_head-cretime,
+           ls_head-ldate,   ls_head-ltime.
+
+    io_chapter->set_definition( iv_kind = 'SEGM'
+                                it_head = lcl_attr=>from_struct( ls_head ) ).
+
+    SORT lt_stru BY pos.
+    LOOP AT lt_stru INTO DATA(ls_stru).
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag = 'SEGSTRU' attrs = lcl_attr=>from_struct( ls_stru ) ) ).
+    ENDLOOP.
+
+    rv_ok = abap_true.
+
+  ENDMETHOD.
+
+  METHOD def_idoc.
+
+*   Ein IDoc-Basistyp: Kopfdaten und die Segmenthierarchie. Die
+*   Hierarchie ist der Baum, den WE30 zeigt - je Zeile ein Segment mit
+*   Vatersegment, Ebene, Muss-Kennzeichen und Wiederholbereich.
+*
+*   Gelesen wird in EDI_IAPI01, weitergegeben wird EDI_IAPI05: die
+*   Schreibseite will genau die sechs Felder, die ein Basistyp
+*   ausmachen. Was darueber hinaus im Lesesatz steht - Paket, Anleger,
+*   Zeitstempel - ist systemspezifisch und faellt beim Umkopieren
+*   von selbst weg.
+    DATA ls_read TYPE edi_iapi01.
+    DATA ls_attr TYPE edi_iapi05.
+    DATA lt_syn  TYPE STANDARD TABLE OF edi_iapi02 WITH EMPTY KEY.
+    DATA lv_idoc TYPE edi_iapi00-idoctyp.
+
+    lv_idoc = iv_name.
+    CALL FUNCTION 'IDOCTYPE_READ'
+      EXPORTING  pi_idoctyp         = lv_idoc
+                 pi_check_authority = abap_true
+      IMPORTING  pe_attributes      = ls_read
+      TABLES     pt_syntax          = lt_syn
+      EXCEPTIONS object_not_found   = 1
+                 no_authority       = 2
+                 db_error           = 3
+                 OTHERS             = 4.
+    IF sy-subrc <> 0 OR lt_syn IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    MOVE-CORRESPONDING ls_read TO ls_attr.
+    ls_attr-idoctyp = iv_name.
+
+    io_chapter->set_definition( iv_kind = 'IDOC'
+                                it_head = lcl_attr=>from_struct( ls_attr ) ).
+
+    SORT lt_syn BY nr.
+    LOOP AT lt_syn INTO DATA(ls_syn).
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag = 'SYNTAX' attrs = lcl_attr=>from_struct( ls_syn ) ) ).
+    ENDLOOP.
+
     rv_ok = abap_true.
 
   ENDMETHOD.
@@ -6617,6 +6980,10 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       WHEN 'BD'. rs_obj = VALUE #( type = 'BDEF' name = lv_name ).
       WHEN 'SD'. rs_obj = VALUE #( type = 'SRVD' name = lv_name ).
       WHEN 'SB'. rs_obj = VALUE #( type = 'SRVB' name = lv_name ).
+*     Ein Segment traegt im Katalog TABL; die Definitionsermittlung
+*     erkennt es dort und behandelt es als Segment.
+      WHEN 'IS'. rs_obj = VALUE #( type = 'TABL' name = lv_name ).
+      WHEN 'IT'. rs_obj = VALUE #( type = 'IDOC' name = lv_name ).
       WHEN 'C'.
 *       A class and an interface share one input field, as in SE80. Which
 *       of the two it is comes from the catalog.
@@ -6801,7 +7168,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       WHERE pgmid = 'R3TR'
         AND object IN ( 'CLAS', 'INTF', 'TABL', 'VIEW', 'DTEL', 'DOMA',
                         'TTYP', 'DDLS', 'PROG', 'FUGR', 'MSAG', 'SHLP',
-                        'ENQU', 'BDEF', 'SRVD', 'SRVB', 'DDLX' )
+                        'ENQU', 'BDEF', 'SRVD', 'SRVB', 'DDLX', 'IDOC' )
         AND obj_name = @lv_obj_name
       INTO @DATA(lv_type).
     IF sy-subrc = 0.
@@ -7069,7 +7436,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
           WHERE pgmid = 'R3TR'
             AND object IN ( 'CLAS', 'INTF', 'TABL', 'VIEW', 'DTEL', 'DOMA',
                             'TTYP', 'DDLS', 'PROG', 'FUGR', 'MSAG', 'SHLP',
-                            'ENQU', 'BDEF', 'SRVD', 'SRVB', 'DDLX' )
+                            'ENQU', 'BDEF', 'SRVD', 'SRVB', 'DDLX', 'IDOC' )
             AND obj_name = @lt_name-table_line
           INTO TABLE @DATA(lt_cat).
         LOOP AT lt_cat INTO DATA(ls_cat).
@@ -7767,7 +8134,9 @@ FORM stype_list CHANGING ct_list TYPE ty_stypes.
       ( code = 'MX' text = 'Metadata Extension' )
       ( code = 'BD' text = 'Verhaltensdefinition' )
       ( code = 'SD' text = 'Service-Definition' )
-      ( code = 'SB' text = 'Service-Binding' ) ).
+      ( code = 'SB' text = 'Service-Binding' )
+      ( code = 'IS' text = 'IDoc-Segmenttyp' )
+      ( code = 'IT' text = 'IDoc-Basistyp' ) ).
   ELSE.
     ct_list = VALUE #(
       ( code = 'K'  text = 'Package' )
@@ -7783,7 +8152,9 @@ FORM stype_list CHANGING ct_list TYPE ty_stypes.
       ( code = 'MX' text = 'Metadata extension' )
       ( code = 'BD' text = 'Behavior definition' )
       ( code = 'SD' text = 'Service definition' )
-      ( code = 'SB' text = 'Service binding' ) ).
+      ( code = 'SB' text = 'Service binding' )
+      ( code = 'IS' text = 'IDoc segment type' )
+      ( code = 'IT' text = 'IDoc basic type' ) ).
   ENDIF.
 
 ENDFORM.
@@ -7896,6 +8267,8 @@ FORM f4_sval.
         WHEN 'BD'. lv_obj = 'BDEF'.
         WHEN 'SD'. lv_obj = 'SRVD'.
         WHEN 'SB'. lv_obj = 'SRVB'.
+        WHEN 'IS'. lv_obj = 'TABL'.
+        WHEN 'IT'. lv_obj = 'IDOC'.
         WHEN OTHERS. lv_obj = 'PROG'.
       ENDCASE.
       SELECT obj_name AS name, devclass AS text

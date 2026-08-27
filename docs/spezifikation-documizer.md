@@ -322,7 +322,7 @@ Pseudotyp `FUNC`: Kurztext aus `TFTIT`, Doku über Dokuklasse `FU`, Schnittstell
 `P_LOCAL` (lokale Pakete einbeziehen). Typen: `K` Paket, `P` Programm, `C` Klasse/Interface,
 `FF` Baustein, `F` Funktionsgruppe, `T` Tabelle, `V` View, `D` Datenelement, `DO` Domäne,
 `W` CDS View, `MX` Metadata Extension, `BD` Verhaltensdefinition, `SD` Service-Definition,
-`SB` Service-Binding.
+`SB` Service-Binding, `IS` IDoc-Segmenttyp, `IT` IDoc-Basistyp.
 
 **Block: Umfang**
 
@@ -683,6 +683,8 @@ Applikationsserver —, über denselben Parser ins Modell, dann die Objekte anle
 | Nachrichtenklasse | `T100A` / `T100` direkt, Katalogeintrag über `TR_TADIR_INTERFACE` | umgesetzt |
 | Verhaltensdefinition, Service-Definition, Metadata Extension | `CL_WB_OBJECT_OPERATOR_FACTORY` + `IF_WB_OBJECT_DATA_MODEL` | umgesetzt |
 | Service-Binding | `CL_SRVB_OBJECT_DATA` über denselben Operator | umgesetzt |
+| IDoc-Segmenttyp | `SEGMENT_READ` / `SEGMENT_CREATE` | umgesetzt |
+| IDoc-Basistyp | `IDOCTYPE_READ` / `IDOCTYPE_CREATE` / `_UPDATE` | umgesetzt |
 | Interface, Klasse | `SEO_*_CREATE_COMPLETE` + `IF_OO_CLIF_SOURCE` | umgesetzt |
 | Funktionsgruppe, Funktionsbaustein | `RS_FUNCTION_POOL_INSERT`, `RPY_FUNCTIONMODULE_INSERT` | umgesetzt |
 | Objektdokumentation | `DOCU_UPDATE` | umgesetzt für Report und Datenelement |
@@ -766,6 +768,33 @@ ist eine andere, und die sollte niemand nebenbei treffen.
 Metadatensatz beim Lesen der aktiven Fassung auch nicht — ADT zeigt sie, holt sie also
 woanders her. Beim Import tritt der Objektname an ihre Stelle. Das Binding ist damit
 vollständig, nur seine Bezeichnung nicht.
+
+**IDoc-Segmenttypen** waren die unangenehmste Sorte Lücke: keine, die auffällt, sondern eine,
+die falsch aussieht. Ein Segmenttyp trägt im Objektkatalog **`TABL`**, weil SAP zu jedem
+Segment eine gleichnamige DDIC-Struktur erzeugt. Der Sammler nahm ihn deshalb als Struktur auf,
+und beim Import wäre im Zielsystem eine Struktur mit den richtigen Feldern entstanden, die WE31
+nicht als Segment kennt — Segmentdefinition und Freigabestände fehlten, ohne dass es jemandem
+aufgefallen wäre.
+
+Die Definitionsermittlung prüft deshalb bei jedem `TABL`, ob der Name in `EDISEGMENT` steht,
+und behandelt ihn dann als `SEGM`. `SEGMENT_READ` und `SEGMENT_CREATE` sind das Paar; letzteres
+legt Segmenttyp, Segmentdefinition und die Struktur in einem Zug an. Der Kopf ist `EDISEGMHD`
+(ohne Anlage- und Änderungsstempel), die Felder sind `EDISEGSTRU`-Zeilen.
+
+Ein **bestehendes Segment wird nicht angefasst**, auch nicht mit „Bestehende überschreiben".
+`SEGMENT_MODIFY` hängt eine neue Segmentdefinition an, und welche Version gilt, ist eine
+Entscheidung des Entwicklers, nicht eines Importlaufs.
+
+**IDoc-Basistypen** haben mit `IDOCTYPE_READ` / `IDOCTYPE_CREATE` / `IDOCTYPE_UPDATE` ein
+sauberes Tripel. Kopfdaten sind `EDI_IAPI05`, die Segmenthierarchie — der Baum, den WE30 zeigt —
+kommt als `EDI_IAPI02`-Zeilen mit Vatersegment, Ebene, Muss-Kennzeichen und Wiederholbereich.
+Gelesen wird in `EDI_IAPI01` und nach `EDI_IAPI05` umkopiert: die Schreibseite will genau die
+sechs Felder, die einen Basistyp ausmachen, und Paket, Anleger und Zeitstempel fallen beim
+Umkopieren von selbst weg.
+
+**Geprüft wird über die API, nicht über `EDISYN`.** Dort steht nur die *freigegebene* Syntax;
+ein frisch angelegter Basistyp ist nicht freigegeben, und die Tabelle bleibt leer, obwohl der
+Typ vollständig ist. Das kostete einen Fehlalarm.
 
 **Nachrichtenklassen** waren bis dahin dokumentiert, aber nicht anlegbar — sie standen in der
 Objektliste und trugen keine Definitionsdaten. Ein Report, dessen Klasse im Zielsystem fehlt,

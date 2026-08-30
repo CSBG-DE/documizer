@@ -975,6 +975,15 @@
           Groß-/Kleinschreibung im Namen. Der Inhalt reist als <b>Base64</b>: eine Regel für
           Text und Binäres, ohne Raten über Kodierungen.
         </p>
+        <p>
+          Gelesen und geschrieben wird über die <b>UI5-Repository-API</b>
+          (<code>/UI5/CL_UI5_REP_DT</code>), nicht über die BSP-Seiten-API. Die Seiten-API kennt
+          weder den Pfadbaum — der steht in einer eigenen Zuordnungsdatei, lange Pfade liegen als
+          Seite unter einem Hashnamen — noch legt sie MIME-Ordner, ICF-Knoten und Katalogeintrag
+          an. Der Export geht den Baum ab und holt jede Datei über <code>GET_FILE</code>; der
+          Import legt erst Ordner, dann Dateien über <code>PUT_FILE</code> an. ADT nimmt denselben
+          Weg — was ADT anzeigen kann, ist angekommen.
+        </p>
         <div class="note">
           <p><b>Base64 steht im XML, nie im HTML.</b> Das ist keine Absicht, die jemand einhalten
           muss, sondern eine Eigenschaft des Aufbaus: der HTML-Renderer fasst Definitionsdaten
@@ -983,8 +992,10 @@
         </div>
         <p>
           Der Preis steht dabei fest: Base64 bläht um rund ein Drittel auf. Eine gemessene App
-          mit 22 Dateien und 108.647 Bytes Inhalt ergab ein Dokument von 150.613 Zeichen. Eine
-          Freestyle-App mit Bibliotheken landet im zweistelligen Megabyte-Bereich.
+          mit 21 Dateien und 100.905 Bytes Inhalt ergab ein Dokument von 139.190 Zeichen. Eine
+          Freestyle-App mit Bibliotheken landet im zweistelligen Megabyte-Bereich. Die
+          Zuordnungsdatei selbst reist nicht mit — sie ist Buchhaltung des Zielsystems und
+          entsteht dort neu.
         </p>
 
         <h3>IDoc</h3>
@@ -1253,6 +1264,10 @@
               <tr>
                 <td>Import-Ankreuzfeld nicht erreichbar, ohne vorher einen Startpunkt einzugeben</td>
                 <td><code>OBLIGATORY</code> prüft die Laufzeit im PAI, und zwar bei <b>jedem</b> Roundtrip — auch bei dem, der das Ankreuzfeld setzt. Das PBO kommt zu spät, um <code>SCREEN-REQUIRED</code> noch abzuräumen. Die Pflicht gehört nach <code>AT SELECTION-SCREEN</code>, abgesichert über <code>SY-UCOMM</code>.</td>
+              </tr>
+              <tr>
+                <td>UI5-Anwendung importiert, 22 Dateien gemeldet, alle leer — und SE80 findet die Anwendung nicht</td>
+                <td><code>CL_O2_API_PAGES-&gt;GET_PAGE</code> liefert in <code>P_XML_SOURCE</code> nicht den Dateiinhalt, sondern den XML-Rahmen der Seite (<code>&lt;so2:page o="0" x="0" …&gt;</code>) — für <code>Component.js</code> gemessene <b>365 Bytes</b>. Export und Import zählen dieselbe Hülle und melden übereinstimmende Größen; niemand merkt es. Dazu kennen die O2-Tabellen den Pfadbaum nicht: der steht in <code>UI5RepositoryPathMapping.xml</code>, und ohne Eintrag dort existiert eine Datei für die Anwendung nicht. Richtig ist <code>/UI5/CL_UI5_REP_DT</code> mit <code>GET_FILE</code>/<code>PUT_FILE</code> — derselbe Weg, den ADT nimmt.</td>
               </tr>
             </tbody>
           </table>

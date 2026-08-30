@@ -270,11 +270,15 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'angelegt, auch wenn es im Quellsystem veroeffentlicht war. Ein' ).
     a( iv_f = '=' iv_t = 'Binding anzulegen ist eine Entwicklungsaufgabe, einen Dienst' ).
     a( iv_f = '=' iv_t = 'nach aussen bereitzustellen eine andere.' ).
-    a( iv_f = 'B1' iv_t = 'UI5-Anwendungen reisen mit allen Dateien. Der Inhalt geht als' ).
-    a( iv_f = '=' iv_t = 'Base64 ins XML - eine Regel fuer Text und Binaeres. Im HTML' ).
-    a( iv_f = '=' iv_t = 'steht er nie: der HTML-Teil fasst Definitionsdaten nicht an,' ).
-    a( iv_f = '=' iv_t = 'das lesbare Dokument bleibt lesbar. Base64 blaeht um rund ein' ).
-    a( iv_f = '=' iv_t = 'Drittel auf; bei grossen Anwendungen wird das Dokument' ).
+    a( iv_f = 'B1' iv_t = 'UI5-Anwendungen reisen mit allen Dateien, samt Verzeichnisbaum.' ).
+    a( iv_f = '=' iv_t = 'Gelesen und geschrieben wird ueber die UI5-Repository-API, den' ).
+    a( iv_f = '=' iv_t = 'gleichen Weg, den auch ADT nimmt - nicht ueber die BSP-Seiten.' ).
+    a( iv_f = '=' iv_t = 'Deren Inhalt ist nur der XML-Rahmen der Seite, und der' ).
+    a( iv_f = '=' iv_t = 'Verzeichnisbaum steht ohnehin woanders. Der Dateiinhalt geht' ).
+    a( iv_f = '=' iv_t = 'als Base64 ins XML - eine Regel fuer Text und Binaeres. Im' ).
+    a( iv_f = '=' iv_t = 'HTML steht er nie: der HTML-Teil fasst Definitionsdaten nicht' ).
+    a( iv_f = '=' iv_t = 'an, das lesbare Dokument bleibt lesbar. Base64 blaeht um rund' ).
+    a( iv_f = '=' iv_t = 'ein Drittel auf; bei grossen Anwendungen wird das Dokument' ).
     a( iv_f = '=' iv_t = 'entsprechend gross. Startpunkt-Typ: U5.' ).
     a( iv_f = 'B1' iv_t = 'IDoc-Segmenttypen und -Basistypen reisen mit. Ein Segmenttyp' ).
     a( iv_f = '=' iv_t = 'traegt im Katalog TABL, weil SAP dazu eine gleichnamige' ).

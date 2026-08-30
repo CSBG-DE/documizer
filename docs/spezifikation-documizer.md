@@ -685,7 +685,7 @@ Applikationsserver —, über denselben Parser ins Modell, dann die Objekte anle
 | Service-Binding | `CL_SRVB_OBJECT_DATA` über denselben Operator | umgesetzt |
 | IDoc-Segmenttyp | `SEGMENT_READ` / `SEGMENT_CREATE` | umgesetzt |
 | IDoc-Basistyp | `IDOCTYPE_READ` / `IDOCTYPE_CREATE` / `_UPDATE` | umgesetzt |
-| UI5-Anwendung (BSP) | `CL_O2_API_APPLICATION` + `CL_O2_API_PAGES` | umgesetzt |
+| UI5-Anwendung (BSP) | `/UI5/CL_UI5_REP_DT` (`GET_FILE` / `PUT_FILE`, `CREATE_REPOSITORY`) | umgesetzt |
 | Interface, Klasse | `SEO_*_CREATE_COMPLETE` + `IF_OO_CLIF_SOURCE` | umgesetzt |
 | Funktionsgruppe, Funktionsbaustein | `RS_FUNCTION_POOL_INSERT`, `RPY_FUNCTIONMODULE_INSERT` | umgesetzt |
 | Objektdokumentation | `DOCU_UPDATE` | umgesetzt für Report und Datenelement |
@@ -774,28 +774,54 @@ vollständig, nur seine Bezeichnung nicht.
 
 Der Rahmen ist eine BSP-Anwendung, die Dateien sind ihre Seiten — `Component.js`,
 `manifest.json`, `i18n/i18n.properties` und was sonst dazugehört, mit Verzeichnispfad und
-Groß-/Kleinschreibung im Namen. `GET_PAGES` und `GET_LOCAL_MIMES` liefern zusammen die Liste;
-bei einer UI5-App steckt praktisch alles in der zweiten (gemessen: 1 Seite gegen 22 MIMEs).
+Groß-/Kleinschreibung im Namen.
 
-**Der `xstring` ist der Inhalt, nicht die Zeilentabelle.** `GET_PAGE` liefert beides, aber die
-Zeilen sind eine Aufbereitung: bei `annotations/annotation.xml` standen 18 Zeilen gegen 1.142
-Bytes. Es reisen die Bytes, **Base64**-kodiert — eine Regel für Text und Binäres, ohne Raten
-über Kodierungen.
+**Die Seiten-API ist die falsche Ebene, und sie sagt es nicht.** `CL_O2_API_PAGES->GET_PAGE`
+liefert einen `xstring`, der wie der Dateiinhalt aussieht. Er ist es nicht: er enthält den
+XML-Rahmen der Seite (`<?xml …?><so2:page o="0" x="0" …>`), für `Component.js` gemessene
+365 Bytes. Ein Import, der diesen Rahmen zurückschreibt, legt Seiten mit richtigen Namen,
+richtigen Attributen und leerem Inhalt an — 22 davon, ohne eine einzige Fehlermeldung. Beide
+Seiten des Rundlaufs melden dieselbe Bytezahl, weil beide dieselbe Hülle zählen.
+
+Aufgefallen ist es erst an einer anderen Stelle: SE80 fand die importierte Anwendung nicht
+(„Objekt als Teil der Adresse `/SAP/BC/BSP/SAP/…` nicht gefunden"), und die ADT-Ressource
+`/sap/bc/adt/filestore/ui5-bsp/objects/<app>/<datei>/content` antwortete mit 404, obwohl alle
+22 Seiten in `O2PAGDIR` standen.
+
+**Der Weg ist die UI5-Repository-API**, `/UI5/CL_UI5_REP_DT` über `/UI5/IF_UI5_REP_DT`. Sie
+kennt zweierlei, was den O2-Tabellen fehlt:
+
+* **Den Pfadbaum.** Er steht nicht in den Seitennamen, sondern in einer eigenen Zuordnungsdatei
+  `UI5RepositoryPathMapping.xml`; lange Pfade liegen als Seite unter einem Hashnamen
+  (`UI556BC4A63F…`). Ohne Eintrag in dieser Datei existiert eine Datei für die Anwendung nicht —
+  `CHECK_OBJECT_EXISTENCE` fragt genau dort nach.
+* **Den vollständigen Anlegevorgang.** `CREATE_REPOSITORY` erzeugt BSP-Anwendung, MIME-Ordner,
+  ICF-Knoten und Katalogeintrag; `CREATE_FOLDER` und `PUT_FILE` pflegen die Zuordnungsdatei mit.
+
+Der Export geht den Baum ab (`GET_FOLDER_CHILDREN`, `CHECK_IS_FOLDER`) und holt jede Datei über
+`GET_FILE` als `xstring`. Der Import legt erst Ordner (`WAPA_DIR`), dann Dateien (`WAPA_FILE`)
+an, gerahmt von `LOCK` und `UNLOCK`. Es reisen die Bytes, **Base64**-kodiert — eine Regel für
+Text und Binäres, ohne Raten über Kodierungen.
+
+ADT nimmt denselben Weg. Das ist kein Zufall, sondern der Prüfstein: was ADT anzeigen kann, ist
+angekommen.
 
 **Base64 gehört ins XML, nicht ins HTML.** Das ist keine Absicht, die man einhalten muss,
 sondern eine Eigenschaft des Aufbaus: der HTML-Renderer fasst Definitionsdaten grundsätzlich
 nicht an — nachgezählt, null Verweise gegen acht im XML-Renderer. Der `<definition>`-Block
 erreicht das HTML nicht. Wer das ändern will, muss den Renderer aktiv umbauen.
 
-**Was das kostet.** Base64 bläht um rund ein Drittel auf. Die gemessene App hat 22 Dateien und
-108.647 Bytes Inhalt; das Dokument wurde 150.613 Zeichen groß. Eine Freestyle-App mit
+**Was das kostet.** Base64 bläht um rund ein Drittel auf. Die gemessene App hat 21 Dateien und
+100.905 Bytes Inhalt; das Dokument wurde 139.190 Zeichen groß. Eine Freestyle-App mit
 Bibliotheken landet im zweistelligen Megabyte-Bereich. Das ist der bewusst gezahlte Preis
 dafür, die App überhaupt übertragen zu können.
 
-**Eine gemessene Abweichung:** die importierte Datei hat dieselben Bytes, aber eine leere
-Zeilentabelle — der Import setzt nur den `xstring`. Ausgeliefert wird der `xstring`, insofern
-ist die App vollständig; ob eine Anzeige in der Workbench die Zeilen erwartet, ist nicht
-geprüft.
+21 Dateien, nicht 22: die Zuordnungsdatei selbst reist nicht mit. Sie ist Buchhaltung des
+Zielsystems und entsteht dort neu.
+
+**Gemessener Rundlauf.** Export von `ZCONS_TI_M_TASK`, Import unter neuem Namen, Gegenprobe
+über ADT: derselbe Verzeichnisbaum (11 Einträge in der Wurzel, Ordner wie Dateien), und
+`manifest.json` sowie `i18n/i18n.properties` kommen Zeichen für Zeichen zurück.
 
 **IDoc-Segmenttypen** waren die unangenehmste Sorte Lücke: keine, die auffällt, sondern eine,
 die falsch aussieht. Ein Segmenttyp trägt im Objektkatalog **`TABL`**, weil SAP zu jedem

@@ -898,6 +898,7 @@
               <tr><td>Service-Binding (SRVB)</td><td>ja, mit Bindungsart und Services — aber <b>unveröffentlicht</b></td></tr>
               <tr><td>IDoc-Segmenttyp</td><td>ja, als Segment — nicht als Struktur</td></tr>
               <tr><td>IDoc-Basistyp</td><td>ja, mit der ganzen Segmenthierarchie</td></tr>
+              <tr><td>UI5-Anwendung (BSP)</td><td>ja, mit allen Dateien — Inhalt als Base64 im XML</td></tr>
             </tbody>
           </table>
         </div>
@@ -965,6 +966,26 @@
           deshalb den Operator, nicht den Katalog — und jeder Zugriff ist abgefangen, sonst
           reißt eine solche Karteileiche den ganzen Lauf mit.</p>
         </div>
+
+        <h3>UI5-Anwendungen</h3>
+        <p>
+          Der Rahmen ist eine BSP-Anwendung, die Dateien sind ihre Seiten —
+          <code>Component.js</code>, <code>manifest.json</code>,
+          <code>i18n/i18n.properties</code> und was sonst dazugehört, mit Verzeichnispfad und
+          Groß-/Kleinschreibung im Namen. Der Inhalt reist als <b>Base64</b>: eine Regel für
+          Text und Binäres, ohne Raten über Kodierungen.
+        </p>
+        <div class="note">
+          <p><b>Base64 steht im XML, nie im HTML.</b> Das ist keine Absicht, die jemand einhalten
+          muss, sondern eine Eigenschaft des Aufbaus: der HTML-Renderer fasst Definitionsdaten
+          grundsätzlich nicht an. Das lesbare Dokument bleibt lesbar, das Transportformat trägt
+          die Bytes.</p>
+        </div>
+        <p>
+          Der Preis steht dabei fest: Base64 bläht um rund ein Drittel auf. Eine gemessene App
+          mit 22 Dateien und 108.647 Bytes Inhalt ergab ein Dokument von 150.613 Zeichen. Eine
+          Freestyle-App mit Bibliotheken landet im zweistelligen Megabyte-Bereich.
+        </p>
 
         <h3>IDoc</h3>
         <p>

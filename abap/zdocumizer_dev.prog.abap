@@ -1151,6 +1151,8 @@ CLASS lcl_importer DEFINITION.
                                 iv_name    TYPE string.
     METHODS put_srvb  IMPORTING io_chapter TYPE REF TO lcl_chapter
                                 iv_name    TYPE string.
+    METHODS put_wapa  IMPORTING io_chapter TYPE REF TO lcl_chapter
+                                iv_name    TYPE string.
     METHODS put_segm  IMPORTING io_chapter TYPE REF TO lcl_chapter
                                 iv_name    TYPE string.
     METHODS put_idoc  IMPORTING io_chapter TYPE REF TO lcl_chapter
@@ -1263,6 +1265,8 @@ CLASS lcl_importer IMPLEMENTATION.
           put_segm( io_chapter = ls_work-chapter iv_name = ls_work-name ).
         WHEN 'IDOC'.
           put_idoc( io_chapter = ls_work-chapter iv_name = ls_work-name ).
+        WHEN 'WAPA'.
+          put_wapa( io_chapter = ls_work-chapter iv_name = ls_work-name ).
       ENDCASE.
     ENDLOOP.
 
@@ -1336,6 +1340,11 @@ CLASS lcl_importer IMPLEMENTATION.
           CATCH cx_root.
             CLEAR lv_act.
         ENDTRY.
+
+      WHEN 'WAPA'.
+        cl_o2_api_application=>check_exist(
+          EXPORTING p_application = CONV o2applname( is_work-name )
+          IMPORTING p_exists      = lv_act ).
 
       WHEN 'SEGM'.
         DATA lv_vsg TYPE edisegment-segtyp.
@@ -1466,6 +1475,9 @@ CLASS lcl_importer IMPLEMENTATION.
 *       definition. Both at the end, they are the outermost layer.
         WHEN 'SRVD'. lv_seq = 12.
         WHEN 'SRVB'. lv_seq = 13.
+*       Die UI5-Anwendung ganz zuletzt: sie ruft die Services auf,
+*       die vorher entstehen muessen.
+        WHEN 'WAPA'. lv_seq = 14.
         WHEN OTHERS. lv_seq = 99.
       ENDCASE.
 
@@ -1486,6 +1498,7 @@ CLASS lcl_importer IMPLEMENTATION.
         WHEN 'MSAG'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'ARBGB' ).
         WHEN 'SEGM'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'SEGTYP' ).
         WHEN 'IDOC'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'IDOCTYP' ).
+        WHEN 'WAPA'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'APPLNAME' ).
         WHEN 'BDEF' OR 'SRVD' OR 'DDLX' OR 'SRVB'.
           lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'NAME' ).
       ENDCASE.
@@ -1559,6 +1572,13 @@ CLASS lcl_importer IMPLEMENTATION.
         lv_idt = iv_name.
         SELECT SINGLE @abap_true FROM edbas
           WHERE idoctyp = @lv_idt INTO @rv_flag.
+
+      WHEN 'WAPA'.
+*       Nicht der Katalog, sondern die API - auf S4H stehen
+*       WAPA-Eintraege ohne Anwendung dahinter.
+        cl_o2_api_application=>check_exist(
+          EXPORTING p_application = CONV o2applname( iv_name )
+          IMPORTING p_exists      = rv_flag ).
 
       WHEN 'BDEF' OR 'SRVD' OR 'DDLX' OR 'SRVB'.
 *       Der Katalog taugt hier nicht als Nachweis - auf S4H stehen
@@ -2228,6 +2248,196 @@ CLASS lcl_importer IMPLEMENTATION.
 
     put_cua( io_chapter = io_chapter iv_prog = lv_prog ).
     put_docu( io_chapter = io_chapter iv_kind = 'PROG' iv_name = iv_name ).
+
+  ENDMETHOD.
+
+  METHOD put_wapa.
+
+*   Die BSP-Anwendung anlegen, dann Datei fuer Datei ihre Seiten. Beide
+*   APIs kennen P_SUPPRESS_DIALOG - ohne das waere der Weg fuer einen
+*   unbeaufsichtigten Lauf so unbrauchbar wie RPY_MESSAGE_ID_INSERT.
+    DATA ls_attr  TYPE o2applattr.
+    DATA lt_nodes TYPE o2applnode_table.
+    DATA lt_graph TYPE o2applgrap_table.
+    DATA lo_app   TYPE REF TO cl_o2_api_application.
+    DATA lv_appl  TYPE o2applname.
+    DATA lv_corr  TYPE trkorr.
+    DATA lv_dev   TYPE devclass.
+
+    DATA(lv_ex) = exists( iv_kind = 'WAPA' iv_name = iv_name ).
+    IF lv_ex = abap_true AND mv_over = abap_false.
+      log( iv_kind = 'WAPA' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+           iv_text   = lcl_t=>ui( d = `existiert bereits` e = `already exists` ) ).
+      RETURN.
+    ENDIF.
+
+    DATA(lt_rows) = io_chapter->get_defrows( ).
+    DELETE lt_rows WHERE tag <> 'WAPA_FILE'.
+    IF lt_rows IS INITIAL.
+      log( iv_kind = 'WAPA' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `nicht moeglich` e = `not possible` )
+           iv_text   = lcl_t=>ui( d = `keine Dateien im Dokument`
+                                  e = `no files in the document` ) ).
+      RETURN.
+    ENDIF.
+
+    IF mv_test = abap_true.
+      DATA lv_bytes TYPE i.
+      LOOP AT lt_rows INTO DATA(ls_cnt).
+        lv_bytes = lv_bytes + lcl_attr=>value( it_attrs = ls_cnt-attrs
+                                               iv_name  = 'SIZE' ).
+      ENDLOOP.
+      log( iv_kind = 'WAPA' iv_name = iv_name
+           iv_action = COND #( WHEN lv_ex = abap_true
+                               THEN lcl_t=>ui( d = `wuerde geaendert` e = `would change` )
+                               ELSE lcl_t=>ui( d = `wuerde angelegt` e = `would create` ) )
+           iv_text   = |{ lines( lt_rows ) } { lcl_t=>ui( d = `Dateien` e = `files` ) }, | &&
+                       |{ lv_bytes } { lcl_t=>ui( d = `Bytes` e = `bytes` ) }| ).
+      RETURN.
+    ENDIF.
+
+    lv_appl = iv_name.
+    lv_dev  = mv_pack.
+    IF mv_pack NP '$*'.
+      lv_corr = mv_tr.
+    ENDIF.
+
+    lcl_attr=>to_struct( EXPORTING it_attrs = io_chapter->get_defhead( )
+                         CHANGING  cs_data  = ls_attr ).
+    ls_attr-applname = lv_appl.
+    ls_attr-devclass = lv_dev.
+    IF ls_attr-origlang IS INITIAL.
+      ls_attr-origlang = sy-langu.
+    ENDIF.
+
+    IF lv_ex = abap_false.
+      cl_o2_api_application=>create_new(
+        EXPORTING  p_application_data      = ls_attr
+                   p_nodes                 = lt_nodes
+                   p_navgraph              = lt_graph
+                   p_suppress_dialog       = abap_true
+        IMPORTING  p_application           = lo_app
+        EXCEPTIONS object_already_existing = 1
+                   object_just_created     = 2
+                   not_authorized          = 3
+                   undefined_name          = 4
+                   author_not_existing     = 5
+                   action_cancelled        = 6
+                   error_occured           = 7
+                   invalid_parameter       = 8
+                   OTHERS                  = 9 ).
+      IF sy-subrc <> 0.
+        log( iv_kind = 'WAPA' iv_name = iv_name
+             iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+             iv_text   = |CREATE_NEW subrc { sy-subrc }| ).
+        RETURN.
+      ENDIF.
+    ELSE.
+      cl_o2_api_application=>load(
+        EXPORTING  p_application_name  = lv_appl
+        IMPORTING  p_application       = lo_app
+        EXCEPTIONS OTHERS              = 1 ).
+      IF sy-subrc <> 0.
+        RETURN.
+      ENDIF.
+    ENDIF.
+
+    lo_app->save( EXPORTING  p_suppress_dialog   = abap_true
+                  CHANGING   p_transport_request = lv_corr
+                  EXCEPTIONS OTHERS              = 1 ).
+    IF sy-subrc <> 0.
+      log( iv_kind = 'WAPA' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+           iv_text   = |SAVE subrc { sy-subrc }| ).
+      RETURN.
+    ENDIF.
+
+    DATA lv_ok   TYPE i.
+    DATA lv_bad  TYPE i.
+    DATA lv_sum  TYPE i.
+
+    LOOP AT lt_rows INTO DATA(ls_row).
+      DATA ls_pat TYPE o2pagattr.
+      DATA lo_pg  TYPE REF TO cl_o2_api_pages.
+      DATA lt_cnt TYPE o2pageline_table.
+      DATA lv_xml TYPE xstring.
+
+      CLEAR: ls_pat, lo_pg, lt_cnt, lv_xml.
+      lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs
+                           CHANGING  cs_data  = ls_pat ).
+      ls_pat-applname = lv_appl.
+      ls_pat-devclass = lv_dev.
+      CLEAR: ls_pat-author,  ls_pat-createdon, ls_pat-changedby,
+             ls_pat-changedon, ls_pat-gendate, ls_pat-gentime.
+      IF ls_pat-pagekey IS INITIAL.
+        CONTINUE.
+      ENDIF.
+
+      TRY.
+          lv_xml = cl_web_http_utility=>decode_x_base64( ls_row-src ).
+        CATCH cx_root.
+          lv_bad = lv_bad + 1.
+          CONTINUE.
+      ENDTRY.
+      IF lv_xml IS INITIAL.
+        lv_bad = lv_bad + 1.
+        CONTINUE.
+      ENDIF.
+
+      cl_o2_api_pages=>create_new_page(
+        EXPORTING  p_pageattrs           = ls_pat
+                   p_with_check          = space
+        IMPORTING  p_page                = lo_pg
+        EXCEPTIONS object_already_exists = 1
+                   invalid_name          = 2
+                   error_occured         = 3
+                   o2appl_not_existing   = 4
+                   OTHERS                = 5 ).
+      IF sy-subrc <> 0 OR lo_pg IS NOT BOUND.
+        lv_bad = lv_bad + 1.
+        CONTINUE.
+      ENDIF.
+
+*     Der Inhalt geht als xstring hinein, so wie er herauskam. Die
+*     Zeilentabelle bleibt leer - sie ist eine Ansicht, keine Quelle.
+      lo_pg->set_page( EXPORTING  p_content    = lt_cnt
+                                  p_xml_source = lv_xml
+                       EXCEPTIONS OTHERS       = 1 ).
+      IF sy-subrc <> 0.
+        lv_bad = lv_bad + 1.
+        CONTINUE.
+      ENDIF.
+
+      lo_pg->save( EXPORTING  p_save_active = abap_true
+                   EXCEPTIONS OTHERS        = 1 ).
+      IF sy-subrc <> 0.
+        lv_bad = lv_bad + 1.
+        CONTINUE.
+      ENDIF.
+
+      lv_ok  = lv_ok + 1.
+      lv_sum = lv_sum + xstrlen( lv_xml ).
+    ENDLOOP.
+
+    IF mv_act = abap_true.
+      cl_o2_api_application=>activate(
+        EXPORTING  composite_name = CONV seu_objkey( lv_appl )
+        EXCEPTIONS not_found      = 1
+                   error_occured  = 2
+                   OTHERS         = 3 ).
+    ENDIF.
+
+    log( iv_kind = 'WAPA' iv_name = iv_name
+         iv_action = COND #( WHEN lv_ex = abap_true
+                             THEN lcl_t=>ui( d = `geaendert` e = `changed` )
+                             ELSE lcl_t=>ui( d = `angelegt` e = `created` ) )
+         iv_text   = |{ lv_ok } { lcl_t=>ui( d = `Dateien` e = `files` ) }, | &&
+                     |{ lv_sum } { lcl_t=>ui( d = `Bytes` e = `bytes` ) }| &&
+                     COND #( WHEN lv_bad > 0
+                             THEN |, { lv_bad } { lcl_t=>ui( d = `nicht angelegt`
+                                                             e = `not created` ) }|
+                             ELSE `` ) ).
 
   ENDMETHOD.
 
@@ -4307,6 +4517,10 @@ CLASS lcl_collector_dev DEFINITION.
       IMPORTING iv_name      TYPE sobj_name
                 io_chapter   TYPE REF TO lcl_chapter
       RETURNING VALUE(rv_ok) TYPE abap_bool.
+    METHODS def_wapa
+      IMPORTING iv_name      TYPE sobj_name
+                io_chapter   TYPE REF TO lcl_chapter
+      RETURNING VALUE(rv_ok) TYPE abap_bool.
     METHODS def_msag
       IMPORTING iv_name    TYPE sobj_name
                 io_chapter TYPE REF TO lcl_chapter
@@ -4561,6 +4775,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       WHEN 'SRVB'. lv_ok = def_srvb( iv_name = iv_name io_chapter = io_chapter ).
       WHEN 'SEGM'. lv_ok = def_segm( iv_name = iv_name io_chapter = io_chapter ).
       WHEN 'IDOC'. lv_ok = def_idoc( iv_name = iv_name io_chapter = io_chapter ).
+      WHEN 'WAPA'. lv_ok = def_wapa( iv_name = iv_name io_chapter = io_chapter ).
       WHEN OTHERS.
         RETURN.
     ENDCASE.
@@ -4815,6 +5030,134 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     io_chapter->set_definition( iv_kind = CONV string( iv_type )
                                 it_head = lt_head ).
     io_chapter->set_defsource( lv_src ).
+    rv_ok = abap_true.
+
+  ENDMETHOD.
+
+  METHOD def_wapa.
+
+*   Eine UI5-Anwendung. Der Rahmen ist eine BSP-Anwendung, die Dateien
+*   sind ihre Seiten - Component.js, manifest.json, i18n/i18n.properties
+*   und was sonst dazugehoert, samt Verzeichnispfad im Namen.
+*
+*   Gelesen wird der xstring, nicht die Zeilentabelle. GET_PAGE liefert
+*   beides, aber die Zeilen sind eine Aufbereitung: bei der ersten
+*   gemessenen Datei standen 18 Zeilen gegen 1.142 Bytes. Der xstring
+*   ist der Inhalt, alles andere ist eine Ansicht davon. Er reist als
+*   Base64 - eine Regel fuer Text und Binaeres gleichermassen, ohne
+*   Raten ueber Kodierungen. Im HTML taucht er nie auf: der
+*   HTML-Renderer fasst Definitionsdaten grundsaetzlich nicht an.
+    DATA lo_app   TYPE REF TO cl_o2_api_application.
+    DATA ls_attr  TYPE o2applattr.
+    DATA lt_mimes TYPE o2pagename_table.
+    DATA lt_pages TYPE o2pagename_table.
+    DATA lv_appl  TYPE o2applname.
+
+    lv_appl = iv_name.
+*   Ein Katalogeintrag ist auch hier kein Beweis: auf S4H stehen
+*   WAPA-Eintraege ohne Anwendung dahinter.
+    cl_o2_api_application=>load(
+      EXPORTING  p_application_name  = lv_appl
+      IMPORTING  p_application       = lo_app
+      EXCEPTIONS object_not_existing = 1
+                 permission_failure  = 2
+                 error_occured       = 3
+                 OTHERS              = 4 ).
+    IF sy-subrc <> 0 OR lo_app IS NOT BOUND.
+      RETURN.
+    ENDIF.
+
+    lo_app->get_attributes( IMPORTING  p_attributes = ls_attr
+                            EXCEPTIONS OTHERS       = 1 ).
+    IF sy-subrc <> 0 OR ls_attr-applname IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    DATA(lt_head) = lcl_attr=>from_struct( ls_attr ).
+*   Wer sie angelegt hat, wann, in welchem Paket und in welcher Fassung
+*   gehoert dem Quellsystem.
+    DELETE lt_head WHERE name = 'AUTHOR'    OR name = 'CREATEDON'
+                      OR name = 'CHANGEDBY' OR name = 'CHANGEDON'
+                      OR name = 'DEVCLASS'  OR name = 'VERSION'
+                      OR name = 'MODIFLANG'.
+    io_chapter->set_definition( iv_kind = 'WAPA' it_head = lt_head ).
+
+*   Seiten und lokale MIME-Objekte sind beides Seiten der Anwendung;
+*   bei einer UI5-App steckt praktisch alles in der zweiten Liste.
+    lo_app->get_pages( IMPORTING p_pages = lt_pages EXCEPTIONS OTHERS = 1 ).
+    lo_app->get_local_mimes( IMPORTING p_local_mimes = lt_mimes
+                             EXCEPTIONS OTHERS = 1 ).
+    LOOP AT lt_mimes INTO DATA(ls_mime).
+      READ TABLE lt_pages TRANSPORTING NO FIELDS
+           WITH KEY pagekey = ls_mime-pagekey.
+      IF sy-subrc <> 0.
+        APPEND ls_mime TO lt_pages.
+      ENDIF.
+    ENDLOOP.
+
+    DATA lv_total TYPE i.
+    SORT lt_pages BY pagename.
+
+    LOOP AT lt_pages INTO DATA(ls_pg).
+      DATA ls_key TYPE o2pagkey.
+      DATA lo_pg  TYPE REF TO cl_o2_api_pages.
+      DATA ls_pat TYPE o2pagattr.
+      DATA lt_cnt TYPE o2pageline_table.
+      DATA lv_xml TYPE xstring.
+
+      CLEAR: ls_key, lo_pg, ls_pat, lt_cnt, lv_xml.
+      ls_key-applname = ls_pg-applname.
+      ls_key-pagekey  = ls_pg-pagekey.
+
+      cl_o2_api_pages=>load(
+        EXPORTING  p_pagekey            = ls_key
+        IMPORTING  p_page               = lo_pg
+        EXCEPTIONS object_not_existing  = 1
+                   version_not_existing = 2
+                   OTHERS               = 3 ).
+      IF sy-subrc <> 0 OR lo_pg IS NOT BOUND.
+        CONTINUE.
+      ENDIF.
+
+      lo_pg->get_attrs( IMPORTING p_attrs = ls_pat EXCEPTIONS OTHERS = 1 ).
+      lo_pg->get_page( IMPORTING  p_content    = lt_cnt
+                                  p_xml_source = lv_xml
+                       EXCEPTIONS OTHERS       = 1 ).
+      IF sy-subrc <> 0 OR lv_xml IS INITIAL.
+        CONTINUE.
+      ENDIF.
+
+      DATA lv_size TYPE i.
+      lv_size  = xstrlen( lv_xml ).
+      lv_total = lv_total + lv_size.
+
+*     Die ganzen Seitenattribute, nicht eine handgepflegte Auswahl:
+*     Pufferung, Kompression, Zustand und Lebensdauer gehoeren zur
+*     Datei so gut wie ihr Name. Was das Quellsystem betrifft, faellt
+*     weg wie ueberall sonst.
+      DATA(lt_fa) = lcl_attr=>from_struct( ls_pat ).
+      DELETE lt_fa WHERE name = 'AUTHOR'     OR name = 'CREATEDON'
+                      OR name = 'CHANGEDBY'  OR name = 'CHANGEDON'
+                      OR name = 'GENDATE'    OR name = 'GENTIME'
+                      OR name = 'CHANGETIME' OR name = 'DEVCLASS'
+                      OR name = 'VERSION'    OR name = 'APPLNAME'.
+*     Schluessel und Dateiname kommen aus der Seitenliste - dort stehen
+*     sie sicher, im Attributsatz nicht zwingend.
+      DELETE lt_fa WHERE name = 'PAGEKEY' OR name = 'PAGENAME'.
+      INSERT VALUE ty_attr( name = 'PAGENAME' value = ls_pg-pagename ) INTO lt_fa INDEX 1.
+      INSERT VALUE ty_attr( name = 'PAGEKEY'  value = ls_pg-pagekey )  INTO lt_fa INDEX 1.
+      APPEND VALUE ty_attr( name = 'SIZE' value = |{ lv_size }| ) TO lt_fa.
+
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag   = 'WAPA_FILE'
+        attrs = lt_fa
+        src   = cl_web_http_utility=>encode_x_base64( lv_xml ) ) ).
+    ENDLOOP.
+
+    IF lv_total = 0.
+      RETURN.
+    ENDIF.
+
     rv_ok = abap_true.
 
   ENDMETHOD.
@@ -6984,6 +7327,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *     erkennt es dort und behandelt es als Segment.
       WHEN 'IS'. rs_obj = VALUE #( type = 'TABL' name = lv_name ).
       WHEN 'IT'. rs_obj = VALUE #( type = 'IDOC' name = lv_name ).
+      WHEN 'U5'. rs_obj = VALUE #( type = 'WAPA' name = lv_name ).
       WHEN 'C'.
 *       A class and an interface share one input field, as in SE80. Which
 *       of the two it is comes from the catalog.
@@ -7168,7 +7512,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       WHERE pgmid = 'R3TR'
         AND object IN ( 'CLAS', 'INTF', 'TABL', 'VIEW', 'DTEL', 'DOMA',
                         'TTYP', 'DDLS', 'PROG', 'FUGR', 'MSAG', 'SHLP',
-                        'ENQU', 'BDEF', 'SRVD', 'SRVB', 'DDLX', 'IDOC' )
+                        'ENQU', 'BDEF', 'SRVD', 'SRVB', 'DDLX', 'IDOC', 'WAPA' )
         AND obj_name = @lv_obj_name
       INTO @DATA(lv_type).
     IF sy-subrc = 0.
@@ -7436,7 +7780,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
           WHERE pgmid = 'R3TR'
             AND object IN ( 'CLAS', 'INTF', 'TABL', 'VIEW', 'DTEL', 'DOMA',
                             'TTYP', 'DDLS', 'PROG', 'FUGR', 'MSAG', 'SHLP',
-                            'ENQU', 'BDEF', 'SRVD', 'SRVB', 'DDLX', 'IDOC' )
+                            'ENQU', 'BDEF', 'SRVD', 'SRVB', 'DDLX', 'IDOC', 'WAPA' )
             AND obj_name = @lt_name-table_line
           INTO TABLE @DATA(lt_cat).
         LOOP AT lt_cat INTO DATA(ls_cat).
@@ -8136,7 +8480,8 @@ FORM stype_list CHANGING ct_list TYPE ty_stypes.
       ( code = 'SD' text = 'Service-Definition' )
       ( code = 'SB' text = 'Service-Binding' )
       ( code = 'IS' text = 'IDoc-Segmenttyp' )
-      ( code = 'IT' text = 'IDoc-Basistyp' ) ).
+      ( code = 'IT' text = 'IDoc-Basistyp' )
+      ( code = 'U5' text = 'UI5-Anwendung (BSP)' ) ).
   ELSE.
     ct_list = VALUE #(
       ( code = 'K'  text = 'Package' )
@@ -8154,7 +8499,8 @@ FORM stype_list CHANGING ct_list TYPE ty_stypes.
       ( code = 'SD' text = 'Service definition' )
       ( code = 'SB' text = 'Service binding' )
       ( code = 'IS' text = 'IDoc segment type' )
-      ( code = 'IT' text = 'IDoc basic type' ) ).
+      ( code = 'IT' text = 'IDoc basic type' )
+      ( code = 'U5' text = 'UI5 application (BSP)' ) ).
   ENDIF.
 
 ENDFORM.
@@ -8269,6 +8615,7 @@ FORM f4_sval.
         WHEN 'SB'. lv_obj = 'SRVB'.
         WHEN 'IS'. lv_obj = 'TABL'.
         WHEN 'IT'. lv_obj = 'IDOC'.
+        WHEN 'U5'. lv_obj = 'WAPA'.
         WHEN OTHERS. lv_obj = 'PROG'.
       ENDCASE.
       SELECT obj_name AS name, devclass AS text

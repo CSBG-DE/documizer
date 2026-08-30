@@ -270,6 +270,12 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'angelegt, auch wenn es im Quellsystem veroeffentlicht war. Ein' ).
     a( iv_f = '=' iv_t = 'Binding anzulegen ist eine Entwicklungsaufgabe, einen Dienst' ).
     a( iv_f = '=' iv_t = 'nach aussen bereitzustellen eine andere.' ).
+    a( iv_f = 'B1' iv_t = 'UI5-Anwendungen reisen mit allen Dateien. Der Inhalt geht als' ).
+    a( iv_f = '=' iv_t = 'Base64 ins XML - eine Regel fuer Text und Binaeres. Im HTML' ).
+    a( iv_f = '=' iv_t = 'steht er nie: der HTML-Teil fasst Definitionsdaten nicht an,' ).
+    a( iv_f = '=' iv_t = 'das lesbare Dokument bleibt lesbar. Base64 blaeht um rund ein' ).
+    a( iv_f = '=' iv_t = 'Drittel auf; bei grossen Anwendungen wird das Dokument' ).
+    a( iv_f = '=' iv_t = 'entsprechend gross. Startpunkt-Typ: U5.' ).
     a( iv_f = 'B1' iv_t = 'IDoc-Segmenttypen und -Basistypen reisen mit. Ein Segmenttyp' ).
     a( iv_f = '=' iv_t = 'traegt im Katalog TABL, weil SAP dazu eine gleichnamige' ).
     a( iv_f = '=' iv_t = 'Struktur erzeugt; als Struktur importiert entstuende etwas mit' ).

@@ -322,7 +322,7 @@ Pseudotyp `FUNC`: Kurztext aus `TFTIT`, Doku über Dokuklasse `FU`, Schnittstell
 `P_LOCAL` (lokale Pakete einbeziehen). Typen: `K` Paket, `P` Programm, `C` Klasse/Interface,
 `FF` Baustein, `F` Funktionsgruppe, `T` Tabelle, `V` View, `D` Datenelement, `DO` Domäne,
 `W` CDS View, `MX` Metadata Extension, `BD` Verhaltensdefinition, `SD` Service-Definition,
-`SB` Service-Binding, `IS` IDoc-Segmenttyp, `IT` IDoc-Basistyp.
+`SB` Service-Binding, `IS` IDoc-Segmenttyp, `IT` IDoc-Basistyp, `U5` UI5-Anwendung.
 
 **Block: Umfang**
 
@@ -685,6 +685,7 @@ Applikationsserver —, über denselben Parser ins Modell, dann die Objekte anle
 | Service-Binding | `CL_SRVB_OBJECT_DATA` über denselben Operator | umgesetzt |
 | IDoc-Segmenttyp | `SEGMENT_READ` / `SEGMENT_CREATE` | umgesetzt |
 | IDoc-Basistyp | `IDOCTYPE_READ` / `IDOCTYPE_CREATE` / `_UPDATE` | umgesetzt |
+| UI5-Anwendung (BSP) | `CL_O2_API_APPLICATION` + `CL_O2_API_PAGES` | umgesetzt |
 | Interface, Klasse | `SEO_*_CREATE_COMPLETE` + `IF_OO_CLIF_SOURCE` | umgesetzt |
 | Funktionsgruppe, Funktionsbaustein | `RS_FUNCTION_POOL_INSERT`, `RPY_FUNCTIONMODULE_INSERT` | umgesetzt |
 | Objektdokumentation | `DOCU_UPDATE` | umgesetzt für Report und Datenelement |
@@ -768,6 +769,33 @@ ist eine andere, und die sollte niemand nebenbei treffen.
 Metadatensatz beim Lesen der aktiven Fassung auch nicht — ADT zeigt sie, holt sie also
 woanders her. Beim Import tritt der Objektname an ihre Stelle. Das Binding ist damit
 vollständig, nur seine Bezeichnung nicht.
+
+**UI5-Anwendungen** sind der einzige Objekttyp, bei dem XML und HTML bewusst auseinanderlaufen.
+
+Der Rahmen ist eine BSP-Anwendung, die Dateien sind ihre Seiten — `Component.js`,
+`manifest.json`, `i18n/i18n.properties` und was sonst dazugehört, mit Verzeichnispfad und
+Groß-/Kleinschreibung im Namen. `GET_PAGES` und `GET_LOCAL_MIMES` liefern zusammen die Liste;
+bei einer UI5-App steckt praktisch alles in der zweiten (gemessen: 1 Seite gegen 22 MIMEs).
+
+**Der `xstring` ist der Inhalt, nicht die Zeilentabelle.** `GET_PAGE` liefert beides, aber die
+Zeilen sind eine Aufbereitung: bei `annotations/annotation.xml` standen 18 Zeilen gegen 1.142
+Bytes. Es reisen die Bytes, **Base64**-kodiert — eine Regel für Text und Binäres, ohne Raten
+über Kodierungen.
+
+**Base64 gehört ins XML, nicht ins HTML.** Das ist keine Absicht, die man einhalten muss,
+sondern eine Eigenschaft des Aufbaus: der HTML-Renderer fasst Definitionsdaten grundsätzlich
+nicht an — nachgezählt, null Verweise gegen acht im XML-Renderer. Der `<definition>`-Block
+erreicht das HTML nicht. Wer das ändern will, muss den Renderer aktiv umbauen.
+
+**Was das kostet.** Base64 bläht um rund ein Drittel auf. Die gemessene App hat 22 Dateien und
+108.647 Bytes Inhalt; das Dokument wurde 150.613 Zeichen groß. Eine Freestyle-App mit
+Bibliotheken landet im zweistelligen Megabyte-Bereich. Das ist der bewusst gezahlte Preis
+dafür, die App überhaupt übertragen zu können.
+
+**Eine gemessene Abweichung:** die importierte Datei hat dieselben Bytes, aber eine leere
+Zeilentabelle — der Import setzt nur den `xstring`. Ausgeliefert wird der `xstring`, insofern
+ist die App vollständig; ob eine Anzeige in der Workbench die Zeilen erwartet, ist nicht
+geprüft.
 
 **IDoc-Segmenttypen** waren die unangenehmste Sorte Lücke: keine, die auffällt, sondern eine,
 die falsch aussieht. Ein Segmenttyp trägt im Objektkatalog **`TABL`**, weil SAP zu jedem

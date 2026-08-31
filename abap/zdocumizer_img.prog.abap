@@ -173,6 +173,10 @@ CLASS lcl_object DEFINITION.
     METHODS get_rows      RETURNING VALUE(rt_rows)      TYPE ty_rows.
     METHODS get_row_count RETURNING VALUE(rv_row_count) TYPE i.
     METHODS get_truncated RETURNING VALUE(rv_truncated) TYPE abap_bool.
+    METHODS set_object    IMPORTING iv_objtype TYPE string
+                                    iv_objname TYPE string.
+    METHODS get_objtype   RETURNING VALUE(rv_type) TYPE string.
+    METHODS get_objname   RETURNING VALUE(rv_name) TYPE string.
     METHODS set_note      IMPORTING iv_note   TYPE string.
     METHODS get_note      RETURNING VALUE(rv_note)   TYPE string.
     METHODS set_filter    IMPORTING iv_filter TYPE string.
@@ -189,6 +193,13 @@ CLASS lcl_object DEFINITION.
     DATA mv_truncated TYPE abap_bool.
     DATA mv_note      TYPE string.
     DATA mv_filter    TYPE string.
+*   Das Pflegeobjekt der IMG-Aktivitaet - Sicht, Sichtcluster oder
+*   Tabelle. mv_name traegt die aufgeloeste Basistabelle; wer den
+*   Pflegeapparat nachziehen will, braucht aber das Objekt selbst.
+*   Frueher stand es nur im Prosa-Hinweis, und der wechselt die
+*   Sprache.
+    DATA mv_objtype   TYPE string.
+    DATA mv_objname   TYPE string.
     DATA mt_trans     TYPE ty_transports.
 ENDCLASS.
 
@@ -230,6 +241,16 @@ CLASS lcl_object IMPLEMENTATION.
   ENDMETHOD.
   METHOD get_truncated.
     rv_truncated = mv_truncated.
+  ENDMETHOD.
+  METHOD set_object.
+    mv_objtype = iv_objtype.
+    mv_objname = iv_objname.
+  ENDMETHOD.
+  METHOD get_objtype.
+    rv_type = mv_objtype.
+  ENDMETHOD.
+  METHOD get_objname.
+    rv_name = mv_objname.
   ENDMETHOD.
   METHOD set_note.
     mv_note = iv_note.
@@ -548,6 +569,8 @@ CLASS lcl_renderer_xml IMPLEMENTATION.
     mo_writer->write_attribute( name = 'tcode'  value = io_object->get_tcode( ) ).
     mo_writer->write_attribute( name = 'filter' value = io_object->get_filter( ) ).
     mo_writer->write_attribute( name = 'note'   value = io_object->get_note( ) ).
+    mo_writer->write_attribute( name = 'objtype' value = io_object->get_objtype( ) ).
+    mo_writer->write_attribute( name = 'objname' value = io_object->get_objname( ) ).
 
     mo_writer->open_element( name = 'structure' ).
     LOOP AT io_object->get_fields( ) INTO DATA(ls_field).
@@ -725,19 +748,32 @@ CLASS lcl_parser_xml IMPLEMENTATION.
               DATA lv_otype TYPE string.
               DATA lv_oname TYPE string.
               DATA lv_otcod TYPE string.
-              CLEAR: lv_otype, lv_oname, lv_otcod.
+              DATA lv_ofilt TYPE string.
+              DATA lv_onote TYPE string.
+              DATA lv_optyp TYPE string.
+              DATA lv_opnam TYPE string.
+*             Alle Attribute zuruecksetzen, nicht nur drei. Ein Objekt
+*             ohne 'note' erbte sonst den Hinweis des vorigen - das ist
+*             heute folgenlos, weil der Renderer immer alle schreibt,
+*             aber es ist eine Falle, die auf ihren Tag wartet.
+              CLEAR: lv_otype, lv_oname, lv_otcod,
+                     lv_ofilt, lv_onote, lv_optyp, lv_opnam.
               LOOP AT lt_attr INTO lo_attr.
                 CASE lo_attr->qname-name.
-                  WHEN 'type'.  lv_otype = lo_attr->get_value( ).
-                  WHEN 'name'.  lv_oname = lo_attr->get_value( ).
-                  WHEN 'tcode'. lv_otcod = lo_attr->get_value( ).
-                  WHEN 'filter'. DATA(lv_ofilt) = lo_attr->get_value( ).
-                  WHEN 'note'.   DATA(lv_onote) = lo_attr->get_value( ).
+                  WHEN 'type'.    lv_otype = lo_attr->get_value( ).
+                  WHEN 'name'.    lv_oname = lo_attr->get_value( ).
+                  WHEN 'tcode'.   lv_otcod = lo_attr->get_value( ).
+                  WHEN 'filter'.  lv_ofilt = lo_attr->get_value( ).
+                  WHEN 'note'.    lv_onote = lo_attr->get_value( ).
+                  WHEN 'objtype'. lv_optyp = lo_attr->get_value( ).
+                  WHEN 'objname'. lv_opnam = lo_attr->get_value( ).
                 ENDCASE.
               ENDLOOP.
               lo_object = NEW lcl_object( iv_type  = lv_otype
                                           iv_name  = lv_oname
                                           iv_tcode = lv_otcod ).
+              lo_object->set_object( iv_objtype = lv_optyp
+                                     iv_objname = lv_opnam ).
               lo_object->set_filter( lv_ofilt ).
               lo_object->set_note( lv_onote ).
               CLEAR: lv_ofilt, lv_onote.
@@ -1478,6 +1514,7 @@ CLASS lcl_cust IMPLEMENTATION.
                                       iv_tcode = iv_tcode ).
       lo_none->set_note( lcl_t=>t( d = 'Kein lesbares Datenobjekt hinterlegt.'
                                    e = 'No readable data object assigned.' ) ).
+      lo_none->set_object( iv_objtype = iv_type iv_objname = iv_name ).
       APPEND lo_none TO rt_objects.
       RETURN.
     ENDIF.
@@ -1487,6 +1524,13 @@ CLASS lcl_cust IMPLEMENTATION.
       DATA(lo_obj) = NEW lcl_object( iv_type  = iv_type
                                      iv_name  = lv_tab
                                      iv_tcode = iv_tcode ).
+
+*     Das Pflegeobjekt selbst, nicht nur die aufgeloeste Basistabelle.
+*     Wer den Pflegeapparat im Zielsystem nachziehen will, braucht die
+*     Sicht - und die stand bisher nur im Hinweistext, der die Sprache
+*     wechselt.
+      lo_obj->set_object( iv_objtype = iv_type
+                          iv_objname = iv_name ).
 
       IF lv_tab <> iv_name.
         lo_obj->set_note( |{ lcl_t=>t( d = `Basistabelle aus` e = `Base table from` ) } { iv_name }.| ).
@@ -2979,6 +3023,10 @@ CLASS lcl_bcset DEFINITION.
       IMPORTING iv_tab    TYPE clike
                 iv_action TYPE string
                 iv_text   TYPE string.
+    METHODS want
+      IMPORTING iv_type TYPE string
+                iv_name TYPE string
+                is_ref  TYPE ty_reference.
 ENDCLASS.
 
 CLASS lcl_bcset IMPLEMENTATION.
@@ -3003,6 +3051,75 @@ CLASS lcl_bcset IMPLEMENTATION.
 
   METHOD get_missing.
     rt_miss = mt_miss.
+  ENDMETHOD.
+
+  METHOD want.
+
+*   Doppelte Anforderungen bringen dem Entwickler-Report nichts - er
+*   entdoppelt zwar selbst, aber eine Liste, die dreimal dasselbe
+*   verlangt, liest sich wie ein Fehler.
+    IF iv_name IS INITIAL.
+      RETURN.
+    ENDIF.
+    READ TABLE mt_miss TRANSPORTING NO FIELDS
+         WITH KEY type = iv_type name = iv_name.
+    IF sy-subrc = 0.
+      RETURN.
+    ENDIF.
+
+*   Angefordert wird nur, was hier wirklich fehlt. Der erste Lauf
+*   verlangte SM30 - eine SAP-Standardtransaktion, die in jedem System
+*   steht. Eine Fehlliste, die Vorhandenes anfordert, kostet den
+*   Entwickler im Quellsystem Zeit und Vertrauen.
+    DATA lv_tab  TYPE tabname.
+    DATA lv_view TYPE dd25l-viewname.
+    DATA lv_vcl  TYPE vcldir-vclname.
+    DATA lv_tcod TYPE tstc-tcode.
+
+    CASE iv_type.
+
+      WHEN 'TABL'.
+        lv_tab = iv_name.
+        SELECT SINGLE @abap_true FROM dd02l
+          WHERE tabname = @lv_tab AND as4local = 'A'
+          INTO @DATA(lv_e1).
+        IF lv_e1 = abap_true.
+          RETURN.
+        ENDIF.
+
+      WHEN 'VIEW'.
+        lv_view = iv_name.
+        SELECT SINGLE @abap_true FROM dd25l
+          WHERE viewname = @lv_view AND as4local = 'A'
+          INTO @DATA(lv_e2).
+        IF lv_e2 = abap_true.
+          RETURN.
+        ENDIF.
+
+      WHEN 'VCLS'.
+        lv_vcl = iv_name.
+        SELECT SINGLE @abap_true FROM vcldir
+          WHERE vclname = @lv_vcl
+          INTO @DATA(lv_e3).
+        IF lv_e3 = abap_true.
+          RETURN.
+        ENDIF.
+
+      WHEN 'TRAN'.
+        lv_tcod = iv_name.
+        SELECT SINGLE @abap_true FROM tstc
+          WHERE tcode = @lv_tcod
+          INTO @DATA(lv_e4).
+        IF lv_e4 = abap_true.
+          RETURN.
+        ENDIF.
+
+    ENDCASE.
+
+    APPEND VALUE ty_miss( type     = iv_type
+                          name     = iv_name
+                          activity = is_ref-activity ) TO mt_miss.
+
   ENDMETHOD.
 
   METHOD get_tables.
@@ -3106,13 +3223,29 @@ CLASS lcl_bcset IMPLEMENTATION.
 *     damit der Entwickler-Report im Quellsystem die Tabelle nachliefern
 *     kann. Die Aktivitaet kommt mit, damit hinterher nachvollziehbar
 *     ist, woher die Anforderung stammt.
-      READ TABLE mt_miss TRANSPORTING NO FIELDS
-           WITH KEY name = CONV string( lv_tab ).
-      IF sy-subrc <> 0.
-        APPEND VALUE ty_miss( type     = 'TABL'
-                              name     = CONV string( lv_tab )
-                              activity = is_ref-activity ) TO mt_miss.
+      want( iv_type = 'TABL' iv_name = CONV string( lv_tab )
+            is_ref = is_ref ).
+
+*     Mit der Basistabelle allein laesst sich das Customizing
+*     aktivieren, aber nicht pflegen. Dazu gehoeren die Pflegesicht und
+*     die Transaktion; den Pflegedialog selbst kann kein Baustein
+*     dialogfrei erzeugen - SE54 bleibt Handarbeit.
+      DATA(lv_ot) = to_upper( io_object->get_objtype( ) ).
+      DATA(lv_on) = to_upper( io_object->get_objname( ) ).
+      IF lv_on IS NOT INITIAL AND lv_on <> lv_tab.
+        CASE lv_ot.
+          WHEN 'V' OR 'S'.
+            want( iv_type = 'VIEW' iv_name = lv_on is_ref = is_ref ).
+          WHEN 'C'.
+            want( iv_type = 'VCLS' iv_name = lv_on is_ref = is_ref ).
+        ENDCASE.
       ENDIF.
+
+      DATA(lv_tc) = to_upper( io_object->get_tcode( ) ).
+      IF lv_tc IS NOT INITIAL.
+        want( iv_type = 'TRAN' iv_name = lv_tc is_ref = is_ref ).
+      ENDIF.
+
       RETURN.
     ENDIF.
 

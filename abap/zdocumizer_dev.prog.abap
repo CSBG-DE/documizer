@@ -290,6 +290,12 @@ CLASS lcl_attr DEFINITION.
       IMPORTING it_attrs        TYPE ty_attrs
                 iv_name         TYPE string
       RETURNING VALUE(rv_value) TYPE string.
+    CLASS-METHODS enc_name
+      IMPORTING iv_name        TYPE string
+      RETURNING VALUE(rv_name) TYPE string.
+    CLASS-METHODS dec_name
+      IMPORTING iv_name        TYPE string
+      RETURNING VALUE(rv_name) TYPE string.
 ENDCLASS.
 
 CLASS lcl_attr IMPLEMENTATION.
@@ -319,16 +325,60 @@ CLASS lcl_attr IMPLEMENTATION.
       IF sy-subrc <> 0 OR <lv_val> IS INITIAL.
         CONTINUE.
       ENDIF.
-      APPEND VALUE ty_attr( name  = ls_comp-name
+      DATA(lv_aname) = enc_name( ls_comp-name ).
+      IF lv_aname CN 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_'.
+*       Ein Zeichen, fuer das enc_name keine Marke kennt. Als
+*       XML-Attributname waere der Name ungueltig und das ganze
+*       Dokument unlesbar - das Feld bleibt weg.
+        CONTINUE.
+      ENDIF.
+      APPEND VALUE ty_attr( name  = lv_aname
                             value = |{ <lv_val> }| ) TO rt_attrs.
     ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD enc_name.
+
+*   Nicht jeder DDIC-Feldname ist ein gueltiger XML-Attributname.
+*   RPY_DYFATC - die Dynpro-Feldliste - hat die Felder *_ENTRY und
+*   2_DIMENS: ein Stern ist im Namen verboten, eine fuehrende Ziffer
+*   auch. Ohne Umschrift kaeme kein Dynpro durch den Writer.
+*
+*   Umgeschrieben wird ueber eine feste Tabelle, nicht ueber eine
+*   Codepage-Klasse: die Marken sind kleingeschrieben und kommen in
+*   DDIC-Feldnamen nicht vor, also ist die Umschrift umkehrbar. Ein
+*   Zeichen, das hier nicht steht, wird in from_struct gar nicht erst
+*   aufgenommen - lieber ein fehlendes Feld als ein falsches.
+    rv_name = iv_name.
+    REPLACE ALL OCCURRENCES OF `*` IN rv_name WITH `_xas_`.
+    REPLACE ALL OCCURRENCES OF `/` IN rv_name WITH `_xsl_`.
+    REPLACE ALL OCCURRENCES OF `-` IN rv_name WITH `_xmi_`.
+    REPLACE ALL OCCURRENCES OF `.` IN rv_name WITH `_xdt_`.
+
+    IF rv_name IS NOT INITIAL AND rv_name(1) CA '0123456789'.
+      rv_name = |_n{ rv_name }|.
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD dec_name.
+
+    rv_name = iv_name.
+    IF strlen( rv_name ) > 2 AND rv_name(2) = `_n`.
+      rv_name = rv_name+2.
+    ENDIF.
+    REPLACE ALL OCCURRENCES OF `_xas_` IN rv_name WITH `*`.
+    REPLACE ALL OCCURRENCES OF `_xsl_` IN rv_name WITH `/`.
+    REPLACE ALL OCCURRENCES OF `_xmi_` IN rv_name WITH `-`.
+    REPLACE ALL OCCURRENCES OF `_xdt_` IN rv_name WITH `.`.
 
   ENDMETHOD.
 
   METHOD to_struct.
 
     LOOP AT it_attrs INTO DATA(ls_attr).
-      ASSIGN COMPONENT ls_attr-name OF STRUCTURE cs_data
+      ASSIGN COMPONENT dec_name( ls_attr-name ) OF STRUCTURE cs_data
              TO FIELD-SYMBOL(<lv_val>).
 *     A field the target release does not know is skipped, not fatal.
 *     That is the whole point of transporting name/value pairs.
@@ -1142,6 +1192,14 @@ CLASS lcl_importer DEFINITION.
                                iv_name    TYPE string.
     METHODS put_prog IMPORTING io_chapter TYPE REF TO lcl_chapter
                                iv_name    TYPE string.
+    METHODS put_dynp IMPORTING io_chapter TYPE REF TO lcl_chapter
+                               iv_prog    TYPE progname.
+    METHODS put_tran IMPORTING io_chapter TYPE REF TO lcl_chapter
+                               iv_name    TYPE string.
+    METHODS put_vcls IMPORTING io_chapter TYPE REF TO lcl_chapter
+                               iv_name    TYPE string.
+    METHODS put_maint IMPORTING io_chapter TYPE REF TO lcl_chapter
+                                iv_name    TYPE string.
     METHODS put_cua  IMPORTING io_chapter TYPE REF TO lcl_chapter
                                iv_prog    TYPE progname.
     METHODS put_msag IMPORTING io_chapter TYPE REF TO lcl_chapter
@@ -1267,6 +1325,10 @@ CLASS lcl_importer IMPLEMENTATION.
           put_idoc( io_chapter = ls_work-chapter iv_name = ls_work-name ).
         WHEN 'WAPA'.
           put_wapa( io_chapter = ls_work-chapter iv_name = ls_work-name ).
+        WHEN 'TRAN'.
+          put_tran( io_chapter = ls_work-chapter iv_name = ls_work-name ).
+        WHEN 'VCLS'.
+          put_vcls( io_chapter = ls_work-chapter iv_name = ls_work-name ).
       ENDCASE.
     ENDLOOP.
 
@@ -1340,6 +1402,20 @@ CLASS lcl_importer IMPLEMENTATION.
           CATCH cx_root.
             CLEAR lv_act.
         ENDTRY.
+
+      WHEN 'TRAN'.
+        DATA lv_vtc TYPE tstc-tcode.
+        lv_vtc = is_work-name.
+        SELECT SINGLE @abap_true FROM tstc
+          WHERE tcode = @lv_vtc INTO @lv_act.
+
+      WHEN 'VCLS'.
+*       Ein Cluster ohne Knoten ist kein Cluster. Der Kopfeintrag
+*       allein sagt hier nichts.
+        DATA lv_vvc TYPE vcldir-vclname.
+        lv_vvc = is_work-name.
+        SELECT COUNT(*) FROM vclstruc WHERE vclname = @lv_vvc.
+        lv_act = boolc( sy-dbcnt > 0 ).
 
       WHEN 'WAPA'.
         cl_o2_api_application=>check_exist(
@@ -1478,6 +1554,10 @@ CLASS lcl_importer IMPLEMENTATION.
 *       Die UI5-Anwendung ganz zuletzt: sie ruft die Services auf,
 *       die vorher entstehen muessen.
         WHEN 'WAPA'. lv_seq = 14.
+*       Die Transaktion steht auf Programm oder Funktionsgruppe, der
+*       View-Cluster auf den Views seiner Knoten. Beide ganz zuletzt.
+        WHEN 'VCLS'. lv_seq = 15.
+        WHEN 'TRAN'. lv_seq = 16.
         WHEN OTHERS. lv_seq = 99.
       ENDCASE.
 
@@ -1501,6 +1581,8 @@ CLASS lcl_importer IMPLEMENTATION.
         WHEN 'WAPA'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'APPLNAME' ).
         WHEN 'BDEF' OR 'SRVD' OR 'DDLX' OR 'SRVB'.
           lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'NAME' ).
+        WHEN 'TRAN'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'TCODE' ).
+        WHEN 'VCLS'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'VCLNAME' ).
       ENDCASE.
 
       IF lv_name IS NOT INITIAL AND lv_seq < 99.
@@ -1572,6 +1654,18 @@ CLASS lcl_importer IMPLEMENTATION.
         lv_idt = iv_name.
         SELECT SINGLE @abap_true FROM edbas
           WHERE idoctyp = @lv_idt INTO @rv_flag.
+
+      WHEN 'TRAN'.
+        DATA lv_tcd TYPE tstc-tcode.
+        lv_tcd = iv_name.
+        SELECT SINGLE @abap_true FROM tstc
+          WHERE tcode = @lv_tcd INTO @rv_flag.
+
+      WHEN 'VCLS'.
+        DATA lv_vcn TYPE vcldir-vclname.
+        lv_vcn = iv_name.
+        SELECT SINGLE @abap_true FROM vcldir
+          WHERE vclname = @lv_vcn INTO @rv_flag.
 
       WHEN 'WAPA'.
 *       Nicht der Katalog, sondern die API - auf S4H stehen
@@ -2022,6 +2116,7 @@ CLASS lcl_importer IMPLEMENTATION.
                        COND string( WHEN lv_nidx > 0
                                     THEN |, { lv_nidx } { lcl_t=>ui( d = `Indizes` e = `indexes` ) }|
                                     ELSE `` ) ).
+      put_maint( io_chapter = io_chapter iv_name = iv_name ).
       RETURN.
     ENDIF.
 
@@ -2081,6 +2176,8 @@ CLASS lcl_importer IMPLEMENTATION.
     IF lv_nidx > 0.
       put_index( io_chapter = io_chapter iv_name = iv_name ).
     ENDIF.
+
+    put_maint( io_chapter = io_chapter iv_name = iv_name ).
 
   ENDMETHOD.
 
@@ -2951,6 +3048,464 @@ CLASS lcl_importer IMPLEMENTATION.
 
   ENDMETHOD.
 
+  METHOD put_dynp.
+
+*   Das Gegenstueck zu def_dynp. Kopf, Container, Felder und Parameter
+*   kommen aus den Zeilen zurueck, die Ablauflogik aus dem Quelltext
+*   der DYNP-Zeile.
+    DATA ls_head TYPE rpy_dyhead.
+    DATA lt_cont TYPE dycatt_tab.
+    DATA lt_f2c  TYPE dyfatc_tab.
+*   DYN_FLOWLIST, nicht RPY_DYFLOW, obwohl die Schnittstelle RPY_DYFLOW
+*   deklariert: beide Bausteine reichen die Ablauflogik unveraendert an
+*   ihr NATIVE-Gegenstueck weiter, und dessen Parameter ist mit dem
+*   Tabellentyp DYN_FLOWLIST typisiert. Ein Aktualparameter, der dazu
+*   nicht typkompatibel ist - andere Zeile oder anderer Schluessel -
+*   endet dort im Kurzdump CALL_FUNCTION_CONFLICT_TAB_TYP.
+    DATA lt_flow TYPE dyn_flowlist.
+    DATA lt_para TYPE STANDARD TABLE OF rpy_dypara WITH EMPTY KEY.
+    DATA ls_cont TYPE rpy_dycatt.
+    DATA ls_f2c  TYPE rpy_dyfatc.
+    DATA ls_para TYPE rpy_dypara.
+    DATA ls_flow TYPE d022s.
+    DATA lt_line TYPE STANDARD TABLE OF string WITH EMPTY KEY.
+    DATA lv_corr TYPE e071-trkorr.
+    DATA lv_dnr  TYPE string.
+    DATA lv_n    TYPE i.
+    DATA lv_bad  TYPE i.
+
+    DATA(lt_rows) = io_chapter->get_defrows( ).
+    IF mv_pack NP '$*'.
+      lv_corr = mv_tr.
+    ENDIF.
+
+    LOOP AT lt_rows INTO DATA(ls_row) WHERE tag = 'DYNP'.
+
+      CLEAR: ls_head, lt_cont, lt_f2c, lt_flow, lt_para.
+      lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs
+                           CHANGING  cs_data  = ls_head ).
+      IF ls_head-screen IS INITIAL.
+        CONTINUE.
+      ENDIF.
+
+*     Der Kopf traegt den Programmnamen des Quellsystems. Er wird hier
+*     ueberschrieben - die Gruppe kann drueben anders heissen.
+      ls_head-program = iv_prog.
+      lv_dnr = ls_head-screen.
+
+      CLEAR lt_line.
+      SPLIT ls_row-src AT cl_abap_char_utilities=>newline INTO TABLE lt_line.
+      LOOP AT lt_line INTO DATA(lv_line).
+        CLEAR ls_flow.
+        ls_flow-line = lv_line.
+        APPEND ls_flow TO lt_flow.
+      ENDLOOP.
+
+      LOOP AT lt_rows INTO DATA(ls_p).
+        IF lcl_attr=>value( it_attrs = ls_p-attrs iv_name = '_DYNNR' ) <> lv_dnr.
+          CONTINUE.
+        ENDIF.
+        CASE ls_p-tag.
+          WHEN 'DYCAT'.
+            CLEAR ls_cont.
+            lcl_attr=>to_struct( EXPORTING it_attrs = ls_p-attrs CHANGING cs_data = ls_cont ).
+            APPEND ls_cont TO lt_cont.
+          WHEN 'DYFAT'.
+            CLEAR ls_f2c.
+            lcl_attr=>to_struct( EXPORTING it_attrs = ls_p-attrs CHANGING cs_data = ls_f2c ).
+            APPEND ls_f2c TO lt_f2c.
+          WHEN 'DYPARA'.
+            CLEAR ls_para.
+            lcl_attr=>to_struct( EXPORTING it_attrs = ls_p-attrs CHANGING cs_data = ls_para ).
+            APPEND ls_para TO lt_para.
+        ENDCASE.
+      ENDLOOP.
+
+      IF mv_test = abap_true.
+        lv_n = lv_n + 1.
+        CONTINUE.
+      ENDIF.
+
+      CALL FUNCTION 'RPY_DYNPRO_INSERT'
+        EXPORTING  suppress_corr_checks   = abap_true
+                   corrnum                = lv_corr
+                   suppress_exist_checks  = abap_true
+                   header                 = ls_head
+        TABLES     containers             = lt_cont
+                   fields_to_containers   = lt_f2c
+                   flow_logic             = lt_flow
+                   params                 = lt_para
+        EXCEPTIONS cancelled              = 1
+                   already_exists         = 2
+                   program_not_exists     = 3
+                   not_executed           = 4
+                   missing_required_field = 5
+                   illegal_field_value    = 6
+                   field_not_allowed      = 7
+                   not_generated          = 8
+                   illegal_field_position = 9
+                   OTHERS                 = 10.
+      CASE sy-subrc.
+        WHEN 0.
+          lv_n = lv_n + 1.
+        WHEN 2.
+*         Ein vorhandenes Dynpro wird nicht ueberschrieben. Der
+*         Baustein kennt keinen Weg dazu, der ohne SE51 auskommt.
+          log( iv_kind = 'DYNP' iv_name = |{ iv_prog } { lv_dnr }|
+               iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+               iv_text   = lcl_t=>ui( d = `existiert bereits`
+                                      e = `already exists` ) ).
+        WHEN OTHERS.
+          lv_bad = lv_bad + 1.
+          log( iv_kind = 'DYNP' iv_name = |{ iv_prog } { lv_dnr }|
+               iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+               iv_text   = |RPY_DYNPRO_INSERT subrc { sy-subrc }| ).
+      ENDCASE.
+
+    ENDLOOP.
+
+    IF lv_n = 0 AND lv_bad = 0.
+      RETURN.
+    ENDIF.
+
+    log( iv_kind = 'DYNP' iv_name = CONV string( iv_prog )
+         iv_action = COND #( WHEN mv_test = abap_true
+                             THEN lcl_t=>ui( d = `wuerde anlegen` e = `would create` )
+                             ELSE lcl_t=>ui( d = `angelegt` e = `created` ) )
+         iv_text   = |{ lv_n } { lcl_t=>ui( d = `Bilder` e = `screens` ) }| ).
+
+  ENDMETHOD.
+
+  METHOD put_maint.
+
+*   Der Pflegeeintrag zu View oder Tabelle. TVDIR, TVIMF und TDDAT
+*   werden direkt geschrieben: SE54 ist der einzige Weg, sie erzeugen
+*   zu lassen, und SE54 ist ein Dialog.
+*
+*   Die drei Tabellen sind mandantenunabhaengig und haengen nicht am
+*   Transportauftrag - der Eintrag entsteht im Zielsystem also lokal.
+*   Das Protokoll sagt es, damit niemand ihn im Auftrag sucht.
+    DATA ls_tvdir TYPE tvdir.
+    DATA ls_tvimf TYPE tvimf.
+    DATA ls_tddat TYPE tddat.
+    DATA lt_tvimf TYPE STANDARD TABLE OF tvimf WITH EMPTY KEY.
+    DATA lv_tab   TYPE tvdir-tabname.
+    DATA lv_has   TYPE abap_bool.
+
+    DATA(lt_rows) = io_chapter->get_defrows( ).
+    READ TABLE lt_rows TRANSPORTING NO FIELDS WITH KEY tag = 'TVDIR'.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    LOOP AT lt_rows INTO DATA(ls_row).
+      CASE ls_row-tag.
+        WHEN 'TVDIR'.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs CHANGING cs_data = ls_tvdir ).
+          lv_has = abap_true.
+        WHEN 'TVIMF'.
+          CLEAR ls_tvimf.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs CHANGING cs_data = ls_tvimf ).
+          APPEND ls_tvimf TO lt_tvimf.
+        WHEN 'TDDAT'.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs CHANGING cs_data = ls_tddat ).
+      ENDCASE.
+    ENDLOOP.
+
+    IF lv_has = abap_false OR ls_tvdir-tabname IS INITIAL.
+      RETURN.
+    ENDIF.
+    lv_tab = ls_tvdir-tabname.
+
+    IF mv_test = abap_true.
+      log( iv_kind = 'TVDIR' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `wuerde anlegen` e = `would create` )
+           iv_text   = |{ lcl_t=>ui( d = `Pflegedialog` e = `maintenance dialog` ) }, | &&
+                       |{ lcl_t=>ui( d = `Gruppe` e = `group` ) } { ls_tvdir-area }, | &&
+                       |{ ls_tvdir-liste }/{ ls_tvdir-detail }| ).
+      RETURN.
+    ENDIF.
+
+*   Die Funktionsgruppe muss stehen, sonst zeigt der Eintrag ins Leere
+*   und SM30 laeuft in einen Kurzdump statt in eine Meldung.
+    SELECT SINGLE @abap_true FROM tlibg
+      WHERE area = @ls_tvdir-area INTO @DATA(lv_fugr).
+    IF lv_fugr <> abap_true.
+      log( iv_kind = 'TVDIR' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `nicht geschrieben` e = `not written` )
+           iv_text   = |{ lcl_t=>ui( d = `Funktionsgruppe fehlt`
+                                     e = `function group missing` ) }: { ls_tvdir-area }| ).
+      RETURN.
+    ENDIF.
+
+    MODIFY tvdir FROM ls_tvdir.
+    IF sy-subrc <> 0.
+      log( iv_kind = 'TVDIR' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+           iv_text   = |MODIFY tvdir subrc { sy-subrc }| ).
+      RETURN.
+    ENDIF.
+
+    DELETE FROM tvimf WHERE tabname = @lv_tab.
+    IF lt_tvimf IS NOT INITIAL.
+      INSERT tvimf FROM TABLE @lt_tvimf.
+    ENDIF.
+
+    IF ls_tddat-tabname IS NOT INITIAL.
+      MODIFY tddat FROM ls_tddat.
+    ENDIF.
+
+    log( iv_kind = 'TVDIR' iv_name = iv_name
+         iv_action = lcl_t=>ui( d = `angelegt` e = `created` )
+         iv_text   = |{ lcl_t=>ui( d = `Gruppe` e = `group` ) } { ls_tvdir-area }, | &&
+                     |{ lines( lt_tvimf ) } { lcl_t=>ui( d = `Ereignisse` e = `events` ) }, | &&
+                     |{ lcl_t=>ui( d = `lokal, nicht im Auftrag`
+                                   e = `local, not in the request` ) }| ).
+
+  ENDMETHOD.
+
+  METHOD put_tran.
+
+*   RPY_TRANSACTION_INSERT legt zwei Arten an: die Dialogtransaktion
+*   auf Programm und Dynpro, und die Parametertransaktion, die eine
+*   andere Transaktion mit vorbelegten Feldern ruft. Der Pflegedialog
+*   ist fast immer der zweite Fall - SM30 mit gesetztem VIEWNAME.
+    DATA ls_tstc  TYPE tstc.
+    DATA ls_tstcc TYPE tstcc.
+    DATA lt_par   TYPE STANDARD TABLE OF rsparam WITH EMPTY KEY.
+    DATA ls_par   TYPE rsparam.
+    DATA lv_corr  TYPE rglif-trkorr.
+    DATA lv_call  TYPE tstc-tcode.
+    DATA lv_skip  TYPE c LENGTH 1.
+    DATA lv_type  TYPE rglif-docutype.
+    DATA lv_param TYPE string.
+    DATA lv_lang  TYPE sy-langu.
+
+    DATA(lv_ex) = exists( iv_kind = 'TRAN' iv_name = iv_name ).
+    IF lv_ex = abap_true AND mv_over = abap_false.
+      log( iv_kind = 'TRAN' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+           iv_text   = lcl_t=>ui( d = `existiert bereits` e = `already exists` ) ).
+      RETURN.
+    ENDIF.
+
+    DATA(lt_head) = io_chapter->get_defhead( ).
+    lcl_attr=>to_struct( EXPORTING it_attrs = lt_head CHANGING cs_data = ls_tstc ).
+    IF ls_tstc-tcode IS INITIAL.
+      RETURN.
+    ENDIF.
+    DATA(lv_text) = lcl_attr=>value( it_attrs = lt_head iv_name = 'SHORT_TEXT' ).
+
+*   Der Kurztext wurde in der Ausgabesprache des Dokuments gelesen. Er
+*   unter der Anmeldesprache anzulegen wuerde ihn falsch beschriften.
+    DATA(lv_dlan) = io_chapter->get_doclang( ).
+    lv_lang = COND #( WHEN lv_dlan IS NOT INITIAL THEN lv_dlan ELSE sy-langu ).
+
+    LOOP AT io_chapter->get_defrows( ) INTO DATA(ls_row).
+      CASE ls_row-tag.
+        WHEN 'TSTCC'.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs CHANGING cs_data = ls_tstcc ).
+        WHEN 'TSTCP'.
+          lv_param = lcl_attr=>value( it_attrs = ls_row-attrs iv_name = 'PARAM' ).
+      ENDCASE.
+    ENDLOOP.
+
+*   Die Vorbelegung steht als eine Zeile in TSTCP: hinter /* die
+*   gerufene Transaktion, dahinter NAME=WERT, getrennt durch ;. Das
+*   fuehrende /* heisst "erstes Bild ueberspringen".
+    IF lv_param IS NOT INITIAL.
+      DATA lv_rest TYPE string.
+      lv_rest = lv_param.
+      IF strlen( lv_rest ) > 2 AND lv_rest(2) = `/*`.
+        lv_skip = abap_true.
+        lv_rest = lv_rest+2.
+      ELSEIF strlen( lv_rest ) > 1 AND lv_rest(1) = `/`.
+        lv_rest = lv_rest+1.
+      ENDIF.
+      SPLIT lv_rest AT ` ` INTO DATA(lv_first) lv_rest.
+      lv_call = lv_first.
+      SPLIT lv_rest AT `;` INTO TABLE DATA(lt_pair).
+      LOOP AT lt_pair INTO DATA(lv_pair).
+        IF lv_pair IS INITIAL OR lv_pair NS `=`.
+          CONTINUE.
+        ENDIF.
+        CLEAR ls_par.
+        SPLIT lv_pair AT `=` INTO DATA(lv_fld) DATA(lv_val).
+        CONDENSE lv_fld.
+        ls_par-field = lv_fld.
+        ls_par-value = lv_val.
+        APPEND ls_par TO lt_par.
+      ENDLOOP.
+    ENDIF.
+
+    IF lv_call IS NOT INITIAL.
+      lv_type = 'P'.
+    ELSEIF ls_tstc-pgmna IS NOT INITIAL.
+      lv_type = 'T'.
+    ELSE.
+      log( iv_kind = 'TRAN' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+           iv_text   = lcl_t=>ui( d = `weder Programm noch Vorbelegung`
+                                  e = `neither program nor parameters` ) ).
+      RETURN.
+    ENDIF.
+
+    IF mv_test = abap_true.
+      log( iv_kind = 'TRAN' iv_name = iv_name
+           iv_action = COND #( WHEN lv_ex = abap_true
+                               THEN lcl_t=>ui( d = `wuerde geaendert` e = `would change` )
+                               ELSE lcl_t=>ui( d = `wuerde angelegt` e = `would create` ) )
+           iv_text   = COND #( WHEN lv_type = 'P'
+                               THEN |{ lcl_t=>ui( d = `Parametertransaktion auf`
+                                                  e = `parameter transaction on` ) } | &&
+                                    |{ lv_call }, { lines( lt_par ) } | &&
+                                    |{ lcl_t=>ui( d = `Werte` e = `values` ) }|
+                               ELSE |{ ls_tstc-pgmna } { ls_tstc-dypno }| ) ).
+      RETURN.
+    ENDIF.
+
+    IF mv_pack NP '$*'.
+      lv_corr = mv_tr.
+    ENDIF.
+
+    CALL FUNCTION 'RPY_TRANSACTION_INSERT'
+      EXPORTING  transaction             = ls_tstc-tcode
+                 program                 = ls_tstc-pgmna
+                 dynpro                  = ls_tstc-dypno
+                 language                = lv_lang
+                 development_class       = mv_pack
+                 transport_number        = lv_corr
+                 transaction_type        = lv_type
+                 shorttext               = lv_text
+                 called_transaction      = lv_call
+                 called_transaction_skip = lv_skip
+                 suppress_corr_check     = abap_true
+      TABLES     param_values            = lt_par
+      EXCEPTIONS cancelled               = 1
+                 already_exist           = 2
+                 permission_error        = 3
+                 name_not_allowed        = 4
+                 name_conflict           = 5
+                 illegal_type            = 6
+                 object_inconsistent     = 7
+                 db_access_error         = 8
+                 OTHERS                  = 9.
+    IF sy-subrc <> 0 AND sy-subrc <> 2.
+      log( iv_kind = 'TRAN' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+           iv_text   = |RPY_TRANSACTION_INSERT subrc { sy-subrc }| ).
+      RETURN.
+    ENDIF.
+
+*   Die GUI-Kennzeichen nimmt der Baustein nicht entgegen. Ohne sie
+*   laesst sich die Transaktion im SAP GUI zwar starten, im Web aber
+*   nicht - deshalb kommen sie hinterher dazu.
+    IF ls_tstcc-tcode IS NOT INITIAL.
+      MODIFY tstcc FROM ls_tstcc.
+    ENDIF.
+
+    log( iv_kind = 'TRAN' iv_name = iv_name
+         iv_action = COND #( WHEN lv_ex = abap_true
+                             THEN lcl_t=>ui( d = `geaendert` e = `changed` )
+                             ELSE lcl_t=>ui( d = `angelegt` e = `created` ) )
+         iv_text   = COND #( WHEN lv_type = 'P'
+                             THEN |{ lv_call }, { lines( lt_par ) } | &&
+                                  |{ lcl_t=>ui( d = `Werte` e = `values` ) }|
+                             ELSE |{ ls_tstc-pgmna } { ls_tstc-dypno }| ) ).
+
+  ENDMETHOD.
+
+  METHOD put_vcls.
+
+    DATA ls_dir TYPE v_vcldir.
+    DATA lt_str TYPE STANDARD TABLE OF v_vclstruc WITH EMPTY KEY.
+    DATA lt_dep TYPE STANDARD TABLE OF vclstrudep WITH EMPTY KEY.
+    DATA lt_mf  TYPE STANDARD TABLE OF vclmf WITH EMPTY KEY.
+    DATA ls_str TYPE v_vclstruc.
+    DATA ls_dep TYPE vclstrudep.
+    DATA ls_mf  TYPE vclmf.
+
+    DATA(lv_ex) = exists( iv_kind = 'VCLS' iv_name = iv_name ).
+    IF lv_ex = abap_true AND mv_over = abap_false.
+      log( iv_kind = 'VCLS' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+           iv_text   = lcl_t=>ui( d = `existiert bereits` e = `already exists` ) ).
+      RETURN.
+    ENDIF.
+
+    lcl_attr=>to_struct( EXPORTING it_attrs = io_chapter->get_defhead( )
+                         CHANGING  cs_data  = ls_dir ).
+    IF ls_dir-vclname IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    LOOP AT io_chapter->get_defrows( ) INTO DATA(ls_row).
+      CASE ls_row-tag.
+        WHEN 'VCLSTRUC'.
+          CLEAR ls_str.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs CHANGING cs_data = ls_str ).
+          APPEND ls_str TO lt_str.
+        WHEN 'VCLSTDEP'.
+          CLEAR ls_dep.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs CHANGING cs_data = ls_dep ).
+          APPEND ls_dep TO lt_dep.
+        WHEN 'VCLMF'.
+          CLEAR ls_mf.
+          lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs CHANGING cs_data = ls_mf ).
+          APPEND ls_mf TO lt_mf.
+      ENDCASE.
+    ENDLOOP.
+
+*   Ein Knoten ohne den View dahinter macht den Cluster unbrauchbar -
+*   SM34 laeuft dann beim Aufklappen in einen Fehler. Lieber gar
+*   nicht anlegen und den Fehlbestand nennen.
+    DATA lv_miss TYPE string.
+    LOOP AT lt_str INTO ls_str.
+      IF exists( iv_kind = 'VIEW' iv_name = CONV string( ls_str-object ) ) = abap_false
+         AND exists( iv_kind = 'TABL' iv_name = CONV string( ls_str-object ) ) = abap_false.
+        lv_miss = COND #( WHEN lv_miss IS INITIAL THEN ls_str-object
+                          ELSE |{ lv_miss }, { ls_str-object }| ).
+      ENDIF.
+    ENDLOOP.
+    IF lv_miss IS NOT INITIAL.
+      log( iv_kind = 'VCLS' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `nicht angelegt` e = `not created` )
+           iv_text   = |{ lcl_t=>ui( d = `Knoten fehlen` e = `nodes missing` ) }: { lv_miss }| ).
+      RETURN.
+    ENDIF.
+
+    IF mv_test = abap_true.
+      log( iv_kind = 'VCLS' iv_name = iv_name
+           iv_action = COND #( WHEN lv_ex = abap_true
+                               THEN lcl_t=>ui( d = `wuerde geaendert` e = `would change` )
+                               ELSE lcl_t=>ui( d = `wuerde angelegt` e = `would create` ) )
+           iv_text   = |{ lines( lt_str ) } { lcl_t=>ui( d = `Knoten` e = `nodes` ) }| ).
+      RETURN.
+    ENDIF.
+
+    CALL FUNCTION 'VIEWCLUSTER_SAVE_DEFINITION'
+      EXPORTING  vcldir_entry   = ls_dir
+      TABLES     vclstruc_tab   = lt_str
+                 vclstrudep_tab = lt_dep
+                 vclmf_tab      = lt_mf
+      EXCEPTIONS OTHERS         = 1.
+    IF sy-subrc <> 0.
+      log( iv_kind = 'VCLS' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+           iv_text   = |VIEWCLUSTER_SAVE_DEFINITION subrc { sy-subrc }| ).
+      RETURN.
+    ENDIF.
+
+    tadir( iv_object = 'VCLS' iv_name = CONV sobj_name( iv_name ) ).
+
+    log( iv_kind = 'VCLS' iv_name = iv_name
+         iv_action = COND #( WHEN lv_ex = abap_true
+                             THEN lcl_t=>ui( d = `geaendert` e = `changed` )
+                             ELSE lcl_t=>ui( d = `angelegt` e = `created` ) )
+         iv_text   = |{ lines( lt_str ) } { lcl_t=>ui( d = `Knoten` e = `nodes` ) }| ).
+
+  ENDMETHOD.
+
   METHOD put_cua.
 
 *   The counterpart to def_cua. Eleven tables come back out of the rows
@@ -3134,6 +3689,7 @@ CLASS lcl_importer IMPLEMENTATION.
            iv_text   = |{ ls_dd25v-viewclass }, { lines( lt_dd26v ) } | &&
                        |{ lcl_t=>ui( d = `Basistabellen` e = `base tables` ) }, | &&
                        |{ lines( lt_dd27p ) } { lcl_t=>ui( d = `Felder` e = `fields` ) }| ).
+      put_maint( io_chapter = io_chapter iv_name = iv_name ).
       RETURN.
     ENDIF.
 
@@ -3177,6 +3733,8 @@ CLASS lcl_importer IMPLEMENTATION.
         RETURN.
       ENDIF.
     ENDIF.
+
+    put_maint( io_chapter = io_chapter iv_name = iv_name ).
 
     log( iv_kind = 'VIEW' iv_name = iv_name
          iv_action = COND #( WHEN lv_ex = abap_true
@@ -3432,6 +3990,10 @@ CLASS lcl_importer IMPLEMENTATION.
                                ELSE lcl_t=>ui( d = `wuerde angelegt` e = `would create` ) )
            iv_text   = |{ lv_nfun } { lcl_t=>ui( d = `Bausteine` e = `modules` ) }, | &&
                        |{ lv_ninc } Includes| ).
+*     Ein Testlauf, der die Bilder verschweigt, macht den Pflegedialog
+*     unsichtbar - und genau der ist beim Import das Wackelige.
+      put_dynp( io_chapter = io_chapter
+                iv_prog    = CONV progname( |SAPL{ iv_name }| ) ).
       RETURN.
     ENDIF.
 
@@ -3496,6 +4058,12 @@ CLASS lcl_importer IMPLEMENTATION.
     LOOP AT lt_rows INTO ls_row WHERE tag = 'FUNC'.
       put_func( io_chapter = io_chapter is_row = ls_row iv_area = iv_name ).
     ENDLOOP.
+
+*   Status und Dynpros des Rahmenprogramms - bei einer Pflegegruppe
+*   der eigentliche Dialog. Beides vor der Aktivierung, sonst
+*   aktiviert der Aufruf eine halbe Gruppe.
+    put_cua( io_chapter = io_chapter iv_prog = CONV progname( |SAPL{ iv_name }| ) ).
+    put_dynp( io_chapter = io_chapter iv_prog = CONV progname( |SAPL{ iv_name }| ) ).
 
     IF mv_act = abap_true AND activate( iv_object = 'FUGR' iv_name = iv_name ) = abap_false.
       log( iv_kind = 'FUGR' iv_name = iv_name
@@ -4497,6 +5065,20 @@ CLASS lcl_collector_dev DEFINITION.
     METHODS def_cua
       IMPORTING io_chapter TYPE REF TO lcl_chapter
                 iv_prog    TYPE progname.
+    METHODS def_dynp
+      IMPORTING io_chapter TYPE REF TO lcl_chapter
+                iv_prog    TYPE progname.
+    METHODS def_tran
+      IMPORTING iv_name      TYPE sobj_name
+                io_chapter   TYPE REF TO lcl_chapter
+      RETURNING VALUE(rv_ok) TYPE abap_bool.
+    METHODS def_vcls
+      IMPORTING iv_name      TYPE sobj_name
+                io_chapter   TYPE REF TO lcl_chapter
+      RETURNING VALUE(rv_ok) TYPE abap_bool.
+    METHODS def_maint
+      IMPORTING iv_name    TYPE sobj_name
+                io_chapter TYPE REF TO lcl_chapter.
 *   BDEF, SRVD und DDLX sind quelltextbasiert und haengen alle am
 *   generischen Workbench-Objektoperator - ein Weg statt drei.
     METHODS def_wbsrc
@@ -4734,6 +5316,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       WHEN 'SHLP'. rv_title = lcl_t=>t( d = 'Suchhilfen' e = 'Search helps' ).
       WHEN 'DEVC'. rv_title = lcl_t=>t( d = 'Pakete' e = 'Packages' ).
       WHEN 'FUNC'. rv_title = lcl_t=>t( d = 'Funktionsbausteine' e = 'Function modules' ).
+      WHEN 'VCLS'. rv_title = lcl_t=>t( d = 'View-Cluster' e = 'View clusters' ).
       WHEN OTHERS. rv_title = |{ lcl_t=>t( d = `Objekttyp` e = `Object type` ) } { iv_type }|.
     ENDCASE.
   ENDMETHOD.
@@ -4776,6 +5359,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       WHEN 'SEGM'. lv_ok = def_segm( iv_name = iv_name io_chapter = io_chapter ).
       WHEN 'IDOC'. lv_ok = def_idoc( iv_name = iv_name io_chapter = io_chapter ).
       WHEN 'WAPA'. lv_ok = def_wapa( iv_name = iv_name io_chapter = io_chapter ).
+      WHEN 'TRAN'. lv_ok = def_tran( iv_name = iv_name io_chapter = io_chapter ).
+      WHEN 'VCLS'. lv_ok = def_vcls( iv_name = iv_name io_chapter = io_chapter ).
       WHEN OTHERS.
         RETURN.
     ENDCASE.
@@ -4913,6 +5498,10 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       io_chapter->add_defrow( VALUE ty_defrow(
         tag = 'DD17V' attrs = lcl_attr=>from_struct( ls_dd17v ) ) ).
     ENDLOOP.
+
+*   Ein Pflegedialog haengt nicht nur an Views. Eine Tabelle, die in
+*   SM30 gepflegt wird, hat ihren TVDIR-Eintrag selbst.
+    def_maint( iv_name = iv_name io_chapter = io_chapter ).
 
     rv_ok = abap_true.
 
@@ -5558,7 +6147,45 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         tag = 'DD36M' attrs = lcl_attr=>from_struct( ls_dd36m ) ) ).
     ENDLOOP.
 
+    def_maint( iv_name = iv_name io_chapter = io_chapter ).
+
     rv_ok = abap_true.
+
+  ENDMETHOD.
+
+  METHOD def_maint.
+
+*   Der Pflegeeintrag. TVDIR sagt, welche Funktionsgruppe und welche
+*   beiden Dynpros den Dialog bilden; TVIMF nennt die Formroutinen zu
+*   den Pflegeereignissen, TDDAT die Berechtigungsgruppe.
+*
+*   Ohne diese drei Zeilen kennt SM30 den View im Zielsystem nicht -
+*   auch dann nicht, wenn Funktionsgruppe und Bilder vollstaendig
+*   angekommen sind. Erzeugen laesst sich der Eintrag nur ueber SE54,
+*   und SE54 ist ein Dialog. Also faehrt er mit.
+    DATA lv_tab TYPE tvdir-tabname.
+
+    lv_tab = iv_name.
+    SELECT SINGLE * FROM tvdir WHERE tabname = @lv_tab INTO @DATA(ls_tvdir).
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    io_chapter->add_defrow( VALUE ty_defrow(
+      tag = 'TVDIR' attrs = lcl_attr=>from_struct( ls_tvdir ) ) ).
+
+    SELECT * FROM tvimf WHERE tabname = @lv_tab
+      INTO TABLE @DATA(lt_tvimf).
+    LOOP AT lt_tvimf INTO DATA(ls_tvimf).
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag = 'TVIMF' attrs = lcl_attr=>from_struct( ls_tvimf ) ) ).
+    ENDLOOP.
+
+    SELECT SINGLE * FROM tddat WHERE tabname = @lv_tab INTO @DATA(ls_tddat).
+    IF sy-subrc = 0.
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag = 'TDDAT' attrs = lcl_attr=>from_struct( ls_tddat ) ) ).
+    ENDIF.
 
   ENDMETHOD.
 
@@ -5761,6 +6388,203 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       def_func( iv_func = ls_fdir-funcname io_chapter = io_chapter ).
     ENDLOOP.
 
+*   Status und Dynpros des Rahmenprogramms. Bei einer von SE54
+*   erzeugten Pflegegruppe ist das der eigentliche Pflegedialog: die
+*   Bausteine allein rufen nur Bilder auf, die es sonst nicht gibt.
+    def_cua( io_chapter = io_chapter iv_prog = lv_main ).
+    def_dynp( io_chapter = io_chapter iv_prog = lv_main ).
+
+    rv_ok = abap_true.
+
+  ENDMETHOD.
+
+  METHOD def_dynp.
+
+*   Ein Dynpro besteht aus Kopf, Containern, Feldern, Ablauflogik und
+*   den Parametern der Container. RPY_DYNPRO_READ und _INSERT sind das
+*   gleiche symmetrische Paar wie DDIF_*_GET/PUT: was hier gelesen
+*   wird, geht drueben unveraendert wieder hinein.
+    DATA ls_head TYPE rpy_dyhead.
+    DATA lt_cont TYPE dycatt_tab.
+    DATA lt_f2c  TYPE dyfatc_tab.
+    DATA lt_flow TYPE dyn_flowlist.
+    DATA lt_para TYPE STANDARD TABLE OF rpy_dypara WITH EMPTY KEY.
+    DATA lv_dnum TYPE d020s-dnum.
+    DATA lv_flow TYPE string.
+    DATA lt_a    TYPE ty_attrs.
+
+    SELECT dnum FROM d020s WHERE prog = @iv_prog
+      INTO TABLE @DATA(lt_dyn).
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    SORT lt_dyn BY dnum.
+    LOOP AT lt_dyn INTO DATA(ls_dyn).
+
+*     Das Selektionsbild entsteht beim Generieren aus dem Quelltext
+*     neu. Mitgenommen wuerde es beim Import ein zweites Mal
+*     geschrieben, und das zweite Mal gewinnt.
+      IF ls_dyn-dnum = '1000' OR ls_dyn-dnum IS INITIAL.
+        CONTINUE.
+      ENDIF.
+
+      CLEAR: ls_head, lt_cont, lt_f2c, lt_flow, lt_para.
+      lv_dnum = ls_dyn-dnum.
+      CALL FUNCTION 'RPY_DYNPRO_READ'
+        EXPORTING  progname              = iv_prog
+                   dynnr                 = lv_dnum
+                   suppress_exist_checks = abap_true
+                   suppress_corr_checks  = abap_true
+        IMPORTING  header                = ls_head
+        TABLES     containers            = lt_cont
+                   fields_to_containers  = lt_f2c
+                   flow_logic            = lt_flow
+                   params                = lt_para
+        EXCEPTIONS cancelled             = 1
+                   not_found             = 2
+                   permission_error      = 3
+                   OTHERS                = 4.
+      IF sy-subrc <> 0 OR ls_head-screen IS INITIAL.
+        CONTINUE.
+      ENDIF.
+
+*     Die Ablauflogik ist Quelltext und faehrt als Quelltext mit - als
+*     Attributwert wuerden aus den Zeilenumbruechen Leerzeichen.
+      CLEAR lv_flow.
+      LOOP AT lt_flow INTO DATA(ls_flow).
+        IF sy-tabix = 1.
+          lv_flow = ls_flow-line.
+        ELSE.
+          lv_flow = |{ lv_flow }{ cl_abap_char_utilities=>newline }{ ls_flow-line }|.
+        ENDIF.
+      ENDLOOP.
+
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag   = 'DYNP'
+        attrs = lcl_attr=>from_struct( ls_head )
+        src   = lv_flow ) ).
+
+*     Container, Felder und Parameter tragen die Dynpronummer nicht bei
+*     sich. _DYNNR bindet sie zurueck; der Importer liest es und reicht
+*     den Rest unveraendert weiter.
+      LOOP AT lt_cont INTO DATA(ls_cont).
+        lt_a = lcl_attr=>from_struct( ls_cont ).
+        INSERT VALUE ty_attr( name = '_DYNNR' value = ls_head-screen ) INTO lt_a INDEX 1.
+        io_chapter->add_defrow( VALUE ty_defrow( tag = 'DYCAT' attrs = lt_a ) ).
+      ENDLOOP.
+      LOOP AT lt_f2c INTO DATA(ls_f2c).
+        lt_a = lcl_attr=>from_struct( ls_f2c ).
+        INSERT VALUE ty_attr( name = '_DYNNR' value = ls_head-screen ) INTO lt_a INDEX 1.
+        io_chapter->add_defrow( VALUE ty_defrow( tag = 'DYFAT' attrs = lt_a ) ).
+      ENDLOOP.
+      LOOP AT lt_para INTO DATA(ls_para).
+        lt_a = lcl_attr=>from_struct( ls_para ).
+        INSERT VALUE ty_attr( name = '_DYNNR' value = ls_head-screen ) INTO lt_a INDEX 1.
+        io_chapter->add_defrow( VALUE ty_defrow( tag = 'DYPARA' attrs = lt_a ) ).
+      ENDLOOP.
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD def_tran.
+
+*   RPY_TRANSACTION_READ gibt TSTC und TSTCC heraus, den Kurztext aber
+*   nicht - der steht in TSTCT und wird getrennt gelesen.
+    DATA lt_tstc  TYPE STANDARD TABLE OF tstc WITH EMPTY KEY.
+    DATA lt_tstcc TYPE STANDARD TABLE OF tstcc WITH EMPTY KEY.
+    DATA lv_tcod  TYPE tstc-tcode.
+
+    lv_tcod = iv_name.
+    CALL FUNCTION 'RPY_TRANSACTION_READ'
+      EXPORTING  transaction      = lv_tcod
+      TABLES     tcodes           = lt_tstc
+                 gui_attributes   = lt_tstcc
+      EXCEPTIONS permission_error = 1
+                 cancelled        = 2
+                 not_found        = 3
+                 object_not_found = 4
+                 OTHERS           = 5.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+    READ TABLE lt_tstc INTO DATA(ls_tstc) INDEX 1.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_text) = read_short_text( iv_type = 'TRAN' iv_name = iv_name ).
+
+    DATA(lt_head) = lcl_attr=>from_struct( ls_tstc ).
+    APPEND VALUE ty_attr( name = 'SHORT_TEXT' value = lv_text ) TO lt_head.
+    io_chapter->set_definition( iv_kind = 'TRAN' it_head = lt_head ).
+
+    LOOP AT lt_tstcc INTO DATA(ls_tstcc).
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag = 'TSTCC' attrs = lcl_attr=>from_struct( ls_tstcc ) ) ).
+    ENDLOOP.
+
+*   Eine Parametertransaktion - der uebliche Fall beim Pflegedialog,
+*   SM30 mit vorbelegtem Viewnamen - traegt ihre Vorbelegung in TSTCP.
+*   Ohne sie steht drueben SM30 mit leerem Bild.
+    SELECT SINGLE param FROM tstcp WHERE tcode = @lv_tcod INTO @DATA(lv_param).
+    IF sy-subrc = 0 AND lv_param IS NOT INITIAL.
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag   = 'TSTCP'
+        attrs = VALUE ty_attrs( ( name = 'PARAM' value = CONV string( lv_param ) ) ) ) ).
+    ENDIF.
+
+    rv_ok = abap_true.
+
+  ENDMETHOD.
+
+  METHOD def_vcls.
+
+*   Ein View-Cluster ist kein Dictionary-Objekt, sondern ein Eintrag in
+*   vier Tabellen: Kopf, Struktur, Strukturabhaengigkeiten und die
+*   Feldabhaengigkeiten. VIEWCLUSTER_GET_DEFINITION liest sie am
+*   Stueck, VIEWCLUSTER_SAVE_DEFINITION schreibt sie zurueck.
+*
+*   Kopf und Struktur kommen als Pflegeviews V_VCLDIR und V_VCLSTRUC
+*   heraus, die den Text schon enthalten - die Texte brauchen also
+*   keinen eigenen Weg.
+    DATA ls_dir  TYPE v_vcldir.
+    DATA lt_str  TYPE STANDARD TABLE OF v_vclstruc WITH EMPTY KEY.
+    DATA lt_dep  TYPE STANDARD TABLE OF v_vclstdep WITH EMPTY KEY.
+    DATA lt_mf   TYPE STANDARD TABLE OF v_vclmf WITH EMPTY KEY.
+    DATA lv_vcl  TYPE vcl_name.
+
+    lv_vcl = iv_name.
+    CALL FUNCTION 'VIEWCLUSTER_GET_DEFINITION'
+      EXPORTING  vclname                = lv_vcl
+      IMPORTING  vcldir_entry           = ls_dir
+      TABLES     vclstruc_tab           = lt_str
+                 vclstrudep_tab         = lt_dep
+                 vclmf_tab              = lt_mf
+      EXCEPTIONS viewcluster_not_found  = 1
+                 incomplete_viewcluster = 2
+                 OTHERS                 = 3.
+    IF sy-subrc <> 0 OR ls_dir-vclname IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    io_chapter->set_definition( iv_kind = 'VCLS'
+                                it_head = lcl_attr=>from_struct( ls_dir ) ).
+
+    LOOP AT lt_str INTO DATA(ls_str).
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag = 'VCLSTRUC' attrs = lcl_attr=>from_struct( ls_str ) ) ).
+    ENDLOOP.
+    LOOP AT lt_dep INTO DATA(ls_dep).
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag = 'VCLSTDEP' attrs = lcl_attr=>from_struct( ls_dep ) ) ).
+    ENDLOOP.
+    LOOP AT lt_mf INTO DATA(ls_mf).
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag = 'VCLMF' attrs = lcl_attr=>from_struct( ls_mf ) ) ).
+    ENDLOOP.
+
     rv_ok = abap_true.
 
   ENDMETHOD.
@@ -5916,6 +6740,11 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         SELECT SINGLE ctext FROM tdevct
           WHERE devclass = @iv_name AND spras = @iv_langu INTO @DATA(lv_t8).
         rv_text = lv_t8.
+
+      WHEN 'VCLS'.
+        SELECT SINGLE text FROM vcldirt
+          WHERE vclname = @iv_name AND spras = @iv_langu INTO @DATA(lv_t9).
+        rv_text = lv_t9.
 
     ENDCASE.
 
@@ -7888,6 +8717,39 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       DATA(lv_grp) = func_group( CONV rs38l_fnam( iv_name ) ).
       IF lv_grp IS NOT INITIAL.
         APPEND VALUE #( type = 'FUGR' name = lv_grp ) TO rt_ref.
+      ENDIF.
+    ENDIF.
+
+*   Der Pflegedialog. Auf den TVDIR-Eintrag zeigt kein Querverweis: die
+*   Funktionsgruppe mit den Bildern und die Pflegetransaktion stehen
+*   nur dort. Ohne sie kommt drueben ein View an, den SM30 nicht kennt.
+    IF iv_type = 'TABL' OR iv_type = 'VIEW'.
+      DATA lv_mtab TYPE tvdir-tabname.
+      lv_mtab = iv_name.
+      SELECT SINGLE area, cltcode FROM tvdir
+        WHERE tabname = @lv_mtab INTO @DATA(ls_tvd).
+      IF sy-subrc = 0.
+        IF ls_tvd-area IS NOT INITIAL.
+          APPEND VALUE #( type = 'FUGR' name = ls_tvd-area ) TO rt_ref.
+        ENDIF.
+        IF ls_tvd-cltcode IS NOT INITIAL.
+          APPEND VALUE #( type = 'TRAN' name = ls_tvd-cltcode ) TO rt_ref.
+        ENDIF.
+      ENDIF.
+    ENDIF.
+
+*   Eine Transaktion steht auf dem, was sie aufruft: bei der
+*   Dialogtransaktion das Programm, bei der Parametertransaktion die
+*   gerufene Transaktion.
+    IF iv_type = 'TRAN'.
+      DATA lv_rtc TYPE tstc-tcode.
+      lv_rtc = iv_name.
+      SELECT SINGLE pgmna FROM tstc WHERE tcode = @lv_rtc INTO @DATA(lv_pgm).
+      IF sy-subrc = 0 AND lv_pgm IS NOT INITIAL.
+        DATA(ls_rres) = resolve_repo_object( CONV string( lv_pgm ) ).
+        IF ls_rres-name IS NOT INITIAL.
+          APPEND ls_rres TO rt_ref.
+        ENDIF.
       ENDIF.
     ENDIF.
 

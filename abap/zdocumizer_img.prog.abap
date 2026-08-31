@@ -3097,10 +3097,25 @@ CLASS lcl_bcset IMPLEMENTATION.
       CLEAR lv_clnt.
     ENDIF.
 
+*   Dieselbe Tabelle haengt oft an mehreren IMG-Aktivitaeten - T000 kam
+*   im ersten echten Dokument viermal vor, TVAK zweimal. Der Sammler
+*   liest sie jedes Mal vollstaendig und mit demselben Filter, es sind
+*   also dieselben Zeilen. Ein zweites Mal aufgenommen waeren sie
+*   Dubletten unter neuen Satznummern, und das BC-Set schriebe
+*   denselben Satz mehrfach.
+*
+*   Registriert wird erst hier, hinter den Waechtern: eine wegen
+*   Abschneidung uebersprungene Tabelle darf ein spaeteres,
+*   vollstaendiges Vorkommen nicht blockieren.
     READ TABLE mt_tabs TRANSPORTING NO FIELDS WITH KEY table_line = lv_tab.
-    IF sy-subrc <> 0.
-      APPEND lv_tab TO mt_tabs.
+    IF sy-subrc = 0.
+      note( iv_tab    = lv_tab
+            iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+            iv_text   = lcl_t=>ui( d = `Bereits aus einer anderen Aktivitaet aufgenommen.`
+                                   e = `Already included from another activity.` ) ).
+      RETURN.
     ENDIF.
+    APPEND lv_tab TO mt_tabs.
 
     IF mv_ref IS INITIAL AND is_ref-activity IS NOT INITIAL.
       mv_ref = is_ref-activity.

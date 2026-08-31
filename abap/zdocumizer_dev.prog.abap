@@ -3730,6 +3730,17 @@ SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE gv_blk1.
     SELECTION-SCREEN COMMENT 1(30) gv_tsval FOR FIELD p_sval.
     PARAMETERS p_sval TYPE tadir-obj_name.
   SELECTION-SCREEN END OF LINE.
+* Der Startpunkt-Typ AL nimmt seine Objekte aus einer Datei. Ein
+* Objektname hat dort keinen Platz - eine Pfadangabe passt nicht in
+* TADIR-OBJ_NAME, also ein eigenes Feld.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tafil FOR FIELD p_afile.
+    PARAMETERS p_afile TYPE char128 LOWER CASE VISIBLE LENGTH 40.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tasrv FOR FIELD p_asrv.
+    PARAMETERS p_asrv AS CHECKBOX.
+  SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_trec FOR FIELD p_recur.
     PARAMETERS p_recur AS CHECKBOX DEFAULT 'X'.
@@ -3894,6 +3905,8 @@ INITIALIZATION.
     gv_blk3  = 'Ausgabe'.
     gv_tstyp = 'Typ'.
     gv_tsval = 'Name (Paket, Report, ...)'.
+    gv_tafil = 'Fehlliste (nur bei Typ AL)'.
+    gv_tasrv = 'Datei liegt auf Appl.-Server'.
     gv_trec  = 'Unterpakete rekursiv (Paket)'.
     gv_tloc  = 'lokale Pakete einbeziehen'.
     gv_tlang = 'Ausgabesprache'.
@@ -3938,6 +3951,8 @@ INITIALIZATION.
     gv_blk3  = 'Output'.
     gv_tstyp = 'Type'.
     gv_tsval = 'Name (package, report, ...)'.
+    gv_tafil = 'Request list (type AL only)'.
+    gv_tasrv = 'File is on the app server'.
     gv_trec  = 'Include subpackages (package)'.
     gv_tloc  = 'Include local packages'.
     gv_tlang = 'Output language'.
@@ -4004,7 +4019,12 @@ AT SELECTION-SCREEN.
 * block the very box the user is trying to reach.
   IF sy-ucomm = 'ONLI' OR sy-ucomm = 'SJOB' OR sy-ucomm = 'PRIN'.
     IF p_imp = abap_false.
-      IF p_sval IS INITIAL.
+      IF p_stype = 'AL'.
+        IF p_afile IS INITIAL.
+          MESSAGE lcl_t=>ui( d = `Bitte die Fehlliste angeben.`
+                             e = `Please enter the request list.` ) TYPE 'E'.
+        ENDIF.
+      ELSEIF p_sval IS INITIAL.
         MESSAGE lcl_t=>ui( d = `Bitte einen Startpunkt angeben.`
                            e = `Please enter a start point.` ) TYPE 'E'.
       ENDIF.
@@ -4401,7 +4421,11 @@ CLASS lcl_collector_dev DEFINITION.
                 iv_maxhit TYPE i
                 iv_fsrc   TYPE abap_bool
                 iv_udep   TYPE i
-                iv_def    TYPE abap_bool.
+                iv_def    TYPE abap_bool
+*               Mehrere Startobjekte statt eines: die Fehlliste aus dem
+*               Zielsystem. Ist die Tabelle gefuellt, tritt sie an die
+*               Stelle von iv_stype/iv_sval.
+                it_start  TYPE ty_objrefs OPTIONAL.
     METHODS get_stat_packages RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_objects  RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_total    RETURNING VALUE(rv) TYPE i.
@@ -4445,6 +4469,7 @@ CLASS lcl_collector_dev DEFINITION.
     DATA mv_n_docu TYPE i.
     DATA mv_def    TYPE abap_bool.
     DATA mv_n_def  TYPE i.
+    DATA mt_start  TYPE ty_objrefs.
 
 *   Definition data for the reimport. One method per object type, all of
 *   them reading exactly the structures that the matching DDIF_*_PUT
@@ -4676,6 +4701,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     mv_falb   = iv_falb.
     mv_flang  = iv_flang.
     mv_def    = iv_def.
+    mt_start  = it_start.
   ENDMETHOD.
 
   METHOD build_title.
@@ -7962,32 +7988,70 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
   METHOD collect_single.
 
-*   Chapter 1 is the object the user asked for. Everything it refers to
-*   follows in chapter 2, grouped by object type - the reader gets the
-*   entry point first and the surroundings afterwards.
-    DATA(ls_start) = start_object( ).
+*   Die ersten Kapitel sind die Objekte, nach denen gefragt wurde -
+*   eines bei einem einzelnen Startpunkt, mehrere bei einer
+*   Arbeitsliste. Was sie verwenden, folgt danach in einem gemeinsamen
+*   Kapitel, gruppiert nach Objekttyp: der Leser bekommt erst den
+*   Einstieg und dann die Umgebung.
+*
+*   Die Kapitelnummern sind deshalb keine Konstanten mehr. Bei einem
+*   Startobjekt kommt genau die alte Gliederung 1 / 2 / 3 heraus.
+    DATA lt_start TYPE ty_objrefs.
 
-    mv_n_tot = 1.
-    mv_n_obj = 1.
-    DATA(lo_root) = document_object( iv_type  = ls_start-type
-                                     iv_name  = ls_start-name
-                                     iv_id    = `1`
-                                     iv_level = 1
-                                     iv_calls = abap_true
-                                     iv_root  = abap_true ).
-    co_document->add_chapter( lo_root ).
+    IF mt_start IS NOT INITIAL.
+      lt_start = mt_start.
+    ELSE.
+      DATA(ls_one) = start_object( ).
+      APPEND VALUE #( type = ls_one-type name = ls_one-name ) TO lt_start.
+    ENDIF.
 
-*   Breadth first, so that the direct neighbours of the start object are
-*   documented before anything further out.
     DATA lt_queue TYPE ty_objrefs.
     DATA lt_done  TYPE ty_objrefs.
     DATA lt_open  TYPE ty_objrefs.
     DATA lv_depth TYPE i.
+    DATA lv_sno   TYPE i.
 
-    APPEND VALUE #( type = ls_start-type name = ls_start-name ) TO lt_done.
+    LOOP AT lt_start INTO DATA(ls_start).
+
+      READ TABLE lt_done TRANSPORTING NO FIELDS
+           WITH KEY type = ls_start-type name = ls_start-name.
+      IF sy-subrc = 0.
+        CONTINUE.
+      ENDIF.
+
+      lv_sno   = lv_sno + 1.
+      mv_n_tot = mv_n_tot + 1.
+      mv_n_obj = mv_n_obj + 1.
+
+      co_document->add_chapter( document_object( iv_type  = ls_start-type
+                                                 iv_name  = ls_start-name
+                                                 iv_id    = |{ lv_sno }|
+                                                 iv_level = 1
+                                                 iv_calls = abap_true
+                                                 iv_root  = abap_true ) ).
+
+      APPEND VALUE #( type = ls_start-type name = ls_start-name ) TO lt_done.
+
+*     Breadth first, so that the direct neighbours of the start objects
+*     are documented before anything further out.
+      IF mv_calls = abap_true AND mv_rdep > 0.
+        APPEND LINES OF collect_refs( iv_type = ls_start-type
+                                      iv_name = ls_start-name ) TO lt_queue.
+      ENDIF.
+
+    ENDLOOP.
+
+    IF lv_sno = 0.
+      RETURN.
+    ENDIF.
+
+    DATA lv_gref TYPE i.
+    DATA lv_guse TYPE i.
+    lv_gref = lv_sno + 1.
+    lv_guse = lv_sno + 2.
 
     DATA(lo_refchap) = NEW lcl_chapter(
-      iv_id    = `2`
+      iv_id    = |{ lv_gref }|
       iv_level = 1
       iv_type  = 'GROUP'
       iv_title = lcl_t=>t( d = 'Verwendete Objekte'
@@ -7999,9 +8063,6 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *   verwendeten Objekte haengen an "Ausgehende Aufrufe" und der
 *   Verweistiefe, die verwendenden an "Verwendungsnachweis" und der
 *   Verwendungstiefe.
-    IF mv_calls = abap_true AND mv_rdep > 0.
-      lt_queue = collect_refs( iv_type = ls_start-type iv_name = ls_start-name ).
-    ENDIF.
     lv_depth = 1.
 
     WHILE lt_queue IS NOT INITIAL AND lv_depth <= mv_rdep.
@@ -8043,8 +8104,10 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       DATA lt_uo   TYPE ty_objrefs.
       DATA lv_ud   TYPE i.
 
-      lt_uq = usage_objects( iv_type = ls_start-type
-                             iv_name = ls_start-name ).
+      LOOP AT lt_start INTO DATA(ls_su).
+        APPEND LINES OF usage_objects( iv_type = ls_su-type
+                                       iv_name = ls_su-name ) TO lt_uq.
+      ENDLOOP.
       lv_ud = 1.
 
       WHILE lt_uq IS NOT INITIAL AND lv_ud <= mv_udep.
@@ -8111,7 +8174,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         lv_last = ls_a-type.
         lv_tno = lv_tno + 1.
         lv_ono = 0.
-        lo_tchap = NEW lcl_chapter( iv_id    = |2.{ lv_tno }|
+        lo_tchap = NEW lcl_chapter( iv_id    = |{ lv_gref }.{ lv_tno }|
                                     iv_level = 2
                                     iv_type  = 'GROUP'
                                     iv_title = type_title( ls_a-type ) ).
@@ -8123,7 +8186,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
       lo_tchap->add_child( document_object( iv_type  = ls_a-type
                                             iv_name  = ls_a-name
-                                            iv_id    = |2.{ lv_tno }.{ lv_ono }|
+                                            iv_id    = |{ lv_gref }.{ lv_tno }.{ lv_ono }|
                                             iv_level = 3
                                             iv_calls = ls_a-deep ) ).
 
@@ -8135,7 +8198,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     ENDIF.
 
     DATA(lo_usechap) = NEW lcl_chapter(
-      iv_id    = `3`
+      iv_id    = |{ lv_guse }|
       iv_level = 1
       iv_type  = 'GROUP'
       iv_title = lcl_t=>t( d = 'Verwendende Objekte'
@@ -8166,7 +8229,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         lv_last = ls_us-type.
         lv_tno = lv_tno + 1.
         lv_ono = 0.
-        lo_tchap = NEW lcl_chapter( iv_id    = |3.{ lv_tno }|
+        lo_tchap = NEW lcl_chapter( iv_id    = |{ lv_guse }.{ lv_tno }|
                                     iv_level = 2
                                     iv_type  = 'GROUP'
                                     iv_title = type_title( ls_us-type ) ).
@@ -8178,7 +8241,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
       lo_tchap->add_child( document_object( iv_type  = ls_us-type
                                             iv_name  = ls_us-name
-                                            iv_id    = |3.{ lv_tno }.{ lv_ono }|
+                                            iv_id    = |{ lv_guse }.{ lv_tno }.{ lv_ono }|
                                             iv_level = 3 ) ).
 
     ENDLOOP.
@@ -8460,7 +8523,11 @@ FORM stype_list CHANGING ct_list TYPE ty_stypes.
       ( code = 'SB' text = 'Service-Binding' )
       ( code = 'IS' text = 'IDoc-Segmenttyp' )
       ( code = 'IT' text = 'IDoc-Basistyp' )
-      ( code = 'U5' text = 'UI5-Anwendung (BSP)' ) ).
+      ( code = 'U5' text = 'UI5-Anwendung (BSP)' )
+*     Kein Objekt, sondern eine Liste davon: die Fehlliste, die der
+*     IMG-Report im Zielsystem geschrieben hat. Der Startpunkt steht
+*     dann in der Datei, nicht im Namensfeld.
+      ( code = 'AL' text = 'Arbeitsliste aus Fehlliste' ) ).
   ELSE.
     ct_list = VALUE #(
       ( code = 'K'  text = 'Package' )
@@ -8479,7 +8546,8 @@ FORM stype_list CHANGING ct_list TYPE ty_stypes.
       ( code = 'SB' text = 'Service binding' )
       ( code = 'IS' text = 'IDoc segment type' )
       ( code = 'IT' text = 'IDoc basic type' )
-      ( code = 'U5' text = 'UI5 application (BSP)' ) ).
+      ( code = 'U5' text = 'UI5 application (BSP)' )
+      ( code = 'AL' text = 'Work list from request list' ) ).
   ENDIF.
 
 ENDFORM.
@@ -8945,6 +9013,168 @@ ENDFORM.
 *----------------------------------------------------------------------*
 * Main flow
 *----------------------------------------------------------------------*
+*----------------------------------------------------------------------*
+* lcl_request
+*----------------------------------------------------------------------*
+* Der Leser der Fehlliste. Sie kommt aus dem IMG-Report des
+* Zielsystems und traegt nur Typ und Name je Objekt - mehr braucht es
+* nicht, um hier eine Arbeitsliste daraus zu machen.
+*
+* Bewusst ein eigenes, winziges Format: das DEV-Dokument und das
+* IMG-Dokument sprechen verschiedene Vokabulare, und eines davon zu
+* verbiegen kostet mehr als dreissig Zeilen hier.
+CLASS lcl_request DEFINITION.
+  PUBLIC SECTION.
+    CLASS-METHODS parse
+      IMPORTING iv_xml         TYPE string
+      EXPORTING ev_source      TYPE string
+      RETURNING VALUE(rt_objs) TYPE ty_objrefs.
+ENDCLASS.
+
+CLASS lcl_request IMPLEMENTATION.
+
+  METHOD parse.
+
+    DATA lo_reader TYPE REF TO if_sxml_reader.
+    DATA lv_target TYPE string.
+
+    CLEAR ev_source.
+    lo_reader = cl_sxml_string_reader=>create( cl_abap_codepage=>convert_to( iv_xml ) ).
+
+    DO.
+
+      DATA(lo_node) = lo_reader->read_next_node( ).
+      IF lo_node IS INITIAL.
+        EXIT.
+      ENDIF.
+
+      CASE lo_node->type.
+
+        WHEN if_sxml_node=>co_nt_element_open.
+
+          DATA(lo_open) = CAST if_sxml_open_element( lo_node ).
+          CLEAR lv_target.
+
+          CASE lo_open->qname-name.
+
+            WHEN 'object'.
+              DATA ls_obj TYPE ty_objref.
+              CLEAR ls_obj.
+              LOOP AT lo_open->get_attributes( ) INTO DATA(lo_attr).
+                CASE lo_attr->qname-name.
+                  WHEN 'type'. ls_obj-type = to_upper( lo_attr->get_value( ) ).
+                  WHEN 'name'. ls_obj-name = to_upper( lo_attr->get_value( ) ).
+                ENDCASE.
+              ENDLOOP.
+*             Ein Auftrag ohne Typ oder Name ist keiner. Lieber
+*             stillschweigend uebergehen als ein leeres Objekt
+*             dokumentieren wollen.
+              IF ls_obj-type IS NOT INITIAL AND ls_obj-name IS NOT INITIAL.
+                READ TABLE rt_objs TRANSPORTING NO FIELDS
+                     WITH KEY type = ls_obj-type name = ls_obj-name.
+                IF sy-subrc <> 0.
+                  APPEND ls_obj TO rt_objs.
+                ENDIF.
+              ENDIF.
+
+            WHEN 'source'.
+              lv_target = 'source'.
+
+          ENDCASE.
+
+        WHEN if_sxml_node=>co_nt_value.
+
+          IF lv_target = 'source'.
+            ev_source = CAST if_sxml_value_node( lo_node )->get_value( ).
+          ENDIF.
+
+        WHEN if_sxml_node=>co_nt_element_close.
+          CLEAR lv_target.
+
+      ENDCASE.
+
+    ENDDO.
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+*----------------------------------------------------------------------*
+* Fehlliste einlesen
+*----------------------------------------------------------------------*
+FORM read_request CHANGING ct_objs   TYPE ty_objrefs
+                           cv_source TYPE string.
+
+  DATA lv_file TYPE string.
+  DATA lv_x    TYPE xstring.
+  DATA lt_bin  TYPE solix_tab.
+  DATA lv_len  TYPE i.
+  DATA lv_xml  TYPE string.
+
+  CLEAR: ct_objs, cv_source.
+
+  lv_file = p_afile.
+  CONDENSE lv_file.
+
+  IF p_asrv = abap_true.
+    OPEN DATASET lv_file FOR INPUT IN BINARY MODE.
+    IF sy-subrc <> 0.
+      WRITE: / lcl_t=>ui( d = `Serverdatei nicht lesbar        :`
+                          e = `Server file cannot be read       :` ), lv_file.
+      RETURN.
+    ENDIF.
+    READ DATASET lv_file INTO lv_x MAXIMUM LENGTH 20000000.
+    CLOSE DATASET lv_file.
+  ELSE.
+    IF sy-batch = abap_true.
+      WRITE: / lcl_t=>ui( d = `Im Hintergrund gibt es keinen PC-Zugriff.`
+                          e = `There is no PC access in the background.` ).
+      RETURN.
+    ENDIF.
+    CALL FUNCTION 'GUI_UPLOAD'
+      EXPORTING  filename   = lv_file
+                 filetype   = 'BIN'
+      IMPORTING  filelength = lv_len
+      TABLES     data_tab   = lt_bin
+      EXCEPTIONS OTHERS     = 1.
+    IF sy-subrc <> 0.
+      WRITE: / lcl_t=>ui( d = `Datei nicht lesbar              :`
+                          e = `File cannot be read              :` ), lv_file.
+      RETURN.
+    ENDIF.
+    CALL FUNCTION 'SCMS_BINARY_TO_XSTRING'
+      EXPORTING  input_length = lv_len
+      IMPORTING  buffer       = lv_x
+      TABLES     binary_tab   = lt_bin
+      EXCEPTIONS OTHERS       = 1.
+    IF sy-subrc <> 0.
+      WRITE: / lcl_t=>ui( d = `Datei nicht wandelbar.` e = `File cannot be converted.` ).
+      RETURN.
+    ENDIF.
+  ENDIF.
+
+  IF lv_x IS INITIAL.
+    WRITE: / lcl_t=>ui( d = `Datei ist leer.` e = `File is empty.` ).
+    RETURN.
+  ENDIF.
+
+  TRY.
+      lv_xml = cl_abap_codepage=>convert_from( lv_x ).
+    CATCH cx_root.
+      WRITE: / lcl_t=>ui( d = `Datei ist kein UTF-8.` e = `File is not UTF-8.` ).
+      RETURN.
+  ENDTRY.
+
+  TRY.
+      ct_objs = lcl_request=>parse( EXPORTING iv_xml    = lv_xml
+                                    IMPORTING ev_source = cv_source ).
+    CATCH cx_root.
+      WRITE: / lcl_t=>ui( d = `Datei ist keine Documizer-Fehlliste.`
+                          e = `File is not a Documizer request list.` ).
+  ENDTRY.
+
+ENDFORM.
+
 START-OF-SELECTION.
 
 * The document speaks the output language, including its own headings.
@@ -8955,6 +9185,28 @@ START-OF-SELECTION.
   IF p_imp = abap_true.
     PERFORM import.
     RETURN.
+  ENDIF.
+
+* Beim Startpunkt-Typ AL kommen die Objekte aus der Fehlliste. Ohne
+* lesbare Datei gibt es nichts zu tun - lieber hier aufhoeren als ein
+* leeres Dokument erzeugen.
+  DATA lt_start TYPE ty_objrefs.
+  DATA lv_rsrc  TYPE string.
+  IF p_stype = 'AL'.
+    WRITE: / lcl_t=>ui( d = `Documizer - Entwicklerdokumentation` e = `Documizer - developer documentation` ).
+    ULINE.
+    PERFORM read_request CHANGING lt_start lv_rsrc.
+    IF lt_start IS INITIAL.
+      WRITE: / lcl_t=>ui( d = `Keine Objekte in der Fehlliste.`
+                          e = `No objects in the request list.` ).
+      RETURN.
+    ENDIF.
+    WRITE: / lcl_t=>ui( d = `Fehlliste                        :` e = `Request list                     :` ), p_afile.
+    IF lv_rsrc IS NOT INITIAL.
+      WRITE: / lcl_t=>ui( d = `angefordert von                  :` e = `requested by                     :` ), lv_rsrc.
+    ENDIF.
+    WRITE: / lcl_t=>ui( d = `Angeforderte Objekte             :` e = `Objects requested                :` ), lines( lt_start ).
+    SKIP.
   ENDIF.
 
   DATA(lo_collector) = NEW lcl_collector_dev( iv_stype  = p_stype
@@ -8977,7 +9229,8 @@ START-OF-SELECTION.
                                               iv_maxhit = p_maxhit
                                               iv_fsrc   = p_fsrc
                                               iv_udep   = p_udep
-                                              iv_def    = p_def ).
+                                              iv_def    = p_def
+                                              it_start  = lt_start ).
 
   DATA lo_coll TYPE REF TO lif_docu_collector.
   lo_coll = lo_collector.
@@ -8994,8 +9247,10 @@ START-OF-SELECTION.
 
   DATA(ls_docmeta) = lo_doc->get_meta( ).
 
-  WRITE: / lcl_t=>ui( d = `Documizer - Entwicklerdokumentation` e = `Documizer - developer documentation` ).
-  ULINE.
+  IF p_stype <> 'AL'.
+    WRITE: / lcl_t=>ui( d = `Documizer - Entwicklerdokumentation` e = `Documizer - developer documentation` ).
+    ULINE.
+  ENDIF.
   PERFORM stype_text USING p_stype CHANGING gv_tstyt.
   WRITE: / lcl_t=>ui( d = `Startpunkt                       :` e = `Start point                      :` ), gv_tstyt(20), p_sval.
   IF p_stype = 'K'.

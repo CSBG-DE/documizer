@@ -7,3 +7,8 @@ documizer_*.md
 
 # Oertliche Startskripte
 startclaude_*.bat
+
+# Oertliche Sitzungseinstellungen. Sie enthalten Pfade und
+# Kommandozeilen dieser Maschine und gehoeren niemandem sonst.
+.claude/settings.local.json
+.claude/settings.local.json.bak

@@ -1006,6 +1006,45 @@ SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE gv_blk3.
   SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b3.
 
+* Der zweite Betriebsmodus des Reports: ein vorhandenes Dokument
+* einlesen und daraus ein BC-Set anlegen. Geschrieben wird damit noch
+* nichts - das Customizing entsteht erst, wenn jemand das Set in
+* SCPR20 aktiviert.
+SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE gv_blk4.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tbcs FOR FIELD p_bcs.
+    PARAMETERS p_bcs AS CHECKBOX USER-COMMAND bmode.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tbfil FOR FIELD p_bfile.
+    PARAMETERS p_bfile TYPE char128 LOWER CASE VISIBLE LENGTH 40.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tbsrv FOR FIELD p_bsrv.
+    PARAMETERS p_bsrv AS CHECKBOX.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tbid FOR FIELD p_bid.
+    PARAMETERS p_bid TYPE scpr_id.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tbtxt FOR FIELD p_btext.
+    PARAMETERS p_btext TYPE scprtext-text.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tbpak FOR FIELD p_bpack.
+    PARAMETERS p_bpack TYPE devclass DEFAULT '$TMP'.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tbtr FOR FIELD p_btr.
+    PARAMETERS p_btr TYPE trkorr.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tbtst FOR FIELD p_btest.
+    PARAMETERS p_btest AS CHECKBOX DEFAULT 'X'.
+  SELECTION-SCREEN END OF LINE.
+SELECTION-SCREEN END OF BLOCK b4.
+
 INITIALIZATION.
 * Screen labels live in the source, not in the text pool, so that a copied
 * report is readable in any system. English is the default; German is used
@@ -1042,6 +1081,15 @@ INITIALIZATION.
     gv_tpath = 'Verzeichnis'.
     gv_tdsrv = 'Ablage Appl.-Server'.
     gv_tsrv  = 'Verzeichnis'.
+    gv_blk4  = 'BC-Set aus Dokument erzeugen'.
+    gv_tbcs  = 'BC-Set erzeugen'.
+    gv_tbfil = 'XML-Datei'.
+    gv_tbsrv = 'Datei liegt auf Appl.-Server'.
+    gv_tbid  = 'Name des BC-Sets'.
+    gv_tbtxt = 'Beschreibung'.
+    gv_tbpak = 'Paket'.
+    gv_tbtr  = 'Auftrag'.
+    gv_tbtst = 'Testlauf (nichts anlegen)'.
   ELSE.
     gv_blk1  = 'Structure selection'.
     gv_blk2  = 'Scope'.
@@ -1074,6 +1122,15 @@ INITIALIZATION.
     gv_tpath = 'Directory'.
     gv_tdsrv = 'Store on app server'.
     gv_tsrv  = 'Directory'.
+    gv_blk4  = 'Create BC set from document'.
+    gv_tbcs  = 'Create BC set'.
+    gv_tbfil = 'XML file'.
+    gv_tbsrv = 'File is on the app server'.
+    gv_tbid  = 'Name of the BC set'.
+    gv_tbtxt = 'Description'.
+    gv_tbpak = 'Package'.
+    gv_tbtr  = 'Request'.
+    gv_tbtst = 'Test run (create nothing)'.
   ENDIF.
 
 AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_path.
@@ -2817,6 +2874,618 @@ CLASS lcl_renderer_html IMPLEMENTATION.
 ENDCLASS.
 
 *----------------------------------------------------------------------*
+* lcl_bcset
+*----------------------------------------------------------------------*
+* Aus einem IMG-Dokument ein BC-Set erzeugen, statt Customizing-
+* Tabellen zu beschreiben.
+*
+* Der Unterschied ist keine Geschmacksfrage. Ein MODIFY auf eine
+* Customizing-Tabelle geht an der Pflegesicht vorbei: keine
+* Feldpruefung, keine Fremdschluesselpruefung, keine Ereignisse des
+* Pflegedialogs - und vor allem keine Aufzeichnung in einem Auftrag.
+* Die Zeilen staenden im Zielsystem und in keinem Transport.
+*
+* Ein BC-Set dreht das um. Dieser Report legt nur die Vorlage an;
+* geschrieben wird spaeter mit SCPR20 - mit Pruefungen, mit Protokoll,
+* mit Auftragsaufzeichnung, und als bewusste Entscheidung eines
+* Menschen statt als Nebenwirkung eines Importlaufs.
+*
+* Geschrieben wird ueber SCPR_PRSET_DB_SAVE_ORIG_TABLES. Zwei Saetze
+* aus seinem eigenen Quelltext bestimmen den Aufbau hier:
+* "Er macht keine Ueberpruefungen, ob die Daten korrekt sind" -
+* deshalb stehen die Waechter in dieser Klasse. Und: "Wird eine
+* Tabelle nicht uebergeben, so werden die Daten auf der Datenbank
+* geloescht" - deshalb gehen alle sieben Tabellen hinein, auch die
+* leeren.
+*
+* Aufgezeichnet wird auf Ebene der Basistabellen, weil der Sammler sie
+* liest: OBJECTTYPE 'T', OBJECTNAME gleich Tabellenname. Das ist in
+* sich stimmig - SAP legt selbst solche BC-Sets an (NRIVS/SNUMS). Ein
+* BC-Set auf Sichtebene waere naeher an SM30, verlangte aber, dass
+* schon der Export auf Sichtebene liest.
+CLASS lcl_bcset DEFINITION.
+  PUBLIC SECTION.
+    TYPES: BEGIN OF ty_bclog,
+             tab    TYPE string,
+             action TYPE string,
+             text   TYPE string,
+           END OF ty_bclog.
+    TYPES ty_bclogs TYPE STANDARD TABLE OF ty_bclog WITH EMPTY KEY.
+
+    METHODS constructor
+      IMPORTING iv_id   TYPE scpr_id
+                iv_text TYPE string
+                iv_pack TYPE devclass
+                iv_tr   TYPE trkorr
+                iv_test TYPE abap_bool.
+
+    METHODS build
+      IMPORTING io_document  TYPE REF TO lcl_document
+      RETURNING VALUE(rv_ok) TYPE abap_bool.
+
+    METHODS get_log     RETURNING VALUE(rt_log) TYPE ty_bclogs.
+    METHODS get_tables  RETURNING VALUE(rv_n)   TYPE i.
+    METHODS get_records RETURNING VALUE(rv_n)   TYPE i.
+    METHODS get_values  RETURNING VALUE(rv_n)   TYPE i.
+    METHODS get_clidep  RETURNING VALUE(rv_f)   TYPE abap_bool.
+
+  PRIVATE SECTION.
+    DATA mv_id     TYPE scpr_id.
+    DATA mv_text   TYPE string.
+    DATA mv_pack   TYPE devclass.
+    DATA mv_tr     TYPE trkorr.
+    DATA mv_test   TYPE abap_bool.
+    DATA mv_clidep TYPE scprattr-cli_dep.
+    DATA mv_ref    TYPE scprattr-refname.
+    DATA mv_rec    TYPE i.
+    DATA mt_vals   TYPE STANDARD TABLE OF scprvals WITH EMPTY KEY.
+    DATA mt_reca   TYPE STANDARD TABLE OF scprreca WITH EMPTY KEY.
+    DATA mt_tabs   TYPE STANDARD TABLE OF tabname WITH EMPTY KEY.
+    DATA mt_log    TYPE ty_bclogs.
+
+    METHODS walk
+      IMPORTING it_chapters TYPE ty_chapters.
+    METHODS add_object
+      IMPORTING io_object TYPE REF TO lcl_object
+                is_ref    TYPE ty_reference.
+    METHODS save
+      RETURNING VALUE(rv_ok) TYPE abap_bool.
+    METHODS note
+      IMPORTING iv_tab    TYPE clike
+                iv_action TYPE string
+                iv_text   TYPE string.
+ENDCLASS.
+
+CLASS lcl_bcset IMPLEMENTATION.
+
+  METHOD constructor.
+    mv_id   = iv_id.
+    mv_text = iv_text.
+    mv_pack = iv_pack.
+    mv_tr   = iv_tr.
+    mv_test = iv_test.
+  ENDMETHOD.
+
+  METHOD note.
+    APPEND VALUE ty_bclog( tab    = |{ iv_tab }|
+                           action = iv_action
+                           text   = iv_text ) TO mt_log.
+  ENDMETHOD.
+
+  METHOD get_log.
+    rt_log = mt_log.
+  ENDMETHOD.
+
+  METHOD get_tables.
+    rv_n = lines( mt_tabs ).
+  ENDMETHOD.
+
+  METHOD get_records.
+    rv_n = lines( mt_reca ).
+  ENDMETHOD.
+
+  METHOD get_values.
+    rv_n = lines( mt_vals ).
+  ENDMETHOD.
+
+  METHOD get_clidep.
+    rv_f = mv_clidep.
+  ENDMETHOD.
+
+  METHOD build.
+
+*   Anlegen darf nur, wer darf. Die Pruefung steht vor der ersten
+*   Zeile Arbeit, nicht dahinter.
+    CALL FUNCTION 'SCPR_AUTHORITY_CHECK'
+      EXPORTING  task             = 'CREATE'
+      EXCEPTIONS wrong_parameters = 1
+                 no_authority     = 2
+                 OTHERS           = 3.
+    IF sy-subrc <> 0.
+      note( iv_tab    = mv_id
+            iv_action = lcl_t=>ui( d = `Abbruch` e = `aborted` )
+            iv_text   = lcl_t=>ui( d = `Keine Berechtigung fuer BC-Sets (S_BCSETS).`
+                                   e = `No authorization for BC sets (S_BCSETS).` ) ).
+      RETURN.
+    ENDIF.
+
+    walk( io_document->get_chapters( ) ).
+
+    IF mt_reca IS INITIAL.
+      note( iv_tab    = mv_id
+            iv_action = lcl_t=>ui( d = `nichts zu tun` e = `nothing to do` )
+            iv_text   = lcl_t=>ui( d = `Kein uebernehmbarer Datensatz im Dokument.`
+                                   e = `No usable record in the document.` ) ).
+      RETURN.
+    ENDIF.
+
+    IF mv_test = abap_true.
+      rv_ok = abap_true.
+      RETURN.
+    ENDIF.
+
+    rv_ok = save( ).
+
+  ENDMETHOD.
+
+  METHOD walk.
+
+    LOOP AT it_chapters INTO DATA(lo_chapter).
+      DATA(ls_ref) = lo_chapter->get_reference( ).
+      LOOP AT lo_chapter->get_objects( ) INTO DATA(lo_object).
+        add_object( io_object = lo_object is_ref = ls_ref ).
+      ENDLOOP.
+      walk( lo_chapter->get_children( ) ).
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD add_object.
+
+    DATA lv_tab TYPE tabname.
+    DATA lv_val TYPE scprvals-value.
+
+    DATA(lt_rows) = io_object->get_rows( ).
+    IF lt_rows IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    lv_tab = to_upper( io_object->get_name( ) ).
+
+*   Ein abgeschnittenes Objekt ist gefaehrlicher als ein fehlendes:
+*   das BC-Set saehe vollstaendig aus und waere es nicht. Genau diese
+*   Sorte Fehler faellt erst im Zielsystem auf, und dann als
+*   fehlendes Customizing.
+    IF io_object->get_truncated( ) = abap_true.
+      note( iv_tab    = lv_tab
+            iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+            iv_text   = lcl_t=>ui( d = `Daten im Export abgeschnitten - Zeilengrenze erhoehen.`
+                                   e = `Data truncated during export - raise the row limit.` ) ).
+      RETURN.
+    ENDIF.
+
+    SELECT SINGLE contflag FROM dd02l
+      WHERE tabname = @lv_tab AND as4local = 'A'
+      INTO @DATA(lv_cont).
+    IF sy-subrc <> 0.
+      note( iv_tab    = lv_tab
+            iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+            iv_text   = lcl_t=>ui( d = `Nicht im Data Dictionary.`
+                                   e = `Not in the Data Dictionary.` ) ).
+      RETURN.
+    ENDIF.
+
+*   Nur Customizing. Eine Lieferklasse A traegt Bewegungsdaten, und
+*   die haben in einem BC-Set nichts verloren.
+    IF lv_cont <> 'C' AND lv_cont <> 'G' AND lv_cont <> 'E'.
+      note( iv_tab    = lv_tab
+            iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+            iv_text   = |{ lcl_t=>ui( d = `Lieferklasse` e = `Delivery class` ) } { lv_cont } - | &&
+                        lcl_t=>ui( d = `kein Customizing.` e = `not customizing.` ) ).
+      RETURN.
+    ENDIF.
+
+*   Das Mandantenfeld reist als Schluessel ohne Wert mit. Den Mandanten
+*   setzt die Aktivierung im Zielsystem - er gehoert dem Zielsystem,
+*   nicht dem Dokument. SAP haelt es in seinen eigenen BC-Sets genauso.
+    SELECT SINGLE fieldname FROM dd03l
+      WHERE tabname = @lv_tab AND as4local = 'A' AND datatype = 'CLNT'
+      INTO @DATA(lv_clnt).
+    IF sy-subrc = 0.
+      mv_clidep = 'X'.
+    ELSE.
+      CLEAR lv_clnt.
+    ENDIF.
+
+    READ TABLE mt_tabs TRANSPORTING NO FIELDS WITH KEY table_line = lv_tab.
+    IF sy-subrc <> 0.
+      APPEND lv_tab TO mt_tabs.
+    ENDIF.
+
+    IF mv_ref IS INITIAL AND is_ref-activity IS NOT INITIAL.
+      mv_ref = is_ref-activity.
+    ENDIF.
+
+    DATA(lt_flds) = io_object->get_fields( ).
+    DATA lv_taken TYPE i.
+    DATA lv_long  TYPE i.
+
+    LOOP AT lt_rows INTO DATA(ls_row).
+
+      DATA lt_tmp TYPE STANDARD TABLE OF scprvals WITH EMPTY KEY.
+      DATA lv_skip TYPE abap_bool.
+      CLEAR: lt_tmp, lv_skip.
+
+      LOOP AT ls_row-cells INTO DATA(ls_cell).
+
+        DATA ls_val TYPE scprvals.
+        CLEAR ls_val.
+        ls_val-id        = mv_id.
+        ls_val-version   = 'N'.
+        ls_val-tablename = lv_tab.
+        ls_val-fieldname = to_upper( ls_cell-name ).
+
+        READ TABLE lt_flds INTO DATA(ls_fld)
+             WITH KEY name = ls_cell-name.
+        IF sy-subrc = 0 AND ls_fld-keyflag = abap_true.
+          ls_val-flag = 'KEY'.
+        ELSE.
+          ls_val-flag = 'USE'.
+        ENDIF.
+
+        IF lv_clnt IS NOT INITIAL AND ls_val-fieldname = lv_clnt.
+          ls_val-flag = 'KEY'.
+          CLEAR ls_val-value.
+        ELSE.
+*         Stillschweigend abschneiden waere derselbe Fehler wie eine
+*         abgeschnittene Tabelle - nur eine Ebene tiefer. Der ganze
+*         Satz faellt weg, und es steht im Protokoll.
+          IF strlen( ls_cell-value ) > 255.
+            lv_skip = abap_true.
+            EXIT.
+          ENDIF.
+          lv_val = ls_cell-value.
+          ls_val-value = lv_val.
+        ENDIF.
+
+        APPEND ls_val TO lt_tmp.
+      ENDLOOP.
+
+      IF lv_skip = abap_true OR lt_tmp IS INITIAL.
+        lv_long = lv_long + 1.
+        CONTINUE.
+      ENDIF.
+
+      mv_rec = mv_rec + 1.
+      DATA lv_recnr TYPE scprvals-recnumber.
+      lv_recnr = |{ mv_rec }|.
+
+      LOOP AT lt_tmp INTO ls_val.
+        ls_val-recnumber = lv_recnr.
+        APPEND ls_val TO mt_vals.
+      ENDLOOP.
+
+      APPEND VALUE scprreca( id         = mv_id
+                             version    = 'N'
+                             tablename  = lv_tab
+                             recnumber  = lv_recnr
+                             objectname = lv_tab
+                             objecttype = 'T'
+                             activity   = is_ref-activity ) TO mt_reca.
+      lv_taken = lv_taken + 1.
+    ENDLOOP.
+
+    note( iv_tab    = lv_tab
+          iv_action = lcl_t=>ui( d = `aufgenommen` e = `included` )
+          iv_text   = |{ lv_taken } { lcl_t=>ui( d = `Saetze` e = `records` ) }| &&
+                      COND #( WHEN lv_long > 0
+                              THEN |, { lv_long } { lcl_t=>ui(
+                                     d = `wegen Feldlaenge ueber 255 ausgelassen`
+                                     e = `omitted, field longer than 255` ) }|
+                              ELSE `` ) ).
+
+  ENDMETHOD.
+
+  METHOD save.
+
+    DATA lt_vall  TYPE STANDARD TABLE OF scprvall WITH EMPTY KEY.
+    DATA lt_skeys TYPE STANDARD TABLE OF scprskeys WITH EMPTY KEY.
+    DATA lt_fldv  TYPE STANDARD TABLE OF scprfldv WITH EMPTY KEY.
+    DATA lt_pprl  TYPE STANDARD TABLE OF scprpprl WITH EMPTY KEY.
+    DATA lt_text  TYPE STANDARD TABLE OF scprtext WITH EMPTY KEY.
+    DATA lv_comp  TYPE dlvunit.
+    DATA lv_rel   TYPE saprelease.
+    DATA lv_txt   TYPE scprtext-text.
+
+    lv_txt = mv_text.
+    APPEND VALUE scprtext( langu   = sy-langu
+                           id      = mv_id
+                           version = 'N'
+                           text    = lv_txt ) TO lt_text.
+
+    CALL FUNCTION 'SCPR_SV_DEVCLASS_GET'
+      EXPORTING devclass  = mv_pack
+      IMPORTING component = lv_comp
+                release   = lv_rel.
+
+*   SCPRSKEYS bleibt leer: SCPR_TEMPL_DB_SCPRSKEYS_CALC steigt bei
+*   einer anderen Kategorie als Switch sofort wieder aus. Fuer ein
+*   klassisches BC-Set gibt es dort nichts zu rechnen.
+    CALL FUNCTION 'SCPR_PRSET_DB_SAVE_ORIG_TABLES'
+      EXPORTING  profid                      = mv_id
+                 version                     = 'N'
+                 proftype                    = 'TMV'
+                 category                    = ' '
+                 cli_dep                     = mv_clidep
+                 cli_cas                     = ' '
+                 reftype                     = 'SIMG'
+                 refname                     = mv_ref
+                 orgid                       = '/CUSTOMER/'
+                 component                   = lv_comp
+                 minrelease                  = lv_rel
+                 maxrelease                  = '*'
+                 profstate                   = ' '
+                 act_info                    = ' '
+                 langu                       = sy-langu
+                 proftext                    = lv_txt
+      TABLES     scprvals                    = mt_vals
+                 scprvall                    = lt_vall
+                 scprreca                    = mt_reca
+                 scprskeys                   = lt_skeys
+                 scprfldv                    = lt_fldv
+                 scprtext                    = lt_text
+                 scprpprl                    = lt_pprl
+      EXCEPTIONS no_profile_id               = 1
+                 wrong_version               = 2
+                 wrong_proftype              = 3
+                 wrong_category              = 4
+                 no_profile_text             = 5
+                 error_in_writing_attr       = 6
+                 error_in_writing_text       = 7
+                 error_in_deleting_text      = 8
+                 error_in_writing_data       = 9
+                 error_in_deleting_data      = 10
+                 error_in_writing_vals       = 11
+                 error_in_deleting_vals      = 12
+                 error_in_writing_fldtxtvar  = 13
+                 error_in_deleting_fldtxtvar = 14
+                 OTHERS                      = 15.
+    IF sy-subrc <> 0.
+      note( iv_tab    = mv_id
+            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+            iv_text   = |SCPR_PRSET_DB_SAVE_ORIG_TABLES subrc { sy-subrc }| ).
+      RETURN.
+    ENDIF.
+
+*   Ohne Katalogeintrag ist das BC-Set nicht auslieferbar. Die
+*   Parameter sind gegen die Felder von TADIR typisiert - ein nur
+*   konvertierbares Feld reicht dort nicht.
+    DATA lv_obj  TYPE tadir-object.
+    DATA lv_name TYPE tadir-obj_name.
+    DATA lv_corr TYPE tadir-korrnum.
+    DATA lv_srcs TYPE tadir-srcsystem.
+    DATA lv_auth TYPE tadir-author.
+    DATA lv_lang TYPE tadir-masterlang.
+
+    lv_obj  = 'SCP1'.
+    lv_name = mv_id.
+    lv_srcs = sy-sysid.
+    lv_auth = sy-uname.
+    lv_lang = sy-langu.
+    IF mv_pack NP '$*'.
+      lv_corr = mv_tr.
+    ENDIF.
+
+    CALL FUNCTION 'TR_TADIR_INTERFACE'
+      EXPORTING  wi_test_modus       = abap_false
+                 wi_tadir_pgmid      = 'R3TR'
+                 wi_tadir_object     = lv_obj
+                 wi_tadir_obj_name   = lv_name
+                 wi_tadir_devclass   = mv_pack
+                 wi_tadir_masterlang = lv_lang
+                 wi_tadir_author     = lv_auth
+                 wi_tadir_srcsystem  = lv_srcs
+                 wi_tadir_korrnum    = lv_corr
+      EXCEPTIONS OTHERS              = 1.
+    IF sy-subrc <> 0.
+      note( iv_tab    = mv_id
+            iv_action = lcl_t=>ui( d = `Warnung` e = `warning` )
+            iv_text   = |TR_TADIR_INTERFACE subrc { sy-subrc }| ).
+    ENDIF.
+
+    COMMIT WORK AND WAIT.
+
+*   Nicht dem Baustein glauben, sondern nachsehen. Genau diese Sorte
+*   Nachfrage haette anderswo schon einmal viel Zeit gespart.
+    SELECT COUNT(*) FROM scprvals
+      WHERE id = @mv_id AND version = 'N' INTO @DATA(lv_chk).
+    IF lv_chk <> lines( mt_vals ).
+      note( iv_tab    = mv_id
+            iv_action = lcl_t=>ui( d = `Warnung` e = `warning` )
+            iv_text   = |{ lcl_t=>ui( d = `Gesichert` e = `Saved` ) } { lv_chk }, | &&
+                        |{ lcl_t=>ui( d = `erwartet` e = `expected` ) } { lines( mt_vals ) }| ).
+      RETURN.
+    ENDIF.
+
+    rv_ok = abap_true.
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+*----------------------------------------------------------------------*
+* BC-Set aus einem Dokument erzeugen
+*----------------------------------------------------------------------*
+FORM bcset.
+
+  DATA lv_xml  TYPE string.
+  DATA lv_x    TYPE xstring.
+  DATA lv_file TYPE string.
+* GUI_UPLOAD und SCMS_BINARY_TO_XSTRING erwarten beide die Zeilenstruktur
+* SOLIX, nicht ein blankes X-Feld. Eine Tabelle elementarer Zeilen endet
+* in CALL_FUNCTION_CONFLICT_TAB_TYP.
+  DATA lt_bin  TYPE solix_tab.
+  DATA lv_len  TYPE i.
+  DATA lv_id   TYPE scpr_id.
+
+  WRITE: / lcl_t=>ui( d = `Documizer - BC-Set aus IMG-Dokument`
+                      e = `Documizer - BC set from IMG document` ).
+  ULINE.
+
+  lv_id = to_upper( p_bid ).
+  IF lv_id IS INITIAL.
+    WRITE: / lcl_t=>ui( d = `Kein Name fuer das BC-Set angegeben.`
+                        e = `No name given for the BC set.` ).
+    RETURN.
+  ENDIF.
+* Ein BC-Set ist ein Repository-Objekt. Der Kundennamensraum gilt hier
+* wie ueberall sonst.
+  IF lv_id(1) <> 'Z' AND lv_id(1) <> 'Y' AND lv_id(1) <> '/'.
+    WRITE: / lcl_t=>ui( d = `Name ausserhalb des Kundennamensraums (Z, Y oder /...).`
+                        e = `Name outside the customer namespace (Z, Y or /...).` ).
+    RETURN.
+  ENDIF.
+
+  lv_file = p_bfile.
+  CONDENSE lv_file.
+  IF lv_file IS INITIAL.
+    WRITE: / lcl_t=>ui( d = `Keine Datei angegeben.` e = `No file given.` ).
+    RETURN.
+  ENDIF.
+
+  IF p_bsrv = abap_true.
+    OPEN DATASET lv_file FOR INPUT IN BINARY MODE.
+    IF sy-subrc <> 0.
+      WRITE: / lcl_t=>ui( d = `Serverdatei nicht lesbar        :`
+                          e = `Server file cannot be read       :` ), lv_file.
+      RETURN.
+    ENDIF.
+    READ DATASET lv_file INTO lv_x MAXIMUM LENGTH 20000000.
+    CLOSE DATASET lv_file.
+  ELSE.
+    IF sy-batch = abap_true.
+      WRITE: / lcl_t=>ui( d = `Im Hintergrund gibt es keinen PC-Zugriff. Datei auf dem Applikationsserver ablegen.`
+                          e = `There is no PC access in the background. Put the file on the application server.` ).
+      RETURN.
+    ENDIF.
+    CALL FUNCTION 'GUI_UPLOAD'
+      EXPORTING  filename   = lv_file
+                 filetype   = 'BIN'
+      IMPORTING  filelength = lv_len
+      TABLES     data_tab   = lt_bin
+      EXCEPTIONS OTHERS     = 1.
+    IF sy-subrc <> 0.
+      WRITE: / lcl_t=>ui( d = `Datei nicht lesbar              :`
+                          e = `File cannot be read              :` ), lv_file.
+      RETURN.
+    ENDIF.
+    CALL FUNCTION 'SCMS_BINARY_TO_XSTRING'
+      EXPORTING  input_length = lv_len
+      IMPORTING  buffer       = lv_x
+      TABLES     binary_tab   = lt_bin
+      EXCEPTIONS OTHERS       = 1.
+    IF sy-subrc <> 0.
+      WRITE: / lcl_t=>ui( d = `Datei nicht wandelbar.` e = `File cannot be converted.` ).
+      RETURN.
+    ENDIF.
+  ENDIF.
+
+  IF lv_x IS INITIAL.
+    WRITE: / lcl_t=>ui( d = `Datei ist leer.` e = `File is empty.` ).
+    RETURN.
+  ENDIF.
+
+  TRY.
+      lv_xml = cl_abap_codepage=>convert_from( lv_x ).
+    CATCH cx_root.
+      WRITE: / lcl_t=>ui( d = `Datei ist kein UTF-8.` e = `File is not UTF-8.` ).
+      RETURN.
+  ENDTRY.
+
+  DATA lo_doc TYPE REF TO lcl_document.
+  TRY.
+      lo_doc = lcl_parser_xml=>parse( lv_xml ).
+    CATCH cx_root.
+      WRITE: / lcl_t=>ui( d = `Datei ist kein Documizer-XML.`
+                          e = `File is not a Documizer XML.` ).
+      RETURN.
+  ENDTRY.
+
+  DATA(ls_meta) = lo_doc->get_meta( ).
+  WRITE: / lcl_t=>ui( d = `Datei                            :` e = `File                             :` ), lv_file.
+  WRITE: / lcl_t=>ui( d = `Quellsystem                      :` e = `Source system                    :` ),
+           ls_meta-system, '/', ls_meta-client.
+  WRITE: / lcl_t=>ui( d = `Erzeugt                          :` e = `Created                          :` ),
+           ls_meta-created_at, ls_meta-created_by.
+  WRITE: / lcl_t=>ui( d = `BC-Set                           :` e = `BC set                           :` ), lv_id.
+  WRITE: / lcl_t=>ui( d = `Paket                            :` e = `Package                          :` ), p_bpack.
+  IF p_btr IS NOT INITIAL.
+    WRITE: / lcl_t=>ui( d = `Auftrag                          :` e = `Request                          :` ), p_btr.
+  ENDIF.
+
+* Ein Dokument, das schon beim Sammeln an die Grenze gestossen ist,
+* beschreibt nicht den Zustand des Quellsystems. Daraus ein BC-Set zu
+* bauen hiesse, eine Luecke mit auszuliefern.
+  IF ls_meta-truncated = abap_true.
+    SKIP.
+    WRITE: / lcl_t=>ui( d = `ACHTUNG: Das Dokument ist unvollstaendig (Kapitelgrenze erreicht).`
+                        e = `CAUTION: the document is incomplete (chapter limit reached).` ).
+    WRITE: / lcl_t=>ui( d = `Einzelne Objekte koennen fehlen. Export ohne Begrenzung wiederholen.`
+                        e = `Individual objects may be missing. Repeat the export without a limit.` ).
+  ENDIF.
+
+  IF p_btest = abap_true.
+    SKIP.
+    WRITE: / lcl_t=>ui( d = `TESTLAUF - es wird nichts angelegt.`
+                        e = `TEST RUN - nothing is created.` ).
+  ENDIF.
+
+  DATA(lo_bcset) = NEW lcl_bcset( iv_id   = lv_id
+                                  iv_text = CONV string( p_btext )
+                                  iv_pack = p_bpack
+                                  iv_tr   = p_btr
+                                  iv_test = p_btest ).
+
+  DATA(lv_ok) = lo_bcset->build( lo_doc ).
+
+  SKIP.
+  WRITE: / lcl_t=>ui( d = `Tabellen                         :` e = `Tables                           :` ), lo_bcset->get_tables( ).
+  WRITE: / lcl_t=>ui( d = `Datensaetze                      :` e = `Records                          :` ), lo_bcset->get_records( ).
+  WRITE: / lcl_t=>ui( d = `Feldwerte                        :` e = `Field values                     :` ), lo_bcset->get_values( ).
+  IF lo_bcset->get_clidep( ) = abap_true.
+    WRITE: / lcl_t=>ui( d = `Mandantenabhaengig               : ja`
+                        e = `Client-dependent                 : yes` ).
+  ENDIF.
+
+  SKIP.
+* Spaltenbreite ueber feste Felder, nicht ueber Offset/Laenge auf dem
+* String: ls_log-tab(30) verlangt 30 Zeichen und bricht ab, sobald der
+* Name kuerzer ist - STRING_LENGTH_TOO_LARGE.
+  DATA lv_ltab TYPE char30.
+  DATA lv_lact TYPE char20.
+  LOOP AT lo_bcset->get_log( ) INTO DATA(ls_log).
+    lv_ltab = ls_log-tab.
+    lv_lact = ls_log-action.
+    WRITE: / lv_ltab, lv_lact, ls_log-text.
+  ENDLOOP.
+
+  SKIP.
+  IF p_btest = abap_true.
+    WRITE: / lcl_t=>ui( d = `Testlauf beendet. Zum Anlegen den Testlauf abwaehlen.`
+                        e = `Test run finished. Deselect the test run to create it.` ).
+  ELSEIF lv_ok = abap_true.
+    WRITE: / lcl_t=>ui( d = `BC-Set angelegt. Es ist noch nichts aktiviert -`
+                        e = `BC set created. Nothing has been activated yet -` ).
+    WRITE: / lcl_t=>ui( d = `das Customizing entsteht erst mit SCPR20.`
+                        e = `the customizing is written only by SCPR20.` ).
+  ELSE.
+    WRITE: / lcl_t=>ui( d = `BC-Set nicht angelegt. Siehe Protokoll oben.`
+                        e = `BC set not created. See the log above.` ).
+  ENDIF.
+
+ENDFORM.
+
+*----------------------------------------------------------------------*
 * Value help for the structure ID
 *----------------------------------------------------------------------*
 FORM f4_struktur.
@@ -3124,6 +3793,13 @@ START-OF-SELECTION.
 
 * The document speaks the output language, including its own headings.
   lcl_t=>set_lang( p_langu ).
+
+* Der BC-Set-Lauf liest ein fertiges Dokument und sammelt nichts. Er
+* steht deshalb vor allem anderen und kehrt danach zurueck.
+  IF p_bcs = abap_true.
+    PERFORM bcset.
+    RETURN.
+  ENDIF.
 
   IF p_tree IS INITIAL.
     PERFORM search_structures.

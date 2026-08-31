@@ -1043,6 +1043,14 @@ SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE gv_blk4.
     SELECTION-SCREEN COMMENT 1(30) gv_tbtst FOR FIELD p_btest.
     PARAMETERS p_btest AS CHECKBOX DEFAULT 'X'.
   SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tbreq FOR FIELD p_breq.
+    PARAMETERS p_breq AS CHECKBOX DEFAULT 'X'.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tbrf FOR FIELD p_brfil.
+    PARAMETERS p_brfil TYPE char128 LOWER CASE VISIBLE LENGTH 40.
+  SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b4.
 
 INITIALIZATION.
@@ -1090,6 +1098,8 @@ INITIALIZATION.
     gv_tbpak = 'Paket'.
     gv_tbtr  = 'Auftrag'.
     gv_tbtst = 'Testlauf (nichts anlegen)'.
+    gv_tbreq = 'Fehlliste erzeugen'.
+    gv_tbrf  = 'Fehlliste - Datei'.
   ELSE.
     gv_blk1  = 'Structure selection'.
     gv_blk2  = 'Scope'.
@@ -1131,6 +1141,8 @@ INITIALIZATION.
     gv_tbpak = 'Package'.
     gv_tbtr  = 'Request'.
     gv_tbtst = 'Test run (create nothing)'.
+    gv_tbreq = 'Create request list'.
+    gv_tbrf  = 'Request list - file'.
   ENDIF.
 
 AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_path.
@@ -2912,6 +2924,17 @@ CLASS lcl_bcset DEFINITION.
            END OF ty_bclog.
     TYPES ty_bclogs TYPE STANDARD TABLE OF ty_bclog WITH EMPTY KEY.
 
+*   Was im Zielsystem fehlt, ist keine Randnotiz, sondern das
+*   Wesentliche: die kundeneigenen Tabellen. Sie werden mitgezaehlt,
+*   damit daraus eine Arbeitsliste fuer den Entwickler-Report werden
+*   kann.
+    TYPES: BEGIN OF ty_miss,
+             type     TYPE string,
+             name     TYPE string,
+             activity TYPE string,
+           END OF ty_miss.
+    TYPES ty_misses TYPE STANDARD TABLE OF ty_miss WITH EMPTY KEY.
+
     METHODS constructor
       IMPORTING iv_id   TYPE scpr_id
                 iv_text TYPE string
@@ -2923,7 +2946,8 @@ CLASS lcl_bcset DEFINITION.
       IMPORTING io_document  TYPE REF TO lcl_document
       RETURNING VALUE(rv_ok) TYPE abap_bool.
 
-    METHODS get_log     RETURNING VALUE(rt_log) TYPE ty_bclogs.
+    METHODS get_log     RETURNING VALUE(rt_log)  TYPE ty_bclogs.
+    METHODS get_missing RETURNING VALUE(rt_miss) TYPE ty_misses.
     METHODS get_tables  RETURNING VALUE(rv_n)   TYPE i.
     METHODS get_records RETURNING VALUE(rv_n)   TYPE i.
     METHODS get_values  RETURNING VALUE(rv_n)   TYPE i.
@@ -2941,6 +2965,7 @@ CLASS lcl_bcset DEFINITION.
     DATA mt_vals   TYPE STANDARD TABLE OF scprvals WITH EMPTY KEY.
     DATA mt_reca   TYPE STANDARD TABLE OF scprreca WITH EMPTY KEY.
     DATA mt_tabs   TYPE STANDARD TABLE OF tabname WITH EMPTY KEY.
+    DATA mt_miss   TYPE ty_misses.
     DATA mt_log    TYPE ty_bclogs.
 
     METHODS walk
@@ -2974,6 +2999,10 @@ CLASS lcl_bcset IMPLEMENTATION.
 
   METHOD get_log.
     rt_log = mt_log.
+  ENDMETHOD.
+
+  METHOD get_missing.
+    rt_miss = mt_miss.
   ENDMETHOD.
 
   METHOD get_tables.
@@ -3072,6 +3101,18 @@ CLASS lcl_bcset IMPLEMENTATION.
             iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
             iv_text   = lcl_t=>ui( d = `Nicht im Data Dictionary.`
                                    e = `Not in the Data Dictionary.` ) ).
+*     Genau hier faellt das kundeneigene Customizing durch, und genau
+*     das ist das Interessante. Der Name wandert in die Fehlliste,
+*     damit der Entwickler-Report im Quellsystem die Tabelle nachliefern
+*     kann. Die Aktivitaet kommt mit, damit hinterher nachvollziehbar
+*     ist, woher die Anforderung stammt.
+      READ TABLE mt_miss TRANSPORTING NO FIELDS
+           WITH KEY name = CONV string( lv_tab ).
+      IF sy-subrc <> 0.
+        APPEND VALUE ty_miss( type     = 'TABL'
+                              name     = CONV string( lv_tab )
+                              activity = is_ref-activity ) TO mt_miss.
+      ENDIF.
       RETURN.
     ENDIF.
 
@@ -3329,6 +3370,85 @@ CLASS lcl_bcset IMPLEMENTATION.
 ENDCLASS.
 
 *----------------------------------------------------------------------*
+* lcl_request
+*----------------------------------------------------------------------*
+* Die Fehlliste: was im Zielsystem fehlt, als Arbeitsauftrag fuer den
+* Entwickler-Report im Quellsystem.
+*
+* Ein eigenes, kleines Format - bewusst weder ein IMG- noch ein
+* DEV-Dokument. Die beiden Reports sprechen unterschiedliche
+* Vokabulare (<object type= name=> gegen <definition kind=>), und eines
+* davon zu verbiegen waere teurer als dreissig Zeilen Schreiber hier
+* und dreissig Zeilen Leser drueben.
+*
+* Der Auftrag traegt nur Typ und Name. Alles Weitere - Datenelemente,
+* Domaenen, Reihenfolge beim Anlegen - findet der Entwickler-Report
+* selbst; das ist seine Aufgabe und er kann sie laengst.
+CLASS lcl_request DEFINITION.
+  PUBLIC SECTION.
+    CLASS-METHODS render
+      IMPORTING it_miss       TYPE lcl_bcset=>ty_misses
+                iv_source     TYPE string
+      RETURNING VALUE(rv_xml) TYPE string.
+ENDCLASS.
+
+CLASS lcl_request IMPLEMENTATION.
+
+  METHOD render.
+
+    DATA lo_sw TYPE REF TO cl_sxml_string_writer.
+    DATA lo_w  TYPE REF TO if_sxml_writer.
+
+    lo_sw = cl_sxml_string_writer=>create( type = if_sxml=>co_xt_xml10 ).
+    lo_w  = lo_sw.
+    lo_w->set_option( option = if_sxml_writer=>co_opt_linebreaks ).
+    lo_w->set_option( option = if_sxml_writer=>co_opt_indent ).
+
+    lo_w->open_element( name = 'documizer' ).
+    lo_w->write_attribute( name = 'version' value = gc_version ).
+    lo_w->write_attribute( name = 'type'    value = 'REQUEST' ).
+
+    lo_w->open_element( name = 'meta' ).
+    lo_w->open_element( name = 'system' ).
+    lo_w->write_value( CONV string( sy-sysid ) ).
+    lo_w->close_element( ).
+    lo_w->open_element( name = 'client' ).
+    lo_w->write_value( CONV string( sy-mandt ) ).
+    lo_w->close_element( ).
+    lo_w->open_element( name = 'created_by' ).
+    lo_w->write_value( CONV string( sy-uname ) ).
+    lo_w->close_element( ).
+    lo_w->open_element( name = 'created_at' ).
+    lo_w->write_value( |{ sy-datum DATE = ISO } { sy-uzeit TIME = ISO }| ).
+    lo_w->close_element( ).
+*   Woher das Dokument kam, das die Luecke gezeigt hat. Wer den Auftrag
+*   spaeter in die Hand nimmt, soll das Quellsystem nicht raten muessen.
+    lo_w->open_element( name = 'source' ).
+    lo_w->write_value( iv_source ).
+    lo_w->close_element( ).
+    lo_w->close_element( ).
+
+    lo_w->open_element( name = 'objects' ).
+    LOOP AT it_miss INTO DATA(ls_miss).
+      lo_w->open_element( name = 'object' ).
+      lo_w->write_attribute( name = 'type' value = ls_miss-type ).
+      lo_w->write_attribute( name = 'name' value = ls_miss-name ).
+      IF ls_miss-activity IS NOT INITIAL.
+        lo_w->write_attribute( name = 'activity' value = ls_miss-activity ).
+      ENDIF.
+      lo_w->close_element( ).
+    ENDLOOP.
+    lo_w->close_element( ).
+
+    lo_w->close_element( ).
+
+    rv_xml = cl_abap_codepage=>convert_from( lo_sw->get_output( ) ).
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+*----------------------------------------------------------------------*
 * BC-Set aus einem Dokument erzeugen
 *----------------------------------------------------------------------*
 FORM bcset.
@@ -3484,6 +3604,32 @@ FORM bcset.
     WRITE: / lv_ltab, lv_lact, ls_log-text.
   ENDLOOP.
 
+* Die Fehlliste entsteht unabhaengig vom Testlauf: gerade im Testlauf
+* will man wissen, was im Zielsystem fehlt, bevor man etwas anlegt.
+  DATA(lt_miss) = lo_bcset->get_missing( ).
+  IF p_breq = abap_true.
+    SKIP.
+    IF lt_miss IS INITIAL.
+      WRITE: / lcl_t=>ui( d = `Keine fehlenden Objekte - keine Fehlliste noetig.`
+                          e = `No missing objects - no request list needed.` ).
+    ELSE.
+      DATA(lv_req) = lcl_request=>render(
+                       it_miss   = lt_miss
+                       iv_source = |{ ls_meta-system }/{ ls_meta-client }| ).
+      PERFORM write_request USING lv_req.
+      WRITE: / lcl_t=>ui( d = `Fehlliste                        :`
+                          e = `Request list                     :` ), lines( lt_miss ),
+               lcl_t=>ui( d = `Objekte` e = `objects` ).
+      LOOP AT lt_miss INTO DATA(ls_miss).
+        DATA lv_mtyp TYPE char6.
+        DATA lv_mnam TYPE char30.
+        lv_mtyp = ls_miss-type.
+        lv_mnam = ls_miss-name.
+        WRITE: / '   ', lv_mtyp, lv_mnam, ls_miss-activity.
+      ENDLOOP.
+    ENDIF.
+  ENDIF.
+
   SKIP.
   IF p_btest = abap_true.
     WRITE: / lcl_t=>ui( d = `Testlauf beendet. Zum Anlegen den Testlauf abwaehlen.`
@@ -3497,6 +3643,71 @@ FORM bcset.
     WRITE: / lcl_t=>ui( d = `BC-Set nicht angelegt. Siehe Protokoll oben.`
                         e = `BC set not created. See the log above.` ).
   ENDIF.
+
+ENDFORM.
+
+*----------------------------------------------------------------------*
+* Fehlliste schreiben
+*----------------------------------------------------------------------*
+* Ziel ist dasselbe Medium wie die Eingabedatei: liegt das Dokument auf
+* dem Applikationsserver, landet auch der Auftrag dort. Ohne
+* Dateinamen wird nur angezeigt - eine Liste, die man abschreiben kann,
+* ist besser als eine Datei, die niemand angefordert hat.
+FORM write_request USING iv_xml TYPE string.
+
+  DATA lv_file TYPE string.
+  DATA lv_x    TYPE xstring.
+  DATA lt_bin  TYPE solix_tab.
+  DATA lv_len  TYPE i.
+
+  lv_file = p_brfil.
+  CONDENSE lv_file.
+  IF lv_file IS INITIAL.
+    WRITE: / lcl_t=>ui( d = `Keine Datei fuer die Fehlliste angegeben - nur Anzeige.`
+                        e = `No file given for the request list - display only.` ).
+    RETURN.
+  ENDIF.
+
+  lv_x = cl_abap_codepage=>convert_to( iv_xml ).
+
+  IF p_bsrv = abap_true.
+    OPEN DATASET lv_file FOR OUTPUT IN BINARY MODE.
+    IF sy-subrc <> 0.
+      WRITE: / lcl_t=>ui( d = `Serverdatei nicht schreibbar    :`
+                          e = `Server file cannot be written    :` ), lv_file.
+      RETURN.
+    ENDIF.
+    TRANSFER lv_x TO lv_file.
+    CLOSE DATASET lv_file.
+    WRITE: / lcl_t=>ui( d = `Fehlliste geschrieben           :`
+                        e = `Request list written             :` ), lv_file.
+    RETURN.
+  ENDIF.
+
+  IF sy-batch = abap_true.
+    WRITE: / lcl_t=>ui( d = `Im Hintergrund gibt es keinen PC-Zugriff.`
+                        e = `There is no PC access in the background.` ).
+    RETURN.
+  ENDIF.
+
+  CALL FUNCTION 'SCMS_XSTRING_TO_BINARY'
+    EXPORTING  buffer     = lv_x
+    IMPORTING  output_length = lv_len
+    TABLES     binary_tab = lt_bin.
+
+  cl_gui_frontend_services=>gui_download(
+    EXPORTING  filename     = lv_file
+               filetype     = 'BIN'
+               bin_filesize = lv_len
+    CHANGING   data_tab     = lt_bin
+    EXCEPTIONS OTHERS       = 1 ).
+  IF sy-subrc <> 0.
+    WRITE: / lcl_t=>ui( d = `Fehlliste nicht schreibbar      :`
+                        e = `Request list cannot be written   :` ), lv_file.
+    RETURN.
+  ENDIF.
+  WRITE: / lcl_t=>ui( d = `Fehlliste geschrieben           :`
+                      e = `Request list written             :` ), lv_file.
 
 ENDFORM.
 

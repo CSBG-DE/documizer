@@ -1,4 +1,4 @@
-# Spezifikation: Documizer — IMG- und Entwicklerdokumentationsreports
+# Spezifikation: Documizer — IMG-, Entwickler- und ATC-Dokumentationsreports
 
 **Stand:** 26.08.2026
 **Grundlage:** [Recherche](recherche-img-und-entwicklerdoku.md)
@@ -126,6 +126,16 @@ Pakete im System S4H (Auftrag `S4HK901757`):
 | `ZCONS_DOCUMIZER_CORE` | Rahmenwerk, Kapitelmodell, Export |
 | `ZCONS_DOCUMIZER_IMG` | IMG- und Customizing-Collector |
 | `ZCONS_DOCUMIZER_DEV` | Paket- und Entwicklungs-Collector |
+
+### 2.3a Der ATC-Report
+
+`ZDOCUMIZER_ATC` benutzt dasselbe Kapitelmodell, denselben XML-Renderer, denselben Parser und
+denselben HTML-Renderer wie die beiden anderen — wortgleich, mit derselben Begründung
+(siehe 1.2). Er liegt in `ZCONS_DOCUMIZER_CORE`.
+
+**Die Kopfzeile der HTML-Ausgabe kommt aus `doc_type` im Dokument, nicht aus dem Report.** Sie
+war anfangs fest verdrahtet, und beim Kopieren des Renderers in den ATC-Report wanderte
+prompt „Documizer - IMG-Dokumentation" mit. Eine abgeleitete Überschrift kann das nicht.
 
 ### 2.4 Grundsätze
 
@@ -635,6 +645,73 @@ Gefiltert wird die Verweisliste, nicht der Gegenstand des Dokuments.
    2.3 Funktionsbausteine
    …
 ```
+
+---
+
+## 4a. Report C — ATC-/Code-Inspector-Prüfkonfiguration (`ZDOCUMIZER_ATC`)
+
+Die dritte Sicht neben Customizing und Entwicklung: nicht was im System steht, sondern **woran
+es gemessen wird**. Welche Prüfvarianten es gibt, welche Checks darin stecken, mit welcher
+Priorität deren Meldungen laufen und mit welchem Pseudokommentar oder Pragma sich eine Meldung
+unterdrücken lässt.
+
+### 4a.1 Selektionsbild
+
+**Block: Auswahl**
+
+| Parameter | Vorbelegung | Bedeutung |
+|---|---|---|
+| `P_MODE` | `V` | `V` Prüfvariante, `K` Katalog aller aktivierten Checks |
+| `P_VAR` | `DEFAULT` | Prüfvariante, F4 über die nicht-versteckten |
+| `P_VUSR` | | Eigentümer; leer heißt globale Variante |
+| `P_ALLV` | | alle Varianten statt einer |
+| `P_HIDE` | | versteckte Varianten einbeziehen |
+
+**Block: Umfang** — `P_LANGU`, `P_MSG` (Meldungen je Check), `P_PRIO` (Kundenpriorisierung),
+`P_PCOM` (Pseudokommentar und Pragma), `P_EXMP` (erteilte Ausnahmen zählen), `P_CAT` (nach
+Kategorie gliedern).
+
+**Block: Ausgabe** — wie Report A, einschließlich `P_FNAME`.
+
+### 4a.2 Woher die Daten kommen
+
+| Quelle | Inhalt |
+|---|---|
+| `SCICHKV_HD` / `SCICHKV_TX` | Kopf und Text der Prüfvarianten |
+| `CL_CI_CHECKVARIANT=>GET_REF` + `GET_INFO` | die Checkliste der Variante |
+| `CL_CI_TESTS=>GET_TESTS` | alle aktivierten Checks (Katalogmodus) |
+| `CL_CI_TESTS=>GET_TEST_REF` | Instanz einer Checkklasse: Beschreibung, Kategorie, Version, `SCIMESSAGES` |
+| `CL_CI_TESTS=>GET_MESSAGE_TEXT` | Meldungstext in der Ausgabesprache |
+| `SCIPRIORITIES` | kundeneigene Priorisierung je Check und Code |
+| `SATC_CI_EXEMPT` | erteilte Ausnahmen |
+
+**Die Checkliste einer Variante steht nicht lesbar in der Datenbank.** `SCICHKV_PA` ist ein
+INDX-Cluster; der Weg führt deshalb über die API und nicht über `SELECT`. Das ist der Grund,
+warum dieser Report als einziger ohne einen einzigen Direktzugriff auf seine Kerndaten
+auskommt.
+
+**`GET_TEST_REF` meldet einen unbekannten Check nicht**, sondern gibt eine initiale Referenz
+zurück — das steht so in der Dokumentation der Methode. Der Aufrufer muss selbst prüfen. Ein
+Check, den die Variante nennt und den es hier nach einem Upgrade nicht mehr gibt, bekommt
+trotzdem ein Kapitel mit dem Vermerk „nicht ladbar": eine Lücke in der Konfiguration zu
+verschweigen wäre schlimmer, als sie zu zeigen.
+
+**Die Ausnahmen werden als „es gibt eine Ausnahme dazu" gezählt, nicht als „sie ist
+genehmigt".** Der Schlüssel des Genehmigungsstands wechselt zwischen Ständen; gefiltert wird
+nur auf nicht gelöscht. Das Dokument sagt es so.
+
+### 4a.3 Kapitelaufbau
+
+```
+1     Prüfvariante            (Kopfdaten als Objekt: Eigentümer, transportierbar, versteckt)
+1.1     Kategorie
+1.1.1     Check               (ein Objekt: Meldungen mit Code, Priorität, Kundenprio,
+                               Pseudokommentar, Pragma, Ausnahmen, Text)
+```
+
+Im Katalogmodus entfällt die Variantenebene. Ohne `P_CAT` entfällt die Kategorieebene.
+
+Gemessen auf S4H an der Variante `DEFAULT`: 17 Checks, 1198 Meldungen, Roundtrip identisch.
 
 ---
 
@@ -1285,6 +1362,7 @@ Namensauflösungen gegen `TADIR` laufen gebündelt, nicht mit einem `SELECT SING
 | 7j | Dateiname vorgebbar (`P_FNAME`) | erledigt |
 | 7k | Basistyp zieht seine Segmenttypen nach | erledigt |
 | 7l | Paket beim Import umlenkbar (`P_IKEEP`, Regeln) | erledigt |
+| 7m | `ZDOCUMIZER_ATC`: Prüfkonfiguration dokumentieren | erledigt |
 | 8 | Markdown-Renderer | offen |
 | 9 | Anzeigen ohne Anlegen | offen |
 | 10 | BAL-Protokoll, `S_DEVELOP` | offen |

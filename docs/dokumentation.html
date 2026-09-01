@@ -342,6 +342,7 @@
         <li><a href="#bcset">BC-Sets &amp; Fehlliste</a></li>
         <li><a href="#projekt">Projektmodus</a></li>
         <li><a href="#dev">Development-Report</a></li>
+        <li><a href="#atc">ATC-Report</a></li>
         <li><a href="#ausgabe">Ausgabe &amp; Export</a></li>
         <li><a href="#import">Import</a></li>
         <li><a href="#datenmodell">Datenmodell</a></li>
@@ -860,6 +861,59 @@
       </section>
 
       <!-- 6 -->
+      <section id="atc">
+        <h2>ATC-Report</h2>
+        <p class="sec-note">
+          <span class="mono">ZDOCUMIZER_ATC</span> — die dritte Sicht. Nicht was im System
+          steht, sondern <b>woran es gemessen wird</b>: welche Prüfvarianten es gibt, welche
+          Checks darin stecken, mit welcher Priorität deren Meldungen laufen und womit sich
+          eine Meldung unterdrücken lässt.
+        </p>
+
+        <h3>Zwei Modi</h3>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Modus</th><th>Beantwortet</th></tr></thead>
+            <tbody>
+              <tr><td>Prüfvariante</td><td>Was <em>wird</em> geprüft — eine Variante oder alle</td></tr>
+              <tr><td>Katalog</td><td>Was <em>könnte</em> geprüft werden — alle aktivierten Checks</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Gegliedert wird Variante &rarr; Kategorie &rarr; Check; je Check eine Tabelle der
+          Meldungen mit Code, Priorität, Kundenpriorität, Pseudokommentar, Pragma und Text.
+          Die kundeneigene Priorisierung aus <code>SCIPRIORITIES</code> steht als eigene Spalte
+          neben der Priorität der Checkklasse — genau dort sieht man, wo ein System vom
+          Standard abweicht.
+        </p>
+
+        <h3>Warum über die API</h3>
+        <p>
+          <b>Die Checkliste einer Variante steht nicht lesbar in der Datenbank.</b>
+          <code>SCICHKV_PA</code> ist ein INDX-Cluster; der Weg führt über
+          <code>CL_CI_CHECKVARIANT=&gt;GET_REF</code> und <code>GET_INFO</code>, die Checks
+          selbst über <code>CL_CI_TESTS=&gt;GET_TEST_REF</code>. Dieser Report ist damit der
+          einzige, der ohne einen einzigen Direktzugriff auf seine Kerndaten auskommt.
+        </p>
+        <div class="note">
+          <p><b><code>GET_TEST_REF</code> meldet einen unbekannten Check nicht</b>, sondern gibt
+          eine initiale Referenz zurück — das steht so in der Dokumentation der Methode. Ein
+          Check, den die Variante nennt und den es nach einem Upgrade nicht mehr gibt, bekommt
+          trotzdem ein Kapitel mit dem Vermerk „nicht ladbar": eine Lücke in der Konfiguration
+          zu verschweigen wäre schlimmer, als sie zu zeigen.</p>
+        </div>
+        <p>
+          Die Ausnahmen aus <code>SATC_CI_EXEMPT</code> werden als „es gibt eine Ausnahme dazu"
+          gezählt, nicht als „sie ist genehmigt": der Schlüssel des Genehmigungsstands wechselt
+          zwischen Ständen, gefiltert wird nur auf nicht gelöscht.
+        </p>
+        <p>
+          Gemessen auf S4H an der Variante <span class="mono">DEFAULT</span>: 17 Checks,
+          1198 Meldungen, Roundtrip identisch.
+        </p>
+      </section>
+
       <section id="ausgabe">
         <h2>Ausgabe &amp; Export</h2>
 
@@ -1356,6 +1410,14 @@
             <thead><tr><th>Symptom</th><th>Ursache</th></tr></thead>
             <tbody>
               <tr>
+                <td>ATC-Dokument mit der Überschrift „IMG-Dokumentation"</td>
+                <td>Der HTML-Renderer ist in allen drei Reports wortgleich, die Überschrift war fest verdrahtet — beim Kopieren wanderte sie mit. Sie kommt jetzt aus <code>doc_type</code> im Dokument; eine abgeleitete Überschrift kann das nicht.</td>
+              </tr>
+              <tr>
+                <td>Import in ein transportfähiges Paket ohne Auftrag läuft durch</td>
+                <td><code>TR_TADIR_INTERFACE</code> verlangt keinen Auftrag: ohne <code>KORRNUM</code> legt es den Katalogeintrag an und meldet <code>sy-subrc 0</code>. Kein Dialog — aber auch kein Auftragseintrag. Das Protokoll warnt jetzt einmal je Paket.</td>
+              </tr>
+              <tr>
                 <td>Kurzdump <code>CALL_FUNCTION_CONFLICT_TAB_TYP</code> in <code>RPY_DYNPRO_READ</code></td>
                 <td>Die Schnittstelle deklariert die Ablauflogik als <code>RPY_DYFLOW</code>, reicht die Tabelle aber unverändert an ihr NATIVE-Gegenstück weiter — und dessen Parameter ist mit dem Tabellentyp <code>DYN_FLOWLIST</code> typisiert. <code>RPY_DYFLOW</code> ist doppelt so lang wie dessen Zeilentyp <code>D022S</code>. Die deklarierte Typangabe ist an dieser Stelle irreführend; zu übergeben ist <code>DYN_FLOWLIST</code>.</td>
               </tr>
@@ -1502,8 +1564,9 @@
       </section>
 
       <footer>
-        Documizer · Reports <span class="mono">ZDOCUMIZER_IMG</span> und
-        <span class="mono">ZDOCUMIZER_DEV</span> · verifiziert gegen S4H, SAP_BASIS 758 ·
+        Documizer · Reports <span class="mono">ZDOCUMIZER_IMG</span>,
+        <span class="mono">ZDOCUMIZER_DEV</span> und <span class="mono">ZDOCUMIZER_ATC</span> ·
+        verifiziert gegen S4H, SAP_BASIS 758 ·
         Quelltext und Spezifikation im Repository <span class="mono">documizer</span>.
       </footer>
 

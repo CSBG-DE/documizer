@@ -1936,8 +1936,25 @@ CLASS lcl_renderer_html IMPLEMENTATION.
     add( 'span.cnt{color:#999}' ).
     add( '</style></head><body>' ).
 
-    add( |<h1>{ lcl_t=>t( d = 'Documizer - IMG-Dokumentation'
-                          e = 'Documizer - IMG documentation' ) }</h1>| ).
+*   Die Kopfzeile kommt aus dem Dokument, nicht aus dem Report. Der
+*   HTML-Renderer ist in allen drei Reports wortgleich; eine fest
+*   verdrahtete Ueberschrift wandert beim Kopieren mit und behauptet
+*   dann das Falsche.
+    DATA lv_head TYPE string.
+    CASE ls_meta-doc_type.
+      WHEN 'IMG'.
+        lv_head = lcl_t=>t( d = 'Documizer - IMG-Dokumentation'
+                            e = 'Documizer - IMG documentation' ).
+      WHEN 'DEV'.
+        lv_head = lcl_t=>t( d = 'Documizer - Entwicklerdokumentation'
+                            e = 'Documizer - developer documentation' ).
+      WHEN 'ATC'.
+        lv_head = lcl_t=>t( d = 'Documizer - ATC-Pruefkonfiguration'
+                            e = 'Documizer - ATC check configuration' ).
+      WHEN OTHERS.
+        lv_head = 'Documizer'.
+    ENDCASE.
+    add( |<h1>{ esc( lv_head ) }</h1>| ).
 
     add( '<table>' ).
     add( |<tr><th>System</th><td>{ esc( ls_meta-system ) }| &&

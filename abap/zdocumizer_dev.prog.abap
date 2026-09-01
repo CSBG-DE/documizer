@@ -1190,6 +1190,7 @@ CLASS lcl_importer DEFINITION.
     DATA mt_log  TYPE ty_implog.
 
     METHODS set_pack IMPORTING io_chapter TYPE REF TO lcl_chapter.
+    METHODS warn_no_order IMPORTING iv_pack TYPE devclass.
 
     METHODS collect
       IMPORTING io_chapter TYPE REF TO lcl_chapter
@@ -1294,6 +1295,33 @@ CLASS lcl_importer IMPLEMENTATION.
     mt_map   = it_map.
   ENDMETHOD.
 
+  METHOD warn_no_order.
+
+*   TR_TADIR_INTERFACE verlangt bei einem transportfaehigen Paket keinen
+*   Auftrag: ohne KORRNUM legt es den Katalogeintrag an und meldet
+*   sy-subrc 0. Auf S4H nachgemessen. Es kommt also kein Dialog - aber
+*   auch kein Auftragseintrag. Die Objekte stehen dann im Paket und in
+*   keinem Auftrag, und das faellt erst beim Transportieren auf.
+    IF mv_tr IS NOT INITIAL.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_key) = |?{ iv_pack }|.
+    READ TABLE mt_said TRANSPORTING NO FIELDS WITH KEY table_line = lv_key.
+    IF sy-subrc = 0.
+      RETURN.
+    ENDIF.
+    APPEND lv_key TO mt_said.
+
+    log( iv_kind   = 'PACK'
+         iv_name   = CONV string( iv_pack )
+         iv_action = lcl_t=>ui( d = `ohne Auftrag` e = `without a request` )
+         iv_text   = lcl_t=>ui(
+           d = `Paket ist transportfaehig, aber kein Auftrag angegeben - die Objekte entstehen ausserhalb jedes Auftrags.`
+           e = `package is transportable but no request was given - the objects are created outside any request.` ) ).
+
+  ENDMETHOD.
+
   METHOD set_pack.
 
 *   Das Zielpaket je Objekt. Reihenfolge:
@@ -1309,6 +1337,9 @@ CLASS lcl_importer IMPLEMENTATION.
 
     mv_pack = mv_pack0.
     mv_tr   = mv_tr0.
+    IF mv_pack NP '$*'.
+      warn_no_order( mv_pack ).
+    ENDIF.
 
     IF io_chapter IS NOT BOUND.
       RETURN.
@@ -1363,6 +1394,7 @@ CLASS lcl_importer IMPLEMENTATION.
       CLEAR mv_tr.
     ELSE.
       mv_tr = mv_tr0.
+      warn_no_order( mv_pack ).
     ENDIF.
 
     DATA(lv_note) = |{ lv_src }>{ mv_pack }|.
@@ -4903,8 +4935,25 @@ CLASS lcl_renderer_html IMPLEMENTATION.
     add( 'span.cnt{color:#999}' ).
     add( '</style></head><body>' ).
 
-    add( |<h1>{ lcl_t=>t( d = lcl_t=>ui( d = `Documizer - Entwicklerdokumentation` e = `Documizer - developer documentation` )
-                          e = 'Documizer - developer documentation' ) }</h1>| ).
+*   Die Kopfzeile kommt aus dem Dokument, nicht aus dem Report. Der
+*   HTML-Renderer ist in allen drei Reports wortgleich; eine fest
+*   verdrahtete Ueberschrift wandert beim Kopieren mit und behauptet
+*   dann das Falsche.
+    DATA lv_head TYPE string.
+    CASE ls_meta-doc_type.
+      WHEN 'IMG'.
+        lv_head = lcl_t=>t( d = 'Documizer - IMG-Dokumentation'
+                            e = 'Documizer - IMG documentation' ).
+      WHEN 'DEV'.
+        lv_head = lcl_t=>t( d = 'Documizer - Entwicklerdokumentation'
+                            e = 'Documizer - developer documentation' ).
+      WHEN 'ATC'.
+        lv_head = lcl_t=>t( d = 'Documizer - ATC-Pruefkonfiguration'
+                            e = 'Documizer - ATC check configuration' ).
+      WHEN OTHERS.
+        lv_head = 'Documizer'.
+    ENDCASE.
+    add( |<h1>{ esc( lv_head ) }</h1>| ).
 
     add( '<table>' ).
     add( |<tr><th>System</th><td>{ esc( ls_meta-system ) }| &&

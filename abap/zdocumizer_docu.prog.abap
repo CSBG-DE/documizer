@@ -3,8 +3,8 @@ REPORT zdocumizer_docu.
 ************************************************************************
 * consiness Documizer - Reportdokumentation erzeugen
 *
-* Legt die SAP-Reportdokumentation zu ZDOCUMIZER_IMG und ZDOCUMIZER_DEV
-* an. Dokumentationsobjekte sind eigene Repository-Objekte und kommen beim
+* Legt die SAP-Reportdokumentation zu ZDOCUMIZER_IMG, ZDOCUMIZER_DEV und
+* ZDOCUMIZER_ATC an. Dokumentationsobjekte sind eigene Repository-Objekte und kommen beim
 * Kopieren des Quelltextes nicht mit; dieser Report erzeugt sie im
 * Zielsystem neu.
 *
@@ -36,6 +36,7 @@ CLASS lcl_docu DEFINITION.
     METHODS save IMPORTING iv_prog TYPE syrepid.
     METHODS build_img.
     METHODS build_dev.
+    METHODS build_atc.
 ENDCLASS.
 
 CLASS lcl_docu IMPLEMENTATION.
@@ -421,6 +422,74 @@ CLASS lcl_docu IMPLEMENTATION.
 
   ENDMETHOD.
 
+  METHOD build_atc.
+
+    CLEAR mt_line.
+
+    a( iv_f = 'U1' iv_t = 'Verwendung' ).
+    a( iv_f = 'AS' iv_t = 'Der Report dokumentiert die Pruefkonfiguration des Systems: welche' ).
+    a( iv_f = '=' iv_t = 'Pruefvarianten es gibt, welche Checks darin stecken, mit welcher' ).
+    a( iv_f = '=' iv_t = 'Prioritaet deren Meldungen laufen und mit welchem Pseudokommentar' ).
+    a( iv_f = '=' iv_t = 'oder Pragma sich eine Meldung unterdruecken laesst.' ).
+    a( iv_f = 'AS' iv_t = 'Das ist die dritte Sicht neben Customizing und Entwicklung: nicht' ).
+    a( iv_f = '=' iv_t = 'was im System steht, sondern woran es gemessen wird.' ).
+    a( iv_f = 'AS' iv_t = 'Die Ausgabe erfolgt als XML und als HTML.' ).
+    a( iv_f = 'U1' iv_t = 'Voraussetzungen' ).
+    a( iv_f = 'AS' iv_t = 'Leseberechtigung fuer den Code Inspector. Fuer Download und Anzeige' ).
+    a( iv_f = '=' iv_t = 'im Browser ist Dialogbetrieb erforderlich; im Hintergrund steht nur' ).
+    a( iv_f = '=' iv_t = 'die Ablage auf dem Applikationsserver zur Verfuegung.' ).
+    a( iv_f = 'U1' iv_t = 'Selektion' ).
+    a( iv_f = 'AS' iv_t = 'Auswahl' ).
+    a( iv_f = 'B1' iv_t = 'Modus: V nimmt eine Pruefvariante, K den Katalog aller aktivierten' ).
+    a( iv_f = '=' iv_t = 'Checks. Die Variante beantwortet, was geprueft wird; der Katalog,' ).
+    a( iv_f = '=' iv_t = 'was geprueft werden koennte.' ).
+    a( iv_f = 'B1' iv_t = 'Pruefvariante: die Wertehilfe zeigt die nicht-versteckten Varianten' ).
+    a( iv_f = '=' iv_t = 'mit Eigentuemer und Text.' ).
+    a( iv_f = 'B1' iv_t = 'Eigentuemer: leer heisst globale Variante. Der Code Inspector' ).
+    a( iv_f = '=' iv_t = 'fuehrt persoenliche Varianten unter dem Namen ihres Eigentuemers.' ).
+    a( iv_f = 'B1' iv_t = 'Alle Varianten: dokumentiert jede Variante statt einer. Versteckte' ).
+    a( iv_f = '=' iv_t = 'einbeziehen nimmt auch die auf, die die Wertehilfe nicht zeigt -' ).
+    a( iv_f = '=' iv_t = 'das sind auf einem Standardsystem die meisten.' ).
+    a( iv_f = 'AS' iv_t = 'Umfang' ).
+    a( iv_f = 'B1' iv_t = 'Meldungen je Check: gibt zu jedem Check die moeglichen Meldungen' ).
+    a( iv_f = '=' iv_t = 'mit Code, Prioritaet und Text aus. Ohne diesen Haken bleibt es bei' ).
+    a( iv_f = '=' iv_t = 'der Liste der Checks.' ).
+    a( iv_f = 'B1' iv_t = 'Kundenpriorisierung ausweisen: stellt die kundeneigene Prioritaet' ).
+    a( iv_f = '=' iv_t = 'neben die der Checkklasse. Genau dort sieht man, wo ein System vom' ).
+    a( iv_f = '=' iv_t = 'Standard abweicht.' ).
+    a( iv_f = 'B1' iv_t = 'Pseudokommentar und Pragma: die beiden Wege, eine Meldung im' ).
+    a( iv_f = '=' iv_t = 'Quelltext zu unterdruecken.' ).
+    a( iv_f = 'B1' iv_t = 'Erteilte Ausnahmen zaehlen: wie viele Ausnahmen es zu einer' ).
+    a( iv_f = '=' iv_t = 'Meldung gibt. Gezaehlt wird, dass es eine Ausnahme gibt, nicht dass' ).
+    a( iv_f = '=' iv_t = 'sie genehmigt ist - der Schluessel des Genehmigungsstands wechselt' ).
+    a( iv_f = '=' iv_t = 'zwischen Staenden.' ).
+    a( iv_f = 'B1' iv_t = 'Nach Kategorie gliedern: schiebt eine Ebene zwischen Variante und' ).
+    a( iv_f = '=' iv_t = 'Check. Ohne den Haken stehen die Checks flach unter der Variante.' ).
+    a( iv_f = 'U1' iv_t = 'Ausgabe' ).
+    a( iv_f = 'B1' iv_t = 'HTML erzeugen/anzeigen: lesbare Fassung mit Inhaltsverzeichnis.' ).
+    a( iv_f = 'B1' iv_t = 'XML erzeugen/ausgeben: fuehrendes Format, wieder einlesbar.' ).
+    a( iv_f = 'B1' iv_t = 'HTML einklappen ab Zeilen: laengere Meldungslisten stehen im HTML' ).
+    a( iv_f = '=' iv_t = 'zugeklappt hinter einer Zeile mit Bezeichnung und Umfang.' ).
+    a( iv_f = 'B1' iv_t = 'Roundtrip pruefen: serialisiert, liest wieder ein, serialisiert' ).
+    a( iv_f = '=' iv_t = 'erneut und vergleicht. Schreibt nichts in das System zurueck.' ).
+    a( iv_f = 'B1' iv_t = 'Download auf PC und Ablage Appl.-Server schreiben dieselbe Datei' ).
+    a( iv_f = '=' iv_t = 'in UTF-8.' ).
+    a( iv_f = 'B1' iv_t = 'Dateiname: vorbelegt mit System, Variante bzw. Modus, Datum und' ).
+    a( iv_f = '=' iv_t = 'Uhrzeit, ohne Endung. Das Feld ist ueberschreibbar.' ).
+    a( iv_f = 'U1' iv_t = 'Hinweise' ).
+    a( iv_f = 'AS' iv_t = 'Die Checkliste einer Pruefvariante steht nicht lesbar in der' ).
+    a( iv_f = '=' iv_t = 'Datenbank - SCICHKV_PA ist ein INDX-Cluster. Der Report liest sie' ).
+    a( iv_f = '=' iv_t = 'deshalb ueber die Schnittstellen des Code Inspectors.' ).
+    a( iv_f = 'AS' iv_t = 'Ein Check, den die Variante nennt und den es hier nicht mehr gibt,' ).
+    a( iv_f = '=' iv_t = 'bekommt trotzdem ein Kapitel mit dem Vermerk nicht ladbar. Nach' ).
+    a( iv_f = '=' iv_t = 'einem Upgrade ist das der Normalfall, und eine Luecke in der' ).
+    a( iv_f = '=' iv_t = 'Konfiguration gehoert ins Dokument.' ).
+    a( iv_f = 'AS' iv_t = 'Ein vollstaendiger Katalog umfasst mehrere hundert Checks mit' ).
+    a( iv_f = '=' iv_t = 'einigen tausend Meldungen. Fuer solche Laeufe empfiehlt sich' ).
+    a( iv_f = '=' iv_t = 'Hintergrundverarbeitung mit Ablage auf dem Applikationsserver.' ).
+
+  ENDMETHOD.
+
   METHOD run.
 
     build_img( ).
@@ -428,6 +497,9 @@ CLASS lcl_docu IMPLEMENTATION.
 
     build_dev( ).
     save( 'ZDOCUMIZER_DEV' ).
+
+    build_atc( ).
+    save( 'ZDOCUMIZER_ATC' ).
 
     COMMIT WORK AND WAIT.
     WRITE: / 'Dokumentation gesichert.'.

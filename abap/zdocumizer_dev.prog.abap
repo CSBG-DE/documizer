@@ -1200,6 +1200,7 @@ CLASS lcl_importer DEFINITION.
                 iv_name   TYPE string
                 iv_action TYPE string
                 iv_text   TYPE string OPTIONAL.
+    METHODS last_message RETURNING VALUE(rv_text) TYPE string.
     METHODS exists
       IMPORTING iv_kind        TYPE string
                 iv_name        TYPE string
@@ -1411,6 +1412,26 @@ CLASS lcl_importer IMPLEMENTATION.
 
   METHOD get_log.
     rt_log = mt_log.
+  ENDMETHOD.
+
+  METHOD last_message.
+
+*   Die Meldung, die der gerufene Baustein vor seinem RAISE abgesetzt
+*   hat. Sie muss unmittelbar nach dem Aufruf gelesen werden - jeder
+*   weitere Aufruf ueberschreibt sy-msgid und sy-msgno.
+*
+*   Ohne sie steht im Protokoll nur eine Nummer. subrc 5 an
+*   SEO_CLASS_CREATE_COMPLETE heisst NO_ACCESS, und das kann die
+*   Berechtigung sein, eine Sperre oder das Korrektursystem - welches
+*   davon, sagt erst die Meldung.
+    IF sy-msgid IS INITIAL OR sy-msgno IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    MESSAGE ID sy-msgid TYPE 'S' NUMBER sy-msgno
+            WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4
+            INTO rv_text.
+
   ENDMETHOD.
 
   METHOD log.
@@ -2095,9 +2116,10 @@ CLASS lcl_importer IMPLEMENTATION.
                  OTHERS            = 5.
     IF sy-subrc <> 0.
       DATA(lv_rc1) = sy-subrc.
+      DATA(lv_msg1) = last_message( ).
       log( iv_kind = 'DOMA' iv_name = iv_name
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-           iv_text   = |DDIF_DOMA_PUT subrc { lv_rc1 }| ).
+           iv_text   = |DDIF_DOMA_PUT subrc { lv_rc1 } { lv_msg1 }| ).
       RETURN.
     ENDIF.
 
@@ -2166,9 +2188,10 @@ CLASS lcl_importer IMPLEMENTATION.
                  OTHERS            = 5.
     IF sy-subrc <> 0.
       DATA(lv_rc2) = sy-subrc.
+      DATA(lv_msg2) = last_message( ).
       log( iv_kind = 'DTEL' iv_name = iv_name
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-           iv_text   = |DDIF_DTEL_PUT subrc { lv_rc2 }| ).
+           iv_text   = |DDIF_DTEL_PUT subrc { lv_rc2 } { lv_msg2 }| ).
       RETURN.
     ENDIF.
 
@@ -2293,9 +2316,10 @@ CLASS lcl_importer IMPLEMENTATION.
                  OTHERS            = 5.
     IF sy-subrc <> 0.
       DATA(lv_rc3) = sy-subrc.
+      DATA(lv_msg3) = last_message( ).
       log( iv_kind = 'TABL' iv_name = iv_name
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-           iv_text   = |DDIF_TABL_PUT subrc { lv_rc3 }| ).
+           iv_text   = |DDIF_TABL_PUT subrc { lv_rc3 } { lv_msg3 }| ).
       RETURN.
     ENDIF.
 
@@ -2388,9 +2412,10 @@ CLASS lcl_importer IMPLEMENTATION.
                    OTHERS            = 5.
       IF sy-subrc <> 0.
         DATA(lv_rc4) = sy-subrc.
+        DATA(lv_msg4) = last_message( ).
         log( iv_kind = 'INDX' iv_name = |{ iv_name }-{ lv_id }|
              iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-             iv_text   = |DDIF_INDX_PUT subrc { lv_rc4 }| ).
+             iv_text   = |DDIF_INDX_PUT subrc { lv_rc4 } { lv_msg4 }| ).
         CONTINUE.
       ENDIF.
 
@@ -2484,9 +2509,10 @@ CLASS lcl_importer IMPLEMENTATION.
     INSERT REPORT lv_prog FROM lt_code DIRECTORY ENTRY ls_trdir.
     IF sy-subrc <> 0.
       DATA(lv_rc5) = sy-subrc.
+      DATA(lv_msg5) = last_message( ).
       log( iv_kind = 'PROG' iv_name = iv_name
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-           iv_text   = |INSERT REPORT subrc { lv_rc5 }| ).
+           iv_text   = |INSERT REPORT subrc { lv_rc5 } { lv_msg5 }| ).
       RETURN.
     ENDIF.
 
@@ -2754,9 +2780,10 @@ CLASS lcl_importer IMPLEMENTATION.
                  OTHERS              = 6.
     IF sy-subrc <> 0.
       DATA(lv_rc6) = sy-subrc.
+      DATA(lv_msg6) = last_message( ).
       log( iv_kind = 'SEGM' iv_name = iv_name
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-           iv_text   = |SEGMENT_CREATE subrc { lv_rc6 }| ).
+           iv_text   = |SEGMENT_CREATE subrc { lv_rc6 } { lv_msg6 }| ).
       RETURN.
     ENDIF.
 
@@ -2853,11 +2880,12 @@ CLASS lcl_importer IMPLEMENTATION.
     ENDIF.
     IF sy-subrc <> 0.
       DATA(lv_rc7) = sy-subrc.
+      DATA(lv_msg7) = last_message( ).
       log( iv_kind = 'IDOC' iv_name = iv_name
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
            iv_text   = |{ COND #( WHEN lv_ex = abap_true
                                   THEN `IDOCTYPE_UPDATE` ELSE `IDOCTYPE_CREATE` ) } | &&
-                       |subrc { lv_rc7 }| ).
+                       |subrc { lv_rc7 } { lv_msg7 }| ).
       RETURN.
     ENDIF.
 
@@ -3319,9 +3347,10 @@ CLASS lcl_importer IMPLEMENTATION.
         WHEN OTHERS.
           lv_bad = lv_bad + 1.
           DATA(lv_rc8) = sy-subrc.
+          DATA(lv_msg8) = last_message( ).
           log( iv_kind = 'DYNP' iv_name = |{ iv_prog } { lv_dnr }|
                iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-               iv_text   = |RPY_DYNPRO_INSERT subrc { lv_rc8 }| ).
+               iv_text   = |RPY_DYNPRO_INSERT subrc { lv_rc8 } { lv_msg8 }| ).
       ENDCASE.
 
     ENDLOOP.
@@ -3403,9 +3432,10 @@ CLASS lcl_importer IMPLEMENTATION.
     MODIFY tvdir FROM ls_tvdir.
     IF sy-subrc <> 0.
       DATA(lv_rc9) = sy-subrc.
+      DATA(lv_msg9) = last_message( ).
       log( iv_kind = 'TVDIR' iv_name = iv_name
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-           iv_text   = |MODIFY tvdir subrc { lv_rc9 }| ).
+           iv_text   = |MODIFY tvdir subrc { lv_rc9 } { lv_msg9 }| ).
       RETURN.
     ENDIF.
 
@@ -3555,9 +3585,10 @@ CLASS lcl_importer IMPLEMENTATION.
                  OTHERS                  = 9.
     IF sy-subrc <> 0 AND sy-subrc <> 2.
       DATA(lv_rc10) = sy-subrc.
+      DATA(lv_msg10) = last_message( ).
       log( iv_kind = 'TRAN' iv_name = iv_name
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-           iv_text   = |RPY_TRANSACTION_INSERT subrc { lv_rc10 }| ).
+           iv_text   = |RPY_TRANSACTION_INSERT subrc { lv_rc10 } { lv_msg10 }| ).
       RETURN.
     ENDIF.
 
@@ -3655,9 +3686,10 @@ CLASS lcl_importer IMPLEMENTATION.
       EXCEPTIONS OTHERS         = 1.
     IF sy-subrc <> 0.
       DATA(lv_rc11) = sy-subrc.
+      DATA(lv_msg11) = last_message( ).
       log( iv_kind = 'VCLS' iv_name = iv_name
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-           iv_text   = |VIEWCLUSTER_SAVE_DEFINITION subrc { lv_rc11 }| ).
+           iv_text   = |VIEWCLUSTER_SAVE_DEFINITION subrc { lv_rc11 } { lv_msg11 }| ).
       RETURN.
     ENDIF.
 
@@ -3771,9 +3803,10 @@ CLASS lcl_importer IMPLEMENTATION.
                  OTHERS       = 3.
     IF sy-subrc <> 0.
       DATA(lv_rc12) = sy-subrc.
+      DATA(lv_msg12) = last_message( ).
       log( iv_kind = 'CUA' iv_name = CONV #( iv_prog )
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-           iv_text   = |RS_CUA_INTERNAL_WRITE subrc { lv_rc12 }| ).
+           iv_text   = |RS_CUA_INTERNAL_WRITE subrc { lv_rc12 } { lv_msg12 }| ).
       RETURN.
     ENDIF.
 
@@ -3877,9 +3910,10 @@ CLASS lcl_importer IMPLEMENTATION.
                  OTHERS            = 5.
     IF sy-subrc <> 0.
       DATA(lv_rc13) = sy-subrc.
+      DATA(lv_msg13) = last_message( ).
       log( iv_kind = 'VIEW' iv_name = iv_name
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-           iv_text   = |DDIF_VIEW_PUT subrc { lv_rc13 }| ).
+           iv_text   = |DDIF_VIEW_PUT subrc { lv_rc13 } { lv_msg13 }| ).
       RETURN.
     ENDIF.
 
@@ -4093,9 +4127,10 @@ CLASS lcl_importer IMPLEMENTATION.
     ENDIF.
     IF sy-subrc <> 0.
       DATA(lv_rc14) = sy-subrc.
+      DATA(lv_msg14) = last_message( ).
       log( iv_kind = iv_kind iv_name = iv_name
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-           iv_text   = |SEO_*_CREATE_COMPLETE subrc { lv_rc14 }| ).
+           iv_text   = |SEO_*_CREATE_COMPLETE subrc { lv_rc14 } { lv_msg14 }| ).
       RETURN.
     ENDIF.
 
@@ -4196,9 +4231,10 @@ CLASS lcl_importer IMPLEMENTATION.
                    OTHERS                  = 12.
       IF sy-subrc <> 0.
         DATA(lv_rc15) = sy-subrc.
+        DATA(lv_msg15) = last_message( ).
         log( iv_kind = 'FUGR' iv_name = iv_name
              iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-             iv_text   = |RS_FUNCTION_POOL_INSERT subrc { lv_rc15 }| ).
+             iv_text   = |RS_FUNCTION_POOL_INSERT subrc { lv_rc15 } { lv_msg15 }| ).
         RETURN.
       ENDIF.
     ENDIF.
@@ -4219,9 +4255,10 @@ CLASS lcl_importer IMPLEMENTATION.
       INSERT REPORT lv_incl FROM lt_code DIRECTORY ENTRY ls_trdir.
       IF sy-subrc <> 0.
         DATA(lv_rc16) = sy-subrc.
+        DATA(lv_msg16) = last_message( ).
         log( iv_kind = 'INCL' iv_name = CONV string( lv_incl )
              iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-             iv_text   = |INSERT REPORT subrc { lv_rc16 }| ).
+             iv_text   = |INSERT REPORT subrc { lv_rc16 } { lv_msg16 }| ).
       ENDIF.
     ENDLOOP.
 
@@ -4370,9 +4407,10 @@ CLASS lcl_importer IMPLEMENTATION.
                  OTHERS                  = 11.
     IF sy-subrc <> 0.
       DATA(lv_rc17) = sy-subrc.
+      DATA(lv_msg17) = last_message( ).
       log( iv_kind = 'FUNC' iv_name = lv_func
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-           iv_text   = |RPY_FUNCTIONMODULE_INSERT subrc { lv_rc17 }| ).
+           iv_text   = |RPY_FUNCTIONMODULE_INSERT subrc { lv_rc17 } { lv_msg17 }| ).
       RETURN.
     ENDIF.
 

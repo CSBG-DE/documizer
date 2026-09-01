@@ -4684,6 +4684,15 @@ SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE gv_blk4.
     SELECTION-SCREEN COMMENT 1(30) gv_titr FOR FIELD p_itr.
     PARAMETERS p_itr TYPE trkorr.
   SELECTION-SCREEN END OF LINE.
+* Objekte landen nicht im Auftrag, sondern in einer Aufgabe darunter.
+* Gibt es keine offene fuer den Anmeldebenutzer, lehnt das
+* Korrektursystem ab - und weil der Import ohne Dialog laeuft, kann es
+* nicht danach fragen. Angelegt wird nur unter dem Auftrag, der oben
+* steht.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_titsk FOR FIELD p_itask.
+    PARAMETERS p_itask AS CHECKBOX DEFAULT 'X'.
+  SELECTION-SCREEN END OF LINE.
 
 * Das Zielpaket oben gilt fuer alles. Wer die Paketstruktur des
 * Quellsystems behalten oder umlenken will, nimmt die Regeln darunter:
@@ -4768,6 +4777,7 @@ INITIALIZATION.
     gv_tiovr = 'Bestehende Objekte ueberschreiben'.
     gv_tiact = 'Nach dem Anlegen aktivieren'.
     gv_tipck = 'Zielpaket'.
+    gv_titsk = 'Aufgabe anlegen, wenn noetig'.
     gv_tikep = 'Quellpaket beibehalten'.
     gv_tipm1 = 'Paket alt -> neu'.
     gv_tipm2 = 'Paket alt -> neu'.
@@ -4824,6 +4834,7 @@ INITIALIZATION.
     gv_tiovr = 'Overwrite existing objects'.
     gv_tiact = 'Activate after creation'.
     gv_tipck = 'Target package'.
+    gv_titsk = 'Create task if needed'.
     gv_tikep = 'Keep source package'.
     gv_tipm1 = 'Package old -> new'.
     gv_tipm2 = 'Package old -> new'.
@@ -9908,7 +9919,7 @@ FORM screen_mode.
         ENDIF.
         MODIFY SCREEN.
       WHEN 'P_IFILE' OR 'P_ISRV' OR 'P_ITEST' OR 'P_IOVER'
-        OR 'P_IACT' OR 'P_IPACK' OR 'P_ITR' OR 'P_IKEEP'
+        OR 'P_IACT' OR 'P_IPACK' OR 'P_ITR' OR 'P_IKEEP' OR 'P_ITASK'
         OR 'P_IOLD1' OR 'P_INEW1' OR 'P_IOLD2' OR 'P_INEW2'
         OR 'P_IOLD3' OR 'P_INEW3' OR 'P_IOLD4' OR 'P_INEW4'.
         IF p_imp = abap_true.
@@ -9980,6 +9991,81 @@ FORM f4_verzeichnis.
 
   IF lv_dir IS NOT INITIAL.
     p_path = lv_dir.
+  ENDIF.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& FORM ensure_task
+*&---------------------------------------------------------------------*
+FORM ensure_task.
+
+* Ein Objekt landet nicht im Auftrag, sondern in einer Aufgabe darunter.
+* Fehlt sie, meldet das Korrektursystem "No matching task exists under
+* request ... for user ..." - und der Aufruf scheitert mit einer Nummer,
+* die nach Berechtigungsproblem aussieht. Eine freigegebene Aufgabe
+* zaehlt dabei nicht: sie nimmt nichts mehr auf.
+  DATA ls_e070 TYPE e070.
+  DATA lt_user TYPE STANDARD TABLE OF tr005 WITH EMPTY KEY.
+  DATA lt_msg  TYPE STANDARD TABLE OF tr004 WITH EMPTY KEY.
+  DATA lv_exc  TYPE tr007-exception.
+  DATA lv_trk  TYPE tr001-strkorr.
+
+  IF p_itr IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  SELECT SINGLE * FROM e070 WHERE trkorr = @p_itr INTO @ls_e070.
+  IF sy-subrc <> 0.
+    WRITE: / lcl_t=>ui( d = `Auftrag nicht gefunden           :`
+                        e = `Request not found                :` ), p_itr.
+    RETURN.
+  ENDIF.
+
+* Wer eine Aufgabe statt eines Auftrags eingetragen hat, ist schon fertig.
+  IF ls_e070-strkorr IS NOT INITIAL.
+    RETURN.
+  ENDIF.
+
+* D und L sind die aenderbaren Zustaende; alles andere ist freigegeben
+* oder unterwegs.
+  SELECT SINGLE trkorr FROM e070
+    WHERE strkorr = @p_itr AND as4user = @sy-uname
+      AND ( trstatus = 'D' OR trstatus = 'L' )
+    INTO @DATA(lv_task).
+  IF sy-subrc = 0.
+    WRITE: / lcl_t=>ui( d = `Aufgabe                          :`
+                        e = `Task                             :` ), lv_task.
+    RETURN.
+  ENDIF.
+
+  IF p_itask = abap_false.
+    WRITE: / lcl_t=>ui(
+      d = `ACHTUNG: keine offene Aufgabe unter dem Auftrag - der Import wird scheitern.`
+      e = `CAUTION: no open task under the request - the import will fail.` ).
+    RETURN.
+  ENDIF.
+
+  APPEND VALUE tr005( as4user = sy-uname ) TO lt_user.
+  lv_trk = p_itr.
+
+  CALL FUNCTION 'TR40_TASK_ADD'
+    EXPORTING iv_trkorr     = lv_trk
+              iv_correction = abap_true
+    IMPORTING ev_exception  = lv_exc
+    TABLES    tt_userlist   = lt_user
+              tt_msg        = lt_msg.
+
+  READ TABLE lt_user INTO DATA(ls_user) INDEX 1.
+  IF lv_exc IS INITIAL AND ls_user-correction IS NOT INITIAL.
+    WRITE: / lcl_t=>ui( d = `Aufgabe angelegt                 :`
+                        e = `Task created                     :` ), ls_user-correction.
+  ELSE.
+    WRITE: / lcl_t=>ui( d = `Aufgabe nicht anlegbar           :`
+                        e = `Task could not be created        :` ), lv_exc.
+    LOOP AT lt_msg INTO DATA(ls_msg).
+      WRITE: / '  ', ls_msg-msgtext.
+    ENDLOOP.
   ENDIF.
 
 ENDFORM.
@@ -10271,6 +10357,10 @@ FORM import.
   IF p_ikeep = abap_true.
     WRITE: / lcl_t=>ui( d = `Quellpaket beibehalten, wo keine Regel greift.`
                         e = `Source package kept where no rule applies.` ).
+  ENDIF.
+
+  IF p_itest = abap_false.
+    PERFORM ensure_task.
   ENDIF.
 
   SKIP.

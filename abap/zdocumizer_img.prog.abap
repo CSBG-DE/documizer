@@ -3476,9 +3476,10 @@ CLASS lcl_bcset IMPLEMENTATION.
                  error_in_deleting_fldtxtvar = 14
                  OTHERS                      = 15.
     IF sy-subrc <> 0.
+      DATA(lv_rc1) = sy-subrc.
       note( iv_tab    = mv_id
             iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-            iv_text   = |SCPR_PRSET_DB_SAVE_ORIG_TABLES subrc { sy-subrc }| ).
+            iv_text   = |SCPR_PRSET_DB_SAVE_ORIG_TABLES subrc { lv_rc1 }| ).
       RETURN.
     ENDIF.
 
@@ -3513,9 +3514,10 @@ CLASS lcl_bcset IMPLEMENTATION.
                  wi_tadir_korrnum    = lv_corr
       EXCEPTIONS OTHERS              = 1.
     IF sy-subrc <> 0.
+      DATA(lv_rc2) = sy-subrc.
       note( iv_tab    = mv_id
             iv_action = lcl_t=>ui( d = `Warnung` e = `warning` )
-            iv_text   = |TR_TADIR_INTERFACE subrc { sy-subrc }| ).
+            iv_text   = |TR_TADIR_INTERFACE subrc { lv_rc2 }| ).
     ENDIF.
 
     COMMIT WORK AND WAIT.

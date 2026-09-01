@@ -1475,6 +1475,17 @@ CLASS lcl_importer IMPLEMENTATION.
       ENDCASE.
     ENDLOOP.
 
+*   Der Korrektursystem-Teil laeuft ueber die Verbuchung: der
+*   Auftragseintrag und die Aufgabe darunter entstehen erst mit einem
+*   COMMIT WORK. Ohne ihn meldet der Lauf, dass eine Aufgabe angelegt
+*   wird, und im Transport Organizer steht keine.
+*
+*   AND WAIT, damit die Pruefung danach den fertigen Stand sieht und
+*   nicht den halben.
+    IF mv_test = abap_false.
+      COMMIT WORK AND WAIT.
+    ENDIF.
+
 *   A test run wrote nothing, so there is nothing to check.
     IF mv_test = abap_false.
       verify( lt_work ).
@@ -2083,9 +2094,10 @@ CLASS lcl_importer IMPLEMENTATION.
                  put_refused       = 4
                  OTHERS            = 5.
     IF sy-subrc <> 0.
+      DATA(lv_rc1) = sy-subrc.
       log( iv_kind = 'DOMA' iv_name = iv_name
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-           iv_text   = |DDIF_DOMA_PUT subrc { sy-subrc }| ).
+           iv_text   = |DDIF_DOMA_PUT subrc { lv_rc1 }| ).
       RETURN.
     ENDIF.
 
@@ -2153,9 +2165,10 @@ CLASS lcl_importer IMPLEMENTATION.
                  put_refused       = 4
                  OTHERS            = 5.
     IF sy-subrc <> 0.
+      DATA(lv_rc2) = sy-subrc.
       log( iv_kind = 'DTEL' iv_name = iv_name
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-           iv_text   = |DDIF_DTEL_PUT subrc { sy-subrc }| ).
+           iv_text   = |DDIF_DTEL_PUT subrc { lv_rc2 }| ).
       RETURN.
     ENDIF.
 
@@ -2279,9 +2292,10 @@ CLASS lcl_importer IMPLEMENTATION.
                  put_refused       = 4
                  OTHERS            = 5.
     IF sy-subrc <> 0.
+      DATA(lv_rc3) = sy-subrc.
       log( iv_kind = 'TABL' iv_name = iv_name
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-           iv_text   = |DDIF_TABL_PUT subrc { sy-subrc }| ).
+           iv_text   = |DDIF_TABL_PUT subrc { lv_rc3 }| ).
       RETURN.
     ENDIF.
 
@@ -2373,9 +2387,10 @@ CLASS lcl_importer IMPLEMENTATION.
                    put_refused       = 4
                    OTHERS            = 5.
       IF sy-subrc <> 0.
+        DATA(lv_rc4) = sy-subrc.
         log( iv_kind = 'INDX' iv_name = |{ iv_name }-{ lv_id }|
              iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-             iv_text   = |DDIF_INDX_PUT subrc { sy-subrc }| ).
+             iv_text   = |DDIF_INDX_PUT subrc { lv_rc4 }| ).
         CONTINUE.
       ENDIF.
 
@@ -2468,9 +2483,10 @@ CLASS lcl_importer IMPLEMENTATION.
     lv_prog = iv_name.
     INSERT REPORT lv_prog FROM lt_code DIRECTORY ENTRY ls_trdir.
     IF sy-subrc <> 0.
+      DATA(lv_rc5) = sy-subrc.
       log( iv_kind = 'PROG' iv_name = iv_name
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-           iv_text   = |INSERT REPORT subrc { sy-subrc }| ).
+           iv_text   = |INSERT REPORT subrc { lv_rc5 }| ).
       RETURN.
     ENDIF.
 
@@ -2737,9 +2753,10 @@ CLASS lcl_importer IMPLEMENTATION.
                  namespace_violation = 5
                  OTHERS              = 6.
     IF sy-subrc <> 0.
+      DATA(lv_rc6) = sy-subrc.
       log( iv_kind = 'SEGM' iv_name = iv_name
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-           iv_text   = |SEGMENT_CREATE subrc { sy-subrc }| ).
+           iv_text   = |SEGMENT_CREATE subrc { lv_rc6 }| ).
       RETURN.
     ENDIF.
 
@@ -2835,11 +2852,12 @@ CLASS lcl_importer IMPLEMENTATION.
                    OTHERS              = 9.
     ENDIF.
     IF sy-subrc <> 0.
+      DATA(lv_rc7) = sy-subrc.
       log( iv_kind = 'IDOC' iv_name = iv_name
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
            iv_text   = |{ COND #( WHEN lv_ex = abap_true
                                   THEN `IDOCTYPE_UPDATE` ELSE `IDOCTYPE_CREATE` ) } | &&
-                       |subrc { sy-subrc }| ).
+                       |subrc { lv_rc7 }| ).
       RETURN.
     ENDIF.
 
@@ -3300,9 +3318,10 @@ CLASS lcl_importer IMPLEMENTATION.
                                       e = `already exists` ) ).
         WHEN OTHERS.
           lv_bad = lv_bad + 1.
+          DATA(lv_rc8) = sy-subrc.
           log( iv_kind = 'DYNP' iv_name = |{ iv_prog } { lv_dnr }|
                iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-               iv_text   = |RPY_DYNPRO_INSERT subrc { sy-subrc }| ).
+               iv_text   = |RPY_DYNPRO_INSERT subrc { lv_rc8 }| ).
       ENDCASE.
 
     ENDLOOP.
@@ -3383,9 +3402,10 @@ CLASS lcl_importer IMPLEMENTATION.
 
     MODIFY tvdir FROM ls_tvdir.
     IF sy-subrc <> 0.
+      DATA(lv_rc9) = sy-subrc.
       log( iv_kind = 'TVDIR' iv_name = iv_name
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-           iv_text   = |MODIFY tvdir subrc { sy-subrc }| ).
+           iv_text   = |MODIFY tvdir subrc { lv_rc9 }| ).
       RETURN.
     ENDIF.
 
@@ -3534,9 +3554,10 @@ CLASS lcl_importer IMPLEMENTATION.
                  db_access_error         = 8
                  OTHERS                  = 9.
     IF sy-subrc <> 0 AND sy-subrc <> 2.
+      DATA(lv_rc10) = sy-subrc.
       log( iv_kind = 'TRAN' iv_name = iv_name
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-           iv_text   = |RPY_TRANSACTION_INSERT subrc { sy-subrc }| ).
+           iv_text   = |RPY_TRANSACTION_INSERT subrc { lv_rc10 }| ).
       RETURN.
     ENDIF.
 
@@ -3633,9 +3654,10 @@ CLASS lcl_importer IMPLEMENTATION.
                  vclmf_tab      = lt_mf
       EXCEPTIONS OTHERS         = 1.
     IF sy-subrc <> 0.
+      DATA(lv_rc11) = sy-subrc.
       log( iv_kind = 'VCLS' iv_name = iv_name
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-           iv_text   = |VIEWCLUSTER_SAVE_DEFINITION subrc { sy-subrc }| ).
+           iv_text   = |VIEWCLUSTER_SAVE_DEFINITION subrc { lv_rc11 }| ).
       RETURN.
     ENDIF.
 
@@ -3748,9 +3770,10 @@ CLASS lcl_importer IMPLEMENTATION.
                  invalid_data = 2
                  OTHERS       = 3.
     IF sy-subrc <> 0.
+      DATA(lv_rc12) = sy-subrc.
       log( iv_kind = 'CUA' iv_name = CONV #( iv_prog )
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-           iv_text   = |RS_CUA_INTERNAL_WRITE subrc { sy-subrc }| ).
+           iv_text   = |RS_CUA_INTERNAL_WRITE subrc { lv_rc12 }| ).
       RETURN.
     ENDIF.
 
@@ -3853,9 +3876,10 @@ CLASS lcl_importer IMPLEMENTATION.
                  put_refused       = 4
                  OTHERS            = 5.
     IF sy-subrc <> 0.
+      DATA(lv_rc13) = sy-subrc.
       log( iv_kind = 'VIEW' iv_name = iv_name
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-           iv_text   = |DDIF_VIEW_PUT subrc { sy-subrc }| ).
+           iv_text   = |DDIF_VIEW_PUT subrc { lv_rc13 }| ).
       RETURN.
     ENDIF.
 
@@ -4068,9 +4092,10 @@ CLASS lcl_importer IMPLEMENTATION.
                    OTHERS          = 7.
     ENDIF.
     IF sy-subrc <> 0.
+      DATA(lv_rc14) = sy-subrc.
       log( iv_kind = iv_kind iv_name = iv_name
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-           iv_text   = |SEO_*_CREATE_COMPLETE subrc { sy-subrc }| ).
+           iv_text   = |SEO_*_CREATE_COMPLETE subrc { lv_rc14 }| ).
       RETURN.
     ENDIF.
 
@@ -4170,9 +4195,10 @@ CLASS lcl_importer IMPLEMENTATION.
                    undefined_error         = 11
                    OTHERS                  = 12.
       IF sy-subrc <> 0.
+        DATA(lv_rc15) = sy-subrc.
         log( iv_kind = 'FUGR' iv_name = iv_name
              iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-             iv_text   = |RS_FUNCTION_POOL_INSERT subrc { sy-subrc }| ).
+             iv_text   = |RS_FUNCTION_POOL_INSERT subrc { lv_rc15 }| ).
         RETURN.
       ENDIF.
     ENDIF.
@@ -4192,9 +4218,10 @@ CLASS lcl_importer IMPLEMENTATION.
       ls_trdir-uccheck = abap_true.
       INSERT REPORT lv_incl FROM lt_code DIRECTORY ENTRY ls_trdir.
       IF sy-subrc <> 0.
+        DATA(lv_rc16) = sy-subrc.
         log( iv_kind = 'INCL' iv_name = CONV string( lv_incl )
              iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-             iv_text   = |INSERT REPORT subrc { sy-subrc }| ).
+             iv_text   = |INSERT REPORT subrc { lv_rc16 }| ).
       ENDIF.
     ENDLOOP.
 
@@ -4342,9 +4369,10 @@ CLASS lcl_importer IMPLEMENTATION.
                  double_task             = 10
                  OTHERS                  = 11.
     IF sy-subrc <> 0.
+      DATA(lv_rc17) = sy-subrc.
       log( iv_kind = 'FUNC' iv_name = lv_func
            iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-           iv_text   = |RPY_FUNCTIONMODULE_INSERT subrc { sy-subrc }| ).
+           iv_text   = |RPY_FUNCTIONMODULE_INSERT subrc { lv_rc17 }| ).
       RETURN.
     ENDIF.
 

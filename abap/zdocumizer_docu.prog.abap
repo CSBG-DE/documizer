@@ -142,7 +142,43 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'und vergleicht. Dient der Pruefung des Importpfades und schreibt nichts' ).
     a( iv_f = '=' iv_t = 'in das System zurueck.' ).
     a( iv_f = 'B1' iv_t = 'Download auf PC und Ablage Appl.-Server schreiben dieselbe Datei in' ).
-    a( iv_f = '=' iv_t = 'UTF-8. Der Dateiname enthaelt System, Datum und Uhrzeit.' ).
+    a( iv_f = '=' iv_t = 'UTF-8.' ).
+    a( iv_f = 'B1' iv_t = 'Dateiname: vorbelegt mit System, Startknoten, Datum und Uhrzeit,' ).
+    a( iv_f = '=' iv_t = 'ohne Endung - XML und HTML entstehen aus demselben Lauf und' ).
+    a( iv_f = '=' iv_t = 'unterscheiden sich nur darin. Das Feld ist ueberschreibbar; der' ).
+    a( iv_f = '=' iv_t = 'Vorschlag wandert mit dem Startknoten mit, solange niemand ihn' ).
+    a( iv_f = '=' iv_t = 'geaendert hat. Ein selbst gewaehlter Name bleibt stehen.' ).
+
+    a( iv_f = 'U1' iv_t = 'BC-Set aus Dokument erzeugen' ).
+    a( iv_f = 'AS' iv_t = 'Der Report kann die Richtung umkehren: ein zuvor erzeugtes Dokument' ).
+    a( iv_f = '=' iv_t = 'einlesen und daraus ein Business Configuration Set anlegen. Das Set' ).
+    a( iv_f = '=' iv_t = 'traegt das Customizing, das im Dokument steht.' ).
+    a( iv_f = 'B1' iv_t = 'Geschrieben wird damit noch nichts. Das Customizing entsteht erst,' ).
+    a( iv_f = '=' iv_t = 'wenn jemand das Set in SCPR20 aktiviert - mit Protokoll,' ).
+    a( iv_f = '=' iv_t = 'Auftragsanschluss und der Moeglichkeit, vorher hineinzusehen. Ein' ).
+    a( iv_f = '=' iv_t = 'Report, der Customizing-Tabellen direkt beschreibt, hat davon' ).
+    a( iv_f = '=' iv_t = 'nichts.' ).
+    a( iv_f = 'B1' iv_t = 'Voraussetzung ist ein Dokument, das mit Customizing-Inhalte lesen' ).
+    a( iv_f = '=' iv_t = 'erzeugt wurde. Ohne Inhalte gibt es nichts aufzunehmen.' ).
+    a( iv_f = 'B1' iv_t = 'Aufgenommen wird nur, was vollstaendig vorliegt. Eine Tabelle, die' ).
+    a( iv_f = '=' iv_t = 'beim Export an Max. Zeilen abgeschnitten wurde, bleibt draussen -' ).
+    a( iv_f = '=' iv_t = 'ein halbes Set sieht aus wie ein ganzes und loescht beim' ).
+    a( iv_f = '=' iv_t = 'Aktivieren, was nicht mitkam. Fuer eine vollstaendige Uebernahme' ).
+    a( iv_f = '=' iv_t = 'muss der Export mit Max. Zeilen = 0 gelaufen sein.' ).
+    a( iv_f = 'B1' iv_t = 'Ebenfalls draussen bleiben Tabellen, die es hier nicht gibt, und' ).
+    a( iv_f = '=' iv_t = 'Auslieferungsklassen, die kein Kundencustomizing tragen. Jede' ).
+    a( iv_f = '=' iv_t = 'Auslassung steht mit Begruendung im Protokoll.' ).
+    a( iv_f = 'B1' iv_t = 'Testlauf ist vorbelegt: der Report meldet, was in das Set kaeme,' ).
+    a( iv_f = '=' iv_t = 'und legt nichts an.' ).
+    a( iv_f = 'B1' iv_t = 'Fehlliste schreiben: die uebergangenen Objekte werden zusaetzlich' ).
+    a( iv_f = '=' iv_t = 'als XML-Arbeitsliste ausgegeben. Diese Datei liest der' ).
+    a( iv_f = '=' iv_t = 'Entwickler-Report im Quellsystem als Startpunkt-Typ AL und' ).
+    a( iv_f = '=' iv_t = 'exportiert genau die fehlenden Objekte - Tabelle, View,' ).
+    a( iv_f = '=' iv_t = 'View-Cluster und Pflegetransaktion. Nach deren Import laeuft die' ).
+    a( iv_f = '=' iv_t = 'BC-Set-Erzeugung auch fuer sie durch.' ).
+    a( iv_f = 'B1' iv_t = 'Angefordert wird nur, was hier wirklich fehlt. Eine' ).
+    a( iv_f = '=' iv_t = 'Standardtransaktion wie SM30 steht in jedem System und gehoert' ).
+    a( iv_f = '=' iv_t = 'nicht auf die Liste.' ).
 
     a( iv_f = 'U1' iv_t = 'Hinweise' ).
     a( iv_f = 'AS' iv_t = 'Der Referenz-Einfuehrungsleitfaden umfasst mit aufgeloesten' ).
@@ -189,6 +225,11 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'Paketmodus.' ).
     a( iv_f = 'B1' iv_t = 'Lokale Pakete einbeziehen: beruecksichtigt auch Pakete des' ).
     a( iv_f = '=' iv_t = 'Kurzzeitnamensraums.' ).
+    a( iv_f = 'B1' iv_t = 'Arbeitsliste aus Fehlliste (Typ AL): kein einzelnes Objekt, sondern' ).
+    a( iv_f = '=' iv_t = 'eine Liste davon. Der IMG-Report schreibt sie im Zielsystem, wenn' ).
+    a( iv_f = '=' iv_t = 'ihm beim Anlegen eines BC-Sets Objekte fehlen. Der Startpunkt' ).
+    a( iv_f = '=' iv_t = 'steht dann in der Datei, nicht im Namensfeld; jedes Objekt der' ).
+    a( iv_f = '=' iv_t = 'Liste wird ein eigenes Kapitel.' ).
 
     a( iv_f = 'AS' iv_t = 'Umfang' ).
     a( iv_f = 'B1' iv_t = 'Objekttyp und Objektname grenzen die Objektliste ein.' ).
@@ -246,7 +287,12 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = 'B1' iv_t = 'Roundtrip pruefen: serialisiert, liest wieder ein, serialisiert erneut' ).
     a( iv_f = '=' iv_t = 'und vergleicht. Schreibt nichts in das System zurueck.' ).
     a( iv_f = 'B1' iv_t = 'Download auf PC und Ablage Appl.-Server schreiben dieselbe Datei in' ).
-    a( iv_f = '=' iv_t = 'UTF-8. Der Dateiname enthaelt System, Datum und Uhrzeit.' ).
+    a( iv_f = '=' iv_t = 'UTF-8.' ).
+    a( iv_f = 'B1' iv_t = 'Dateiname: vorbelegt mit System, Startobjekt, Datum und Uhrzeit,' ).
+    a( iv_f = '=' iv_t = 'ohne Endung - XML und HTML entstehen aus demselben Lauf und' ).
+    a( iv_f = '=' iv_t = 'unterscheiden sich nur darin. Das Feld ist ueberschreibbar; der' ).
+    a( iv_f = '=' iv_t = 'Vorschlag wandert mit dem Startobjekt mit, solange niemand ihn' ).
+    a( iv_f = '=' iv_t = 'geaendert hat. Ein selbst gewaehlter Name bleibt stehen.' ).
 
     a( iv_f = 'U1' iv_t = 'Import in dieses System' ).
     a( iv_f = 'AS' iv_t = 'Der Report kann die Richtung umkehren: eine in einem anderen System' ).
@@ -299,6 +345,28 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'Programmbestandteil und kommen mit dem Quelltext allein nicht' ).
     a( iv_f = '=' iv_t = 'mit; ein Report, der seinen Status setzt, liefe sonst auf einen' ).
     a( iv_f = '=' iv_t = 'Abbruch. Ein Programm ohne Status ist der Normalfall.' ).
+    a( iv_f = 'B1' iv_t = 'Der Pflegedialog einer Tabelle oder eines Views reist vollstaendig' ).
+    a( iv_f = '=' iv_t = 'mit: der Eintrag in TVDIR mit Funktionsgruppe und Bildnummern, die' ).
+    a( iv_f = '=' iv_t = 'Formroutinen zu den Pflegeereignissen, die Berechtigungsgruppe,' ).
+    a( iv_f = '=' iv_t = 'die Dynpros der Funktionsgruppe samt Ablauflogik und die' ).
+    a( iv_f = '=' iv_t = 'Pflegetransaktion. Ohne diese Teile kaeme ein View an, den SM30' ).
+    a( iv_f = '=' iv_t = 'nicht kennt - auch dann, wenn der View selbst fehlerfrei' ).
+    a( iv_f = '=' iv_t = 'angelegt wurde.' ).
+    a( iv_f = 'B1' iv_t = 'Die Funktionsgruppe und die Pflegetransaktion zieht der Export von' ).
+    a( iv_f = '=' iv_t = 'selbst nach. Auf sie zeigt kein Querverweis; sie stehen nur im' ).
+    a( iv_f = '=' iv_t = 'Pflegeeintrag.' ).
+    a( iv_f = 'B1' iv_t = 'Der Eintrag in TVDIR wird im Zielsystem direkt geschrieben und' ).
+    a( iv_f = '=' iv_t = 'haengt nicht am Transportauftrag. Erzeugen liesse er sich nur' ).
+    a( iv_f = '=' iv_t = 'ueber SE54, und SE54 ist ein Dialog. Das Protokoll weist es aus,' ).
+    a( iv_f = '=' iv_t = 'damit niemand den Eintrag im Auftrag sucht.' ).
+    a( iv_f = 'B1' iv_t = 'Ein Dynpro, das es hier schon gibt, wird nicht ueberschrieben. Der' ).
+    a( iv_f = '=' iv_t = 'Baustein kennt dafuer keinen Weg ohne SE51; das Protokoll meldet' ).
+    a( iv_f = '=' iv_t = 'es je Bild.' ).
+    a( iv_f = 'B1' iv_t = 'Pflegetransaktionen sind meist Parametertransaktionen - SM30 mit' ).
+    a( iv_f = '=' iv_t = 'vorbelegtem Viewnamen. Die Vorbelegung wird mitgenommen und beim' ).
+    a( iv_f = '=' iv_t = 'Import wieder aufgebaut. Startpunkt-Typ dafuer gibt es keinen;' ).
+    a( iv_f = '=' iv_t = 'Transaktion und View-Cluster kommen ueber die Verweise oder' ).
+    a( iv_f = '=' iv_t = 'ueber die Arbeitsliste.' ).
     a( iv_f = 'B1' iv_t = 'Bei einer CDS-Quelle entstehen SQL-View und Strukturobjekt beim' ).
     a( iv_f = '=' iv_t = 'Aktivieren von selbst; sie stehen nicht im Dokument.' ).
     a( iv_f = 'B1' iv_t = 'Sekundaerindizes einer Tabelle reisen mit und werden angelegt,' ).
@@ -311,8 +379,9 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'Bestehende Objekte ueberschreiben nicht gesetzt ist.' ).
     a( iv_f = 'B1' iv_t = 'Die Reihenfolge legt der Report fest: Domaenen, Datenelemente,' ).
     a( iv_f = '=' iv_t = 'Tabellen, Views, CDS-Quellen, Programme, Interfaces, Klassen,' ).
-    a( iv_f = '=' iv_t = 'Funktionsgruppen. Eine Tabelle ohne ihre Datenelemente liesse sich' ).
-    a( iv_f = '=' iv_t = 'nicht aktivieren.' ).
+    a( iv_f = '=' iv_t = 'Funktionsgruppen, zuletzt View-Cluster und Transaktionen. Eine' ).
+    a( iv_f = '=' iv_t = 'Tabelle ohne ihre Datenelemente liesse sich nicht aktivieren, ein' ).
+    a( iv_f = '=' iv_t = 'Cluster ohne die Views seiner Knoten nicht aufklappen.' ).
     a( iv_f = 'B1' iv_t = 'Aktiviert wird gezielt: aus den inaktiven Objekten des Benutzers' ).
     a( iv_f = '=' iv_t = 'nimmt der Import nur die, die zum eben geschriebenen Objekt gehoeren.' ).
     a( iv_f = '=' iv_t = 'Angefangene Arbeit anderer bleibt unberuehrt.' ).

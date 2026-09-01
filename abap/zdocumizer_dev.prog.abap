@@ -4283,6 +4283,12 @@ ENDCLASS.
 DATA gv_dummy_typ TYPE tadir-object.
 DATA gv_dummy_nam TYPE tadir-obj_name.
 
+* Der zuletzt selbst gebildete Dateinamensvorschlag. Nur solange im
+* Feld genau dieser Wert steht, darf der naechste Bildaufbau ihn
+* ersetzen - sonst waere ein selbst gewaehlter Name beim naechsten
+* Enter wieder weg.
+DATA gv_fauto TYPE char128.
+
 SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE gv_blk1.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tstyp FOR FIELD p_stype.
@@ -4414,6 +4420,14 @@ SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE gv_blk3.
     PARAMETERS p_path TYPE char128 LOWER CASE DEFAULT 'C:\temp'
                       VISIBLE LENGTH 30.
   SELECTION-SCREEN END OF LINE.
+* Der Dateiname ohne Endung - XML und HTML entstehen aus demselben Lauf
+* und unterscheiden sich nur darin. Vorbelegt wird er aus Systemkuerzel,
+* Startobjekt und Zeitstempel; wer ihn ueberschreibt, behaelt seinen
+* Namen. Er gilt fuer den PC-Download und fuer die Serverablage.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(24) gv_tfnam FOR FIELD p_fname.
+    PARAMETERS p_fname TYPE char128 LOWER CASE VISIBLE LENGTH 46.
+  SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(24) gv_tdsrv FOR FIELD p_dsrv.
     PARAMETERS p_dsrv AS CHECKBOX.
@@ -4499,6 +4513,7 @@ INITIALIZATION.
     gv_trt   = 'Roundtrip prüfen'.
     gv_tdown = 'Download auf PC'.
     gv_tpath = 'Verzeichnis'.
+    gv_tfnam = 'Dateiname (ohne Endung)'.
     gv_tdsrv = 'Ablage Appl.-Server'.
     gv_tsrv  = 'Verzeichnis'.
     gv_tdef  = 'Definitionsdaten fuer Reimport'.
@@ -4545,6 +4560,7 @@ INITIALIZATION.
     gv_trt   = 'Check roundtrip'.
     gv_tdown = 'Download to PC'.
     gv_tpath = 'Directory'.
+    gv_tfnam = 'File name (no extension)'.
     gv_tdsrv = 'Store on app server'.
     gv_tsrv  = 'Directory'.
     gv_tdef  = 'Definition data for reimport'.
@@ -4576,6 +4592,7 @@ AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_sval.
 AT SELECTION-SCREEN OUTPUT.
 * The plain code says little; the text next to it says what was picked.
   PERFORM stype_text USING p_stype CHANGING gv_tstyt.
+  PERFORM suggest_fname.
 * On an import run there is no start point. The two fields are declared
 * OBLIGATORY for the documentation run; the required flag is taken off
 * here so that the screen does not insist on something the run ignores.
@@ -9653,6 +9670,76 @@ FORM f4_verzeichnis.
 
 ENDFORM.
 
+*&---------------------------------------------------------------------*
+*& FORM suggest_fname
+*&---------------------------------------------------------------------*
+FORM suggest_fname.
+
+* Der Vorschlag wird bei jedem Bildaufbau neu gebildet, damit er dem
+* Startobjekt folgt: wer den Objektnamen aendert, sieht den Dateinamen
+* sofort mitwandern. Ueberschrieben wird das Feld nur, solange darin
+* noch der vorige Vorschlag steht - ein selbst gewaehlter Name bleibt.
+  DATA lv_new  TYPE string.
+  DATA lv_part TYPE string.
+
+  PERFORM fname_object CHANGING lv_part.
+  lv_new = |documizer_dev_{ sy-sysid }{ lv_part }_{ sy-datum }_{ sy-uzeit }|.
+
+  IF p_fname IS INITIAL OR p_fname = gv_fauto.
+    p_fname = lv_new.
+  ENDIF.
+  gv_fauto = lv_new.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& FORM fname_object
+*&---------------------------------------------------------------------*
+FORM fname_object CHANGING cv_part TYPE string.
+
+  CLEAR cv_part.
+
+* Bei der Arbeitsliste gibt es kein einzelnes Startobjekt - der
+* Startpunkt steht in der Datei, nicht im Namensfeld.
+  IF p_stype = 'AL' OR p_sval IS INITIAL.
+    RETURN.
+  ENDIF.
+
+* Ein Namensraum bringt Schraegstriche mit, und die trennen im
+* Dateisystem Verzeichnisse. Aus /BOBF/OBJ wird _bobf_obj.
+  DATA lv_name TYPE string.
+  lv_name = to_lower( CONV string( p_sval ) ).
+  REPLACE ALL OCCURRENCES OF `/` IN lv_name WITH `_`.
+  REPLACE ALL OCCURRENCES OF `\` IN lv_name WITH `_`.
+  REPLACE ALL OCCURRENCES OF ` ` IN lv_name WITH `_`.
+  CONDENSE lv_name NO-GAPS.
+  IF lv_name IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  cv_part = |_{ lv_name }|.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& FORM file_base
+*&---------------------------------------------------------------------*
+FORM file_base CHANGING cv_base TYPE string.
+
+* Im Hintergrund gibt es kein Selektionsbild, das den Vorschlag
+* gefuellt haette, und ein per SUBMIT uebergebener leerer Name darf
+* nicht zu einer Datei ohne Namen fuehren.
+  DATA lv_part TYPE string.
+
+  cv_base = p_fname.
+  CONDENSE cv_base.
+  IF cv_base IS INITIAL.
+    PERFORM fname_object CHANGING lv_part.
+    cv_base = |documizer_dev_{ sy-sysid }{ lv_part }_{ sy-datum }_{ sy-uzeit }|.
+  ENDIF.
+
+ENDFORM.
+
 FORM download USING iv_content TYPE string
                     iv_ext     TYPE string.
 
@@ -9661,6 +9748,7 @@ FORM download USING iv_content TYPE string
   DATA lt_bin  TYPE solix_tab.
   DATA lv_file TYPE string.
   DATA lv_dir  TYPE string.
+  DATA lv_base TYPE string.
 
   IF sy-batch = abap_true.
     WRITE: / lcl_t=>ui( d = `Download auf den PC im Hintergrund nicht möglich:` e = `PC download not possible in the background:` ), iv_ext.
@@ -9675,7 +9763,8 @@ FORM download USING iv_content TYPE string
     ENDIF.
   ENDIF.
 
-  lv_file = |{ lv_dir }documizer_dev_{ sy-sysid }_{ sy-datum }_{ sy-uzeit }.{ iv_ext }|.
+  PERFORM file_base CHANGING lv_base.
+  lv_file = |{ lv_dir }{ lv_base }.{ iv_ext }|.
   lv_x = cl_abap_codepage=>convert_to( iv_content ).
 
   CALL FUNCTION 'SCMS_XSTRING_TO_BINARY'
@@ -9710,6 +9799,7 @@ FORM download_srv USING iv_content TYPE string
   DATA lv_x    TYPE xstring.
   DATA lv_file TYPE string.
   DATA lv_dir  TYPE string.
+  DATA lv_base TYPE string.
   DATA lv_msg  TYPE string.
 
   lv_dir = p_srv.
@@ -9722,7 +9812,8 @@ FORM download_srv USING iv_content TYPE string
     lv_dir = |{ lv_dir }/|.
   ENDIF.
 
-  lv_file = |{ lv_dir }documizer_dev_{ sy-sysid }_{ sy-datum }_{ sy-uzeit }.{ iv_ext }|.
+  PERFORM file_base CHANGING lv_base.
+  lv_file = |{ lv_dir }{ lv_base }.{ iv_ext }|.
   lv_x    = cl_abap_codepage=>convert_to( iv_content ).
 
   TRY.

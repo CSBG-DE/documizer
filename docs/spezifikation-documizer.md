@@ -188,7 +188,20 @@ Pakete im System S4H (Auftrag `S4HK901757`):
 **Block: Ausgabe**
 
 `P_XML`, `P_HTML`, `P_FOLD` (HTML einklappen ab Zeilen, 0 = nie), `P_RTEST` (Roundtrip prüfen),
-`P_DOWN` + `P_PATH` (PC), `P_DSRV` + `P_SRV` (Applikationsserver).
+`P_DOWN` + `P_PATH` (PC), `P_DSRV` + `P_SRV` (Applikationsserver), `P_FNAME` (Dateiname, siehe
+6.1).
+
+**Block: BC-Set aus Dokument erzeugen** — die Gegenrichtung des IMG-Reports (siehe 3.8).
+
+| Parameter | Vorbelegung | Bedeutung |
+|---|---|---|
+| `P_BCS` | | BC-Set erzeugen statt dokumentieren |
+| `P_BFILE` / `P_BSRV` | | XML-Datei, wahlweise vom Applikationsserver |
+| `P_BID` | | Name des BC-Sets |
+| `P_BTEXT` | | Kurztext |
+| `P_BPACK` / `P_BTR` | `$TMP` | Paket und Auftrag |
+| `P_BTEST` | **X** | Testlauf — es wird nichts angelegt |
+| `P_BREQ` / `P_BRFIL` | | Fehlliste schreiben, Zieldatei (siehe 3.9) |
 
 ### 3.2 Ablauf
 
@@ -295,6 +308,84 @@ Mit `P_NOSAP` bleiben nur Objekte der Eigenentwicklung übrig (siehe 4.7).
 
 ---
 
+### 3.8 BC-Set statt Direktzugriff
+
+Ein Dokument beschreibt Customizing. Die naheliegende Gegenrichtung wäre, die Tabellen im
+Zielsystem direkt zu beschreiben — und genau das tut der Report **nicht**.
+
+Stattdessen entsteht ein **Business Configuration Set**. Geschrieben wird damit noch nichts;
+das Customizing entsteht erst, wenn jemand das Set in **SCPR20** aktiviert. Das ist der
+Unterschied, um den es geht: Aktivierung läuft mit Protokoll, mit Anschluss an den
+Transportauftrag, mit der Möglichkeit, vorher hineinzusehen, und mit einem Weg zurück. Ein
+Report, der `MODIFY` auf eine Customizing-Tabelle absetzt, hat davon nichts.
+
+Geschrieben wird über `SCPR_PRSET_DB_SAVE_ORIG_TABLES`. Zwei Dinge daran sind nicht
+offensichtlich:
+
+- **Der Baustein prüft nichts.** Er schreibt, was er bekommt. Jede Prüfung — gibt es die
+  Tabelle hier, trägt ihre Auslieferungsklasse überhaupt Kundencustomizing, ist der Inhalt
+  vollständig — muss der Report selbst machen.
+- **Alle sieben Tabellen müssen übergeben werden.** `SCPRVALS`, `SCPRVALL`, `SCPRRECA`,
+  `SCPRSKEYS`, `SCPRFLDV`, `SCPRTEXT`, `SCPRPPRL`. Eine ausgelassene wird nicht etwa in Ruhe
+  gelassen, sondern gelöscht.
+
+Drei Sperren entscheiden, was hineinkommt:
+
+| Sperre | Grund |
+|---|---|
+| Tabelle im Zielsystem unbekannt | Ein Set auf eine Tabelle, die es nicht gibt, lässt sich nicht aktivieren. |
+| Auslieferungsklasse nicht `C`, `G` oder `E` | Alles andere ist keine Customizing-Tabelle. |
+| Inhalt beim Export abgeschnitten | **Die wichtigste.** Ein an `P_MAXROW` gekürzter Inhalt sieht im Set aus wie der vollständige. Beim Aktivieren verschwindet, was nicht mitkam. |
+
+Für eine vollständige Übernahme muss der Export deshalb mit `P_MAXROW = 0` gelaufen sein.
+
+Jede Auslassung steht mit Begründung im Protokoll. Entdoppelt wird über die Tabellennamen, und
+zwar **hinter** den Sperren: eine wegen Kürzung übersprungene Tabelle darf dieselbe Tabelle
+aus einer anderen Aktivität nicht blockieren. An einem echten Kundenexport waren das rund 300
+doppelte Sätze von 1472.
+
+Der Feldwert trägt ein Kennzeichen `KEY` oder `USE`. `MANDT` reist als Schlüsselfeld mit
+leerem Wert — der Mandant des Zielsystems steht beim Aktivieren fest, nicht beim Anlegen.
+Der Katalogeintrag ist `R3TR SCP1`.
+
+### 3.9 Die Fehlliste
+
+Ein BC-Set kann nur Tabellen tragen, die es im Zielsystem gibt. Kundeneigene Customizing-
+Tabellen gibt es dort aber gerade nicht — sie sind Entwicklung und müssen erst ankommen.
+
+Der IMG-Report schreibt deshalb auf Wunsch (`P_BREQ`) eine **Arbeitsliste** der übergangenen
+Objekte:
+
+```xml
+<documizer version="1.0" type="REQUEST">
+ <meta>
+  <system>S4H</system>
+  <source>B4D/010</source>
+ </meta>
+ <objects>
+  <object type="TABL" name="ZBSD_SKIP_IND"  activity="ZBSDV_SKIP_IND"/>
+  <object type="VIEW" name="ZBSDV_SKIP_IND" activity="ZBSDV_SKIP_IND"/>
+ </objects>
+</documizer>
+```
+
+Diese Datei liest der **Entwickler-Report im Quellsystem** als Startpunkt-Typ `AL` und
+exportiert genau die genannten Objekte. Nach deren Import läuft die BC-Set-Erzeugung auch für
+sie durch. Damit schließt sich der Kreis: Customizing braucht die Tabellen, die Tabellen
+kommen über den Entwickler-Report, und was fehlt, sagt das Zielsystem selbst.
+
+Angefordert wird je Pflegeobjekt die Tabelle, bei Pflegeart `V`/`S` zusätzlich der View, bei
+`C` der View-Cluster, dazu die Pflegetransaktion. Damit das Pflegeobjekt beim Reimport
+überhaupt noch bekannt ist, steht es seit Formatversion 1.1 ausdrücklich am `<object>`-Tag
+(`objtype`, `objname`) — vorher lebte es nur in einer **übersetzten** Notiz („Basistabelle aus
+X." / „Base table from X.") und war maschinell nicht mehr auswertbar. Ältere Dokumente ohne
+diese Attribute werden weiterhin gelesen; aus ihnen entstehen dann nur die Tabelleneinträge.
+
+**Angefordert wird nur, was hier wirklich fehlt.** Der erste Lauf verlangte `SM30` — eine
+Standardtransaktion, die in jedem System steht. Eine Fehlliste, die Vorhandenes anfordert,
+kostet den Entwickler im Quellsystem Zeit und Vertrauen. Geprüft wird je Typ gegen `DD02L`,
+`DD25L`, `VCLDIR` bzw. `TSTC`.
+
 ## 4. Report B — ABAP-Paket-/Entwicklerdokumentation (`ZDOCUMIZER_DEV`)
 
 ### 4.1 Startpunkt
@@ -312,17 +403,28 @@ Der Einstieg ist ein Paar aus **Typ und Wert**, wie im Object Navigator:
 F4 auf beiden Feldern; der Klartext zum Code steht daneben. Bei `C` entscheidet der Katalog, ob
 es eine Klasse oder ein Interface ist — ein Feld für beides, wie in SE80.
 
+Ein Code fällt aus der Reihe: **`AL` — Arbeitsliste aus Fehlliste.** Er benennt kein Objekt,
+sondern eine Liste davon. Der Startpunkt steht dann in einer Datei (`P_AFILE`, wahlweise vom
+Applikationsserver über `P_ASRV`), nicht im Namensfeld; jedes Objekt der Liste wird ein
+eigenes Kapitel. Woher die Datei kommt, steht in 3.9.
+
+Der Kapitelaufbau ist deshalb nicht mehr fest verdrahtet: bei einem Einzelobjekt bleibt es bei
+Kapitel 1 für das Objekt, 2 für die verwendeten und 3 für die Verwender; bei einer Arbeitsliste
+mit *n* Objekten sind es die Kapitel 1 bis *n*, danach *n+1* und *n+2*.
+
 Ein **Funktionsbaustein** hat keinen eigenen `TADIR`-Satz und läuft deshalb unter dem
 Pseudotyp `FUNC`: Kurztext aus `TFTIT`, Doku über Dokuklasse `FU`, Schnittstelle aus
 `FUPARAREF`, Quelltext aus seinem Include.
 
 ### 4.2 Selektionsbild
 
-**Block: Startpunkt** — `P_STYPE`, `P_SVAL`, `P_RECUR` (Unterpakete rekursiv, nur Paket),
-`P_LOCAL` (lokale Pakete einbeziehen). Typen: `K` Paket, `P` Programm, `C` Klasse/Interface,
+**Block: Startpunkt** — `P_STYPE`, `P_SVAL`, `P_AFILE` + `P_ASRV` (nur bei `AL`),
+`P_RECUR` (Unterpakete rekursiv, nur Paket), `P_LOCAL` (lokale Pakete einbeziehen).
+Typen: `K` Paket, `P` Programm, `C` Klasse/Interface,
 `FF` Baustein, `F` Funktionsgruppe, `T` Tabelle, `V` View, `D` Datenelement, `DO` Domäne,
 `W` CDS View, `MX` Metadata Extension, `BD` Verhaltensdefinition, `SD` Service-Definition,
-`SB` Service-Binding, `IS` IDoc-Segmenttyp, `IT` IDoc-Basistyp, `U5` UI5-Anwendung.
+`SB` Service-Binding, `IS` IDoc-Segmenttyp, `IT` IDoc-Basistyp, `U5` UI5-Anwendung,
+`AL` Arbeitsliste aus Fehlliste.
 
 **Block: Umfang**
 
@@ -344,7 +446,7 @@ Pseudotyp `FUNC`: Kurztext aus `TFTIT`, Doku über Dokuklasse `FU`, Schnittstell
 | `P_FSRC` | | Fundstellen im ganzen Quelltext |
 | `P_DEF` | X | Definitionsdaten für den Reimport (siehe 5.5) |
 
-**Block: Ausgabe** — wie Report A.
+**Block: Ausgabe** — wie Report A, einschließlich `P_FNAME` (siehe 6.1).
 
 **Block: Import in dieses System** — schaltet den Report auf die Gegenrichtung (siehe 5.6).
 Ist `P_IMP` gesetzt, werden `P_STYPE` und `P_SVAL` inaktiv gesetzt; ein Importlauf hat keinen
@@ -663,6 +765,19 @@ Tabellenart, Row/Column Store reisten überhaupt nicht mit. Aufgefallen ist es e
 `RSMPE_FUNT`, das aus drei Includes und fast nichts sonst besteht und mit lauter leeren Feldern
 ankam.
 
+**Feldnamen, die kein XML-Attributname sein können.** Der RTTI-Durchlauf nimmt den
+Komponentennamen und schreibt ihn als Attributnamen — das ging gut, solange nur
+DDIF-Strukturen durchliefen. `RPY_DYFATC`, die Feldliste eines Dynpros, hat die Felder
+`*_ENTRY` und `2_DIMENS`: ein Stern ist im XML-Namen verboten, eine führende Ziffer auch. Ohne
+Umschrift käme kein Dynpro durch den Writer.
+
+Umgeschrieben wird über eine feste Tabelle (`*` → `_xas_`, `/` → `_xsl_`, `-` → `_xmi_`,
+`.` → `_xdt_`, führende Ziffer → Präfix `_n`), nicht über eine Codepage-Klasse. Die Marken sind
+kleingeschrieben und kommen in DDIC-Feldnamen nicht vor, also ist die Umschrift umkehrbar; der
+Parser dreht sie beim Zuweisen wieder zurück. Ein Zeichen, für das es keine Marke gibt, führt
+dazu, dass das **Feld weggelassen** wird — lieber ein fehlendes Feld als ein unlesbares
+Dokument.
+
 Geschrieben wird das Ganze nur mit `P_DEF` (Vorbelegung an).
 
 ### 5.6 Reimport
@@ -688,6 +803,10 @@ Applikationsserver —, über denselben Parser ins Modell, dann die Objekte anle
 | UI5-Anwendung (BSP) | `/UI5/CL_UI5_REP_DT` (`GET_FILE` / `PUT_FILE`, `CREATE_REPOSITORY`) | umgesetzt |
 | Interface, Klasse | `SEO_*_CREATE_COMPLETE` + `IF_OO_CLIF_SOURCE` | umgesetzt |
 | Funktionsgruppe, Funktionsbaustein | `RS_FUNCTION_POOL_INSERT`, `RPY_FUNCTIONMODULE_INSERT` | umgesetzt |
+| Dynpro | `RPY_DYNPRO_READ` / `RPY_DYNPRO_INSERT` | umgesetzt |
+| Pflegeeintrag (TVDIR, TVIMF, TDDAT) | direkt geschrieben, siehe unten | umgesetzt |
+| Transaktion | `RPY_TRANSACTION_READ` / `_INSERT` | umgesetzt |
+| View-Cluster | `VIEWCLUSTER_GET_DEFINITION` / `_SAVE_DEFINITION` | umgesetzt |
 | Objektdokumentation | `DOCU_UPDATE` | umgesetzt für Report und Datenelement |
 
 **Views** laufen wie Tabellen: `DDIF_VIEW_GET` liefert `DD25V`, `DD09V`, `DD26V`, `DD27P`,
@@ -708,6 +827,53 @@ Paar über elf Tabellen — `STA`, `FUN`, `MEN`, `MTX`, `ACT`, `BUT`, `PFK`, `SE
 `BIV` — plus den Kopfsatz `RSMPE_ADM`. Jede Tabelle wird ein Zeilen-Tag (`CUA_STA`, `CUA_FUN`,
 …), der Kopf `CUA_ADM`; dieselbe Form wie die Feldliste einer Tabelle, dieselbe RTTI-Abbildung.
 Ein Programm ohne Status ist der Normalfall und keine Meldung wert.
+
+**Der Pflegeapparat.** Bis hierher kam im Zielsystem ein View an, den **SM30 nicht kennt**.
+Der Dialog dahinter ist kein Teil des Views, sondern steckt an drei Stellen, auf die kein
+Querverweis zeigt:
+
+| Teil | Wo er steht |
+|---|---|
+| Funktionsgruppe und Bildnummern | `TVDIR` |
+| Formroutinen zu den Pflegeereignissen | `TVIMF` |
+| Berechtigungsgruppe | `TDDAT` |
+| Bilder mit Ablauflogik | Dynpros der Funktionsgruppe |
+| Einstieg | Pflegetransaktion, meist Parametertransaktion auf SM30 |
+
+Alle fünf reisen jetzt mit. Funktionsgruppe und Pflegetransaktion zieht der Sammler über
+`TVDIR` von selbst nach; sie stehen in keinem Index, und ohne diesen Umweg käme der Dialog nie
+zustande.
+
+`TVDIR`, `TVIMF` und `TDDAT` werden im Zielsystem **direkt geschrieben**. Erzeugen ließen sie
+sich nur über SE54, und `VIEW_MAINTENANCE_GENERATE` ist nichts als ein `CALL TRANSACTION
+'SE55'` — ein Dialog, und damit für einen Report ohne Bedienung unbrauchbar. Die drei Tabellen
+sind mandantenunabhängig und hängen nicht am Transportauftrag; das Protokoll weist es aus,
+damit niemand den Eintrag im Auftrag sucht. Vor dem Schreiben wird geprüft, ob die
+Funktionsgruppe steht — ein Eintrag, der ins Leere zeigt, führt in SM30 zum Kurzdump statt zu
+einer Meldung.
+
+**Die Ablauflogik ist als `DYN_FLOWLIST` typisiert, nicht als `RPY_DYFLOW`** — obwohl die
+Schnittstelle von `RPY_DYNPRO_READ` und `RPY_DYNPRO_INSERT` genau das deklariert. Beide
+Bausteine reichen die Tabelle unverändert an ihr NATIVE-Gegenstück weiter, und dessen Parameter
+ist mit dem Tabellentyp `DYN_FLOWLIST` typisiert. `RPY_DYFLOW` ist doppelt so lang wie dessen
+Zeilentyp `D022S`; ein nicht typkompatibler Aktualparameter endet dort im Kurzdump
+`CALL_FUNCTION_CONFLICT_TAB_TYP`. Die deklarierte Typangabe ist an dieser Stelle irreführend.
+
+**Ein vorhandenes Dynpro wird nicht überschrieben.** `RPY_DYNPRO_INSERT` kennt dafür keinen Weg
+ohne SE51; das Protokoll meldet es je Bild. Beim Erstimport spielt das keine Rolle, beim
+Nachliefern geänderter Bilder schon.
+
+**Parametertransaktionen** — SM30 mit vorbelegtem `VIEWNAME` — stehen in `TSTCP` als eine
+Zeile: hinter `/*` die gerufene Transaktion, dahinter `NAME=WERT`, getrennt durch Semikolon.
+Das führende `/*` heißt „erstes Bild überspringen". Der Import baut daraus wieder
+`CALLED_TRANSACTION`, `CALLED_TRANSACTION_SKIP` und die Parameterwerte auf. Die GUI-Kennzeichen
+(`TSTCC`) nimmt `RPY_TRANSACTION_INSERT` nicht entgegen und werden hinterher geschrieben.
+
+**View-Cluster** liest `VIEWCLUSTER_GET_DEFINITION` am Stück. Kopf und Struktur kommen als
+Pflegeviews `V_VCLDIR` und `V_VCLSTRUC` heraus, die den Text schon enthalten — die Texte
+brauchen also keinen eigenen Weg. Angelegt wird ein Cluster nur, wenn **jeder** Knoten
+vorhanden ist; ein Cluster mit einem fehlenden View läuft in SM34 beim Aufklappen in einen
+Fehler, und ein nicht angelegter Cluster mit einer klaren Meldung ist besser als ein kaputter.
 
 **BDEF, SRVD und DDLX** — die Backend-Schichten einer Fiori-Anwendung — sind alle drei reine
 Quelltextobjekte und hängen am **generischen Workbench-Objektoperator**. Ein `def_`/`put_`-Paar
@@ -990,6 +1156,35 @@ verloren.
 
 Markdown ist noch nicht umgesetzt (siehe 9).
 
+### 6.1 Dateiname
+
+`P_FNAME` trägt den Dateinamen **ohne Endung**: XML und HTML entstehen aus demselben Lauf und
+unterscheiden sich nur darin. Derselbe Name gilt für den PC-Download und für die Serverablage.
+
+Vorbelegt wird er aus Systemkürzel, Startobjekt, Datum und Uhrzeit —
+`documizer_dev_S4H_zscantestv2_20260901_083000`. Der Objektname ist neu: bisher hießen alle
+Dokumente eines Systems gleich und ließen sich in einem Verzeichnis nur am Zeitstempel
+unterscheiden.
+
+Der Vorschlag wird bei **jedem Bildaufbau** neu gebildet, damit er dem Startobjekt folgt. Wer
+den Objektnamen ändert, sieht den Dateinamen sofort mitwandern. Überschrieben wird das Feld
+aber nur, solange darin noch genau der vorige Vorschlag steht; ein selbst gewählter Name
+bleibt. Der Report merkt sich den zuletzt selbst gebildeten Wert dafür in einer eigenen
+Variablen — der Vergleich gegen das Feld allein würde einen von Hand eingetragenen Namen beim
+nächsten Enter wieder wegwerfen.
+
+Zwei Randfälle:
+
+- **Namensräume.** Ein Objektname wie `/BOBF/OBJ` bringt Schrägstriche mit, und die trennen im
+  Dateisystem Verzeichnisse. Sie werden zu Unterstrichen.
+- **Hintergrund und `SUBMIT`.** Dort läuft kein PBO, das den Vorschlag gefüllt hätte. Ist das
+  Feld leer, bildet der Report den Namen beim Schreiben selbst — eine Datei ohne Namen darf
+  daraus nicht werden.
+
+Bei der Arbeitsliste (`P_STYPE = AL`) entfällt der Objektteil: es gibt kein einzelnes
+Startobjekt. Im IMG-Report tritt an dessen Stelle die Struktur-ID, ersatzweise das Projekt;
+der Suchbegriff bleibt draußen, denn er ist Prosa und kein Name.
+
 ---
 
 ## 7. Berechtigungen und Betrieb
@@ -1049,6 +1244,12 @@ Namensauflösungen gegen `TADIR` laufen gebündelt, nicht mit einem `SELECT SING
 | 7b | Reimport: Klassen, Interfaces, Funktionsgruppen | erledigt |
 | 7c | Reimport: Views, CDS-Quellen | erledigt |
 | 7d | Reimport: Sekundärindizes | erledigt |
+| 7e | Reimport: UI5-Anwendungen über die Repository-API | erledigt |
+| 7f | Reimport: IDoc-Segmenttypen und -Basistypen | erledigt |
+| 7g | BC-Set aus Dokument (`SCPR_PRSET_DB_SAVE_ORIG_TABLES`) | erledigt |
+| 7h | Fehlliste im IMG-Report, Arbeitsliste im DEV-Report | erledigt |
+| 7i | Pflegeapparat: Dynpros, `TVDIR`, Transaktion, View-Cluster | erledigt |
+| 7j | Dateiname vorgebbar (`P_FNAME`) | erledigt |
 | 8 | Markdown-Renderer | offen |
 | 9 | Anzeigen ohne Anlegen | offen |
 | 10 | BAL-Protokoll, `S_DEVELOP` | offen |
@@ -1070,3 +1271,9 @@ Namensauflösungen gegen `TADIR` laufen gebündelt, nicht mit einem `SELECT SING
    Mandantenübergreifendes Customizing ist noch nicht gesondert gekennzeichnet.
 7. **Dokumentationsobjekte im Transport** — die von `ZDOCUMIZER_DOCU` erzeugte
    Reportdokumentation liegt nicht im Transportauftrag.
+8. **Vorhandene Dynpros überschreiben** — `RPY_DYNPRO_INSERT` lehnt ein bestehendes Bild ab,
+   und einen dialogfreien Weg zum Ersetzen gibt es nicht. Beim Nachliefern geänderter Bilder
+   bleibt nur SE51.
+9. **Pflegeeintrag im Transportauftrag** — `TVDIR`, `TVIMF` und `TDDAT` werden lokal
+   geschrieben. Sie in den Auftrag zu hängen hieße, Tabellenschlüssel als `E071K` einzutragen;
+   das ist noch nicht umgesetzt.

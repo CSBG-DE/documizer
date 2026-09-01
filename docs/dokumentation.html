@@ -339,6 +339,7 @@
         <li><a href="#ueberblick">Überblick</a></li>
         <li><a href="#installation">Installation</a></li>
         <li><a href="#img">IMG-Report</a></li>
+        <li><a href="#bcset">BC-Sets &amp; Fehlliste</a></li>
         <li><a href="#projekt">Projektmodus</a></li>
         <li><a href="#dev">Development-Report</a></li>
         <li><a href="#ausgabe">Ausgabe &amp; Export</a></li>
@@ -526,6 +527,83 @@
       </section>
 
       <!-- 4 -->
+      <section id="bcset">
+        <h2>BC-Sets &amp; Fehlliste</h2>
+        <p class="sec-note">
+          Die Gegenrichtung des IMG-Reports. Ein zuvor erzeugtes Dokument einlesen und daraus
+          Customizing im Zielsystem entstehen lassen — aber nicht durch Schreiben.
+        </p>
+
+        <h3>Warum kein Direktzugriff</h3>
+        <p>
+          Der Report erzeugt ein <b>Business Configuration Set</b> und schreibt damit noch
+          nichts. Das Customizing entsteht erst, wenn jemand das Set in <code>SCPR20</code>
+          aktiviert. Genau darum geht es: Aktivierung läuft mit Protokoll, mit Anschluss an den
+          Transportauftrag, mit der Möglichkeit, vorher hineinzusehen, und mit einem Weg
+          zurück. Ein Report, der <code>MODIFY</code> auf eine Customizing-Tabelle absetzt, hat
+          davon nichts.
+        </p>
+        <p>
+          Geschrieben wird über <code>SCPR_PRSET_DB_SAVE_ORIG_TABLES</code> — dialogfrei, im
+          Gegensatz zu fast allem anderen im BC-Set-Umfeld. Zwei Eigenheiten stehen als
+          Kommentar im Baustein selbst und sind leicht zu übersehen: er <b>prüft nichts</b>, und
+          es müssen <b>alle sieben Tabellen</b> übergeben werden
+          (<code>SCPRVALS</code>, <code>SCPRVALL</code>, <code>SCPRRECA</code>,
+          <code>SCPRSKEYS</code>, <code>SCPRFLDV</code>, <code>SCPRTEXT</code>,
+          <code>SCPRPPRL</code>). Eine ausgelassene wird nicht in Ruhe gelassen, sondern
+          gelöscht.
+        </p>
+
+        <h3>Was hineinkommt</h3>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Sperre</th><th>Grund</th></tr></thead>
+            <tbody>
+              <tr><td>Tabelle hier unbekannt</td><td>Ein Set auf eine Tabelle, die es nicht gibt, lässt sich nicht aktivieren.</td></tr>
+              <tr><td>Auslieferungsklasse nicht <code>C</code>, <code>G</code>, <code>E</code></td><td>Alles andere ist keine Customizing-Tabelle.</td></tr>
+              <tr><td>Inhalt beim Export abgeschnitten</td><td>Die wichtigste. Ein an <em>Max. Zeilen</em> gekürzter Inhalt sieht im Set aus wie der vollständige — beim Aktivieren verschwindet, was nicht mitkam.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="note">
+          <p><b>Für eine vollständige Übernahme muss der Export mit <em>Max. Zeilen = 0</em>
+          gelaufen sein.</b> Jede Auslassung steht mit Begründung im Protokoll. Entdoppelt wird
+          über die Tabellennamen, und zwar <em>hinter</em> den Sperren — eine wegen Kürzung
+          übersprungene Tabelle darf dieselbe Tabelle aus einer anderen Aktivität nicht
+          blockieren. An einem echten Kundenexport waren das rund 300 doppelte Sätze von
+          1472.</p>
+        </div>
+
+        <h3>Die Fehlliste</h3>
+        <p>
+          Ein BC-Set kann nur Tabellen tragen, die es im Zielsystem gibt. Kundeneigene
+          Customizing-Tabellen gibt es dort aber gerade nicht — sie sind Entwicklung und müssen
+          erst ankommen. Der IMG-Report schreibt deshalb auf Wunsch eine <b>Arbeitsliste</b> der
+          übergangenen Objekte:
+        </p>
+<pre><code>&lt;documizer version="1.0" type="REQUEST"&gt;
+ &lt;meta&gt;&lt;system&gt;S4H&lt;/system&gt;&lt;source&gt;B4D/010&lt;/source&gt;&lt;/meta&gt;
+ &lt;objects&gt;
+  &lt;object type="TABL" name="ZBSD_SKIP_IND"  activity="ZBSDV_SKIP_IND"/&gt;
+  &lt;object type="VIEW" name="ZBSDV_SKIP_IND" activity="ZBSDV_SKIP_IND"/&gt;
+ &lt;/objects&gt;
+&lt;/documizer&gt;</code></pre>
+        <p>
+          Diese Datei liest der <b>Development-Report im Quellsystem</b> als Startpunkt-Typ
+          <code>AL</code> und exportiert genau die genannten Objekte. Nach deren Import läuft die
+          BC-Set-Erzeugung auch für sie durch. Damit schließt sich der Kreis: Customizing braucht
+          die Tabellen, die Tabellen kommen über den Development-Report, und was fehlt, sagt das
+          Zielsystem selbst.
+        </p>
+        <div class="note">
+          <p><b>Angefordert wird nur, was hier wirklich fehlt.</b> Der erste Lauf verlangte
+          <code>SM30</code> — eine Standardtransaktion, die in jedem System steht. Eine
+          Fehlliste, die Vorhandenes anfordert, kostet den Entwickler im Quellsystem Zeit und
+          Vertrauen. Geprüft wird je Typ gegen <code>DD02L</code>, <code>DD25L</code>,
+          <code>VCLDIR</code> bzw. <code>TSTC</code>.</p>
+        </div>
+      </section>
+
       <section id="projekt">
         <h2>Projektmodus</h2>
         <p class="sec-note">
@@ -588,9 +666,19 @@
               <tr><td><code>C</code></td><td>Klasse / Interface</td><td><code>D</code></td><td>Datenelement</td></tr>
               <tr><td><code>FF</code></td><td>Funktionsbaustein</td><td><code>DO</code></td><td>Domäne</td></tr>
               <tr><td><code>F</code></td><td>Funktionsgruppe</td><td><code>W</code></td><td>CDS View</td></tr>
+              <tr><td><code>AL</code></td><td>Arbeitsliste aus Fehlliste</td><td colspan="2">weitere: <code>MX</code>, <code>BD</code>, <code>SD</code>, <code>SB</code>, <code>IS</code>, <code>IT</code>, <code>U5</code></td></tr>
             </tbody>
           </table>
         </div>
+        <p>
+          Ein Code fällt aus der Reihe: <code>AL</code> benennt kein Objekt, sondern eine
+          <b>Liste</b> davon — die Fehlliste, die der IMG-Report im Zielsystem geschrieben hat
+          (siehe <a href="#bcset">BC-Sets &amp; Fehlliste</a>). Der Startpunkt steht dann in
+          einer Datei, nicht im Namensfeld; jedes Objekt der Liste wird ein eigenes Kapitel.
+          Der Kapitelaufbau ist deshalb nicht mehr fest verdrahtet: bei <em>n</em> Startobjekten
+          sind es die Kapitel 1 bis <em>n</em>, danach <em>n+1</em> für die verwendeten und
+          <em>n+2</em> für die verwendenden Objekte.
+        </p>
         <p>
           F4 auf beiden Feldern; der Klartext zum Code steht daneben. Bei <code>C</code>
           entscheidet der Katalog, ob es eine Klasse oder ein Interface ist — ein Feld für
@@ -856,8 +944,27 @@
         <p>
           Beide Wege schreiben <b>binär nach vorheriger Wandlung in UTF-8</b>. Ein Textdownload
           würde die Zeichen in die Frontend-Codepage umsetzen, und genau dort gehen Umlaute
-          verloren. Der Dateiname entsteht aus System, Datum und Uhrzeit, damit
-          aufeinanderfolgende Läufe sich nicht überschreiben.
+          verloren.
+        </p>
+
+        <h3>Dateiname</h3>
+        <p>
+          Das Feld <em>Dateiname</em> trägt den Namen <b>ohne Endung</b>: XML und HTML entstehen
+          aus demselben Lauf und unterscheiden sich nur darin. Derselbe Name gilt für den
+          PC-Download und für die Serverablage. Vorbelegt wird er aus Systemkürzel,
+          <b>Startobjekt</b>, Datum und Uhrzeit —
+          <span class="mono">documizer_dev_S4H_zscantestv2_20260901_083000</span>. Der
+          Objektname ist neu: bisher hießen alle Dokumente eines Systems gleich und ließen sich
+          in einem Verzeichnis nur am Zeitstempel unterscheiden.
+        </p>
+        <p>
+          Der Vorschlag wird bei <b>jedem Bildaufbau</b> neu gebildet, damit er dem Startobjekt
+          folgt. Überschrieben wird das Feld aber nur, solange darin noch genau der vorige
+          Vorschlag steht — ein selbst gewählter Name bleibt. Namensräume wie
+          <code>/BOBF/OBJ</code> werden dabei entschärft: Schrägstriche trennen im Dateisystem
+          Verzeichnisse und werden zu Unterstrichen. Im Hintergrund und bei
+          <code>SUBMIT</code> läuft kein PBO, das den Vorschlag gefüllt hätte; ist das Feld
+          leer, bildet der Report den Namen beim Schreiben selbst.
         </p>
 
       </section>
@@ -899,6 +1006,10 @@
               <tr><td>IDoc-Segmenttyp</td><td>ja, als Segment — nicht als Struktur</td></tr>
               <tr><td>IDoc-Basistyp</td><td>ja, mit der ganzen Segmenthierarchie</td></tr>
               <tr><td>UI5-Anwendung (BSP)</td><td>ja, mit allen Dateien — Inhalt als Base64 im XML</td></tr>
+              <tr><td>Dynpro</td><td>ja, mit Containern, Feldern und Ablauflogik</td></tr>
+              <tr><td>Pflegeeintrag (SM30)</td><td>ja — <code>TVDIR</code>, <code>TVIMF</code>, <code>TDDAT</code>, lokal geschrieben</td></tr>
+              <tr><td>Transaktion</td><td>ja, auch als Parametertransaktion mit Vorbelegung</td></tr>
+              <tr><td>View-Cluster</td><td>ja, aber nur wenn jeder Knoten vorhanden ist</td></tr>
             </tbody>
           </table>
         </div>
@@ -939,6 +1050,41 @@
           Kopfsatz. Jede wird ein Zeilen-Tag im Dokument — dieselbe Form wie die Feldliste einer
           Tabelle. Ein Programm ohne Status ist der Normalfall und keine Meldung wert.
         </p>
+
+        <h3>Der Pflegeapparat</h3>
+        <p>
+          Bis zuletzt kam im Zielsystem ein View an, den <b>SM30 nicht kennt</b>. Der Dialog
+          dahinter ist kein Teil des Views, sondern steckt an Stellen, auf die kein Querverweis
+          zeigt: Funktionsgruppe und Bildnummern in <code>TVDIR</code>, die Formroutinen zu den
+          Pflegeereignissen in <code>TVIMF</code>, die Berechtigungsgruppe in
+          <code>TDDAT</code>, die Bilder in den Dynpros der Funktionsgruppe und der Einstieg in
+          einer Pflegetransaktion. Alle fünf reisen jetzt mit; Funktionsgruppe und Transaktion
+          zieht der Export über <code>TVDIR</code> von selbst nach.
+        </p>
+        <p>
+          <code>TVDIR</code>, <code>TVIMF</code> und <code>TDDAT</code> werden im Zielsystem
+          <b>direkt geschrieben</b>. Erzeugen ließen sie sich nur über SE54, und
+          <code>VIEW_MAINTENANCE_GENERATE</code> ist nichts als ein
+          <code>CALL TRANSACTION 'SE55'</code> — ein Dialog, und damit für einen Report ohne
+          Bedienung unbrauchbar. Die drei Tabellen sind mandantenunabhängig und hängen nicht am
+          Transportauftrag; das Protokoll weist es aus, damit niemand den Eintrag im Auftrag
+          sucht. Vor dem Schreiben wird geprüft, ob die Funktionsgruppe steht — ein Eintrag, der
+          ins Leere zeigt, führt in SM30 zum Kurzdump statt zu einer Meldung.
+        </p>
+        <p>
+          <b>Pflegetransaktionen</b> sind meist Parametertransaktionen: SM30 mit vorbelegtem
+          <code>VIEWNAME</code>. Die Vorbelegung steht in <code>TSTCP</code> als eine Zeile —
+          hinter <code>/*</code> die gerufene Transaktion, dahinter <code>NAME=WERT</code>,
+          getrennt durch Semikolon; das führende <code>/*</code> heißt „erstes Bild
+          überspringen". Der Import baut daraus wieder Aufruf, Sprungkennzeichen und
+          Parameterwerte auf.
+        </p>
+        <div class="note">
+          <p><b>Ein vorhandenes Dynpro wird nicht überschrieben.</b>
+          <code>RPY_DYNPRO_INSERT</code> kennt dafür keinen Weg ohne SE51; das Protokoll meldet
+          es je Bild. Beim Erstimport spielt das keine Rolle, beim Nachliefern geänderter Bilder
+          schon.</p>
+        </div>
 
         <h3>Die Fiori-Schichten</h3>
         <p>
@@ -1178,6 +1324,22 @@
             <thead><tr><th>Symptom</th><th>Ursache</th></tr></thead>
             <tbody>
               <tr>
+                <td>Kurzdump <code>CALL_FUNCTION_CONFLICT_TAB_TYP</code> in <code>RPY_DYNPRO_READ</code></td>
+                <td>Die Schnittstelle deklariert die Ablauflogik als <code>RPY_DYFLOW</code>, reicht die Tabelle aber unverändert an ihr NATIVE-Gegenstück weiter — und dessen Parameter ist mit dem Tabellentyp <code>DYN_FLOWLIST</code> typisiert. <code>RPY_DYFLOW</code> ist doppelt so lang wie dessen Zeilentyp <code>D022S</code>. Die deklarierte Typangabe ist an dieser Stelle irreführend; zu übergeben ist <code>DYN_FLOWLIST</code>.</td>
+              </tr>
+              <tr>
+                <td>Dynpro kam gar nicht ins XML</td>
+                <td><code>RPY_DYFATC</code> hat die Felder <code>*_ENTRY</code> und <code>2_DIMENS</code> — als XML-Attributname beide ungültig. Der RTTI-Durchlauf schreibt Feldnamen jetzt über eine feste, umkehrbare Umschrift; ein Zeichen ohne Marke führt dazu, dass das Feld weggelassen wird, statt das Dokument unlesbar zu machen.</td>
+              </tr>
+              <tr>
+                <td>Report bleibt beim Generieren des Pflegedialogs stehen</td>
+                <td><code>VIEW_MAINTENANCE_GENERATE</code> ist ein <code>CALL TRANSACTION 'SE55'</code>. Dieselbe Falle wie bei <code>RS_WORKING_OBJECT_ACTIVATE</code>, <code>RPY_MESSAGE_ID_INSERT</code> und <code>SCPR_DELETE</code>: ein Baustein, der aussieht wie eine API, aber ein Bild aufmacht. Der Pflegeeintrag reist deshalb als Daten mit.</td>
+              </tr>
+              <tr>
+                <td>BC-Set mit rund 300 doppelten Sätzen</td>
+                <td>Dieselbe Tabelle steht an mehreren IMG-Aktivitäten. Entdoppelt wird über die Tabellennamen — und zwar <b>hinter</b> den Vollständigkeitsprüfungen, sonst blockiert eine wegen Kürzung übersprungene Tabelle dieselbe Tabelle aus einer anderen Aktivität.</td>
+              </tr>
+              <tr>
                 <td>Abschnittsmarken <code>&amp;USE&amp;</code> blieben stehen</td>
                 <td><code>zeile CS space</code> ist <b>immer wahr</b> — CS ignoriert nachgestellte Leerzeichen im Suchbegriff, ein reines Leerzeichen wird zur leeren Zeichenkette. Prüfung über regulären Ausdruck.</td>
               </tr>
@@ -1286,7 +1448,9 @@
               <tr><td>DOCX</td><td>bewusst zurückgestellt — ZIP-Container mit OOXML, deutlich mehr Aufwand als HTML. Für „im Word öffnen" reicht oft HTML</td></tr>
               <tr><td>Anwendungsprotokoll (BAL)</td><td>offen: gelesene Knoten, übersprungene wegen Berechtigung, abgeschnittene Tabellen, Laufzeit</td></tr>
               <tr><td><code>S_DEVELOP</code> vorab prüfen</td><td>beim Import prüfen die gerufenen Bausteine selbst, aber erst je Objekt. Eine Prüfung vor dem Lauf würde einen aussichtslosen Import gar nicht erst starten</td></tr>
-              <tr><td>Reimport von Customizing</td><td>bleibt bei BC-Sets — der Documizer schreibt bewusst nicht in Customizing-Tabellen</td></tr>
+              <tr><td>Reimport von Customizing</td><td>umgesetzt als BC-Set — der Documizer schreibt bewusst nicht in Customizing-Tabellen, siehe <a href="#bcset">BC-Sets &amp; Fehlliste</a></td></tr>
+              <tr><td>Vorhandene Dynpros überschreiben</td><td>offen; <code>RPY_DYNPRO_INSERT</code> lehnt ein bestehendes Bild ab, und einen dialogfreien Weg zum Ersetzen gibt es nicht</td></tr>
+              <tr><td>Pflegeeintrag im Transportauftrag</td><td>offen; <code>TVDIR</code>, <code>TVIMF</code> und <code>TDDAT</code> werden lokal geschrieben. Sie in den Auftrag zu hängen hieße, Tabellenschlüssel als <code>E071K</code> einzutragen</td></tr>
               <tr><td>Anzeigen ohne Anlegen</td><td>offen; eine XML-Datei nur einlesen und nach HTML rendern, ohne Systemzugriff — Parser und Renderer sind da, es fehlt der Schalter</td></tr>
               <tr><td>Bausteine im Verwendungsnachweis</td><td>für die Richtung „welcher Baustein wird von wem gerufen" gibt es keinen Index; ein Scan über alle Programme wäre zu teuer</td></tr>
               <tr><td>Mandantenabhängiges Customizing</td><td>der Export bezieht sich auf den Anmeldemandanten; mandantenübergreifendes Customizing ist nicht gesondert gekennzeichnet</td></tr>

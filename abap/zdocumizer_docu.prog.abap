@@ -334,6 +334,10 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'vorhandenes Segment bleibt unangetastet - eine neue' ).
     a( iv_f = '=' iv_t = 'Segmentdefinition waere eine neue Version. Startpunkt-Typen:' ).
     a( iv_f = '=' iv_t = 'IS und IT.' ).
+    a( iv_f = 'B1' iv_t = 'Ein Basistyp nimmt seine Segmenttypen mit. Die Segmenthierarchie' ).
+    a( iv_f = '=' iv_t = 'steht in der Syntaxtabelle und in keinem Querverweisindex; ohne' ).
+    a( iv_f = '=' iv_t = 'diesen Umweg kaeme drueben ein Basistyp an, dessen Segmente es' ).
+    a( iv_f = '=' iv_t = 'nicht gibt, und das Anlegen schluege fehl.' ).
     a( iv_f = 'B1' iv_t = 'Nachrichtenklassen reisen mit allen Nachrichten und allen' ).
     a( iv_f = '=' iv_t = 'gepflegten Sprachen - anders als der uebrige Inhalt, der der' ).
     a( iv_f = '=' iv_t = 'Ausgabesprache folgt. Eine nur englisch gepflegte Klasse kaeme in' ).
@@ -386,7 +390,21 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'nimmt der Import nur die, die zum eben geschriebenen Objekt gehoeren.' ).
     a( iv_f = '=' iv_t = 'Angefangene Arbeit anderer bleibt unberuehrt.' ).
     a( iv_f = 'B1' iv_t = 'Bei einem lokalen Paket wird kein Auftrag angefordert, sonst der' ).
-    a( iv_f = '=' iv_t = 'angegebene verwendet.' ).
+    a( iv_f = '=' iv_t = 'angegebene verwendet. Das gilt je Objekt: wer ein lokales Paket' ).
+    a( iv_f = '=' iv_t = 'auf ein transportfaehiges umlenkt, bekommt den Auftrag auch dann' ).
+    a( iv_f = '=' iv_t = 'angehaengt, wenn das Zielpaket oben lokal war.' ).
+    a( iv_f = 'B1' iv_t = 'Zielpaket gilt fuer alles. Wer die Paketstruktur des Quellsystems' ).
+    a( iv_f = '=' iv_t = 'behalten oder umlenken will, nimmt die vier Regelzeilen darunter:' ).
+    a( iv_f = '=' iv_t = 'links das Paket, in dem das Objekt drueben lag, rechts das Paket,' ).
+    a( iv_f = '=' iv_t = 'in dem es hier landen soll - etwa $TMP nach ZBLE_WM. Was keine' ).
+    a( iv_f = '=' iv_t = 'Regel trifft, geht ins Zielpaket, oder mit Quellpaket' ).
+    a( iv_f = '=' iv_t = 'beibehalten dorthin, wo es herkam.' ).
+    a( iv_f = 'B1' iv_t = 'Das Quellpaket steht im Dokument; der Export schreibt es in die' ).
+    a( iv_f = '=' iv_t = 'Objektreferenz. Ein Dokument aus einer aelteren Fassung hat es' ).
+    a( iv_f = '=' iv_t = 'nicht - dann gilt das Zielpaket.' ).
+    a( iv_f = 'B1' iv_t = 'Ein Paket, das es hier nicht gibt, wird nicht angelegt. Es bleibt' ).
+    a( iv_f = '=' iv_t = 'beim Zielpaket, und das Protokoll sagt warum. Gemeldet wird eine' ).
+    a( iv_f = '=' iv_t = 'Zeile je Regel, nicht je Objekt.' ).
     a( iv_f = 'B1' iv_t = 'Nach dem Lauf wird jedes Objekt geprueft: DDIC-Objekte auf die' ).
     a( iv_f = '=' iv_t = 'aktive Fassung, Programme mit einem Syntax-Check. Gemeldet wird nur,' ).
     a( iv_f = '=' iv_t = 'was auffaellt. Angelegt heisst nicht brauchbar - einer Struktur kann' ).

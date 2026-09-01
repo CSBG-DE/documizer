@@ -469,6 +469,8 @@ inaktiv, solange dokumentiert wird. `P_IFILE` hat eine Wertehilfe mit Dateidialo
 | `P_IACT` | X | Nach dem Anlegen aktivieren |
 | `P_IPACK` | `$TMP` | Zielpaket |
 | `P_ITR` | | Auftrag (bei nicht-lokalem Paket) |
+| `P_IKEEP` | | Quellpaket beibehalten |
+| `P_IOLD1..4` / `P_INEW1..4` | | Paketregeln alt → neu (siehe 5.7) |
 
 ### 4.3 Ablauf
 
@@ -1128,6 +1130,37 @@ Documizer schreibt nicht in Customizing-Tabellen.
 
 ---
 
+### 5.7 Paket beim Import
+
+Bis hierher landete beim Import alles in **einem** Zielpaket. Das Quellpaket steht dabei längst
+im Dokument — der Export schreibt es in die Objektreferenz —, es wurde beim Import nur nicht
+gelesen.
+
+Vier Regelzeilen **alt → neu** und ein Kennzeichen *Quellpaket beibehalten* ändern das. Die
+Reihenfolge je Objekt:
+
+1. eine Regel auf das Quellpaket
+2. sonst das Quellpaket selbst, wenn `P_IKEEP` gesetzt ist
+3. sonst `P_IPACK` — das bisherige Verhalten, unverändert als Vorbelegung
+
+Umgesetzt über `set_pack( )`, das vor jedem Objekt `mv_pack` und `mv_tr` umsetzt. Die rund
+zwanzig Stellen, die `mv_pack` lesen, bleiben dadurch unberührt; die Eingabe vom Bild steht in
+`mv_pack0` und `mv_tr0`.
+
+Zwei Dinge hängen daran:
+
+- **Ein Paket, das es im Zielsystem nicht gibt, wird nicht angelegt.** Das ist eine
+  Entscheidung, die dem Entwickler gehört. Es bleibt beim Zielpaket vom Bild, und das
+  Protokoll sagt warum.
+- **Der Auftrag hängt am Paket dieses Objekts, nicht an der Eingabe.** Ein lokales Paket kennt
+  keinen Auftrag, ein transportfähiges braucht einen. Wer `$TMP` nach `ZBLE_WM` umlenkt,
+  bekommt den Auftrag also auch dann angehängt, wenn `P_IPACK` lokal war — sonst liefe der
+  Import in die Auftragsabfrage.
+
+Gemeldet wird eine Zeile je Regel, nicht je Objekt.
+
+---
+
 ## 6. HTML-Ausgabe
 
 Eine in sich geschlossene Datei ohne externe Abhängigkeiten: CSS eingebettet, kein JavaScript.
@@ -1250,6 +1283,8 @@ Namensauflösungen gegen `TADIR` laufen gebündelt, nicht mit einem `SELECT SING
 | 7h | Fehlliste im IMG-Report, Arbeitsliste im DEV-Report | erledigt |
 | 7i | Pflegeapparat: Dynpros, `TVDIR`, Transaktion, View-Cluster | erledigt |
 | 7j | Dateiname vorgebbar (`P_FNAME`) | erledigt |
+| 7k | Basistyp zieht seine Segmenttypen nach | erledigt |
+| 7l | Paket beim Import umlenkbar (`P_IKEEP`, Regeln) | erledigt |
 | 8 | Markdown-Renderer | offen |
 | 9 | Anzeigen ohne Anlegen | offen |
 | 10 | BAL-Protokoll, `S_DEVELOP` | offen |
@@ -1277,3 +1312,7 @@ Namensauflösungen gegen `TADIR` laufen gebündelt, nicht mit einem `SELECT SING
 9. **Pflegeeintrag im Transportauftrag** — `TVDIR`, `TVIMF` und `TDDAT` werden lokal
    geschrieben. Sie in den Auftrag zu hängen hieße, Tabellenschlüssel als `E071K` einzutragen;
    das ist noch nicht umgesetzt.
+10. **IDoc-Erweiterungstypen (CIMTYPE)** — `IDOCTYPE_READ` kennt nur `PI_IDOCTYP`;
+    Erweiterungen brauchen ein eigenes Paar Bausteine und einen eigenen Startpunkt-Typ.
+11. **Fehlende Pakete beim Import anlegen** — eine Paketregel auf ein Paket, das es im
+    Zielsystem nicht gibt, greift nicht. Das Anlegen wäre ein eigenes Kennzeichen wert.

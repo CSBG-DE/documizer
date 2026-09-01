@@ -1051,6 +1051,38 @@
           Tabelle. Ein Programm ohne Status ist der Normalfall und keine Meldung wert.
         </p>
 
+        <h3>In welches Paket</h3>
+        <p>
+          Ohne Zutun landet alles im <em>Zielpaket</em>. Wer die Paketstruktur des Quellsystems
+          behalten oder umlenken will, nimmt die vier Regelzeilen <b>alt &rarr; neu</b> darunter:
+          links das Paket, in dem das Objekt drüben lag, rechts das Paket, in dem es hier landen
+          soll — etwa <code>$TMP</code> &rarr; <code>ZBLE_WM</code>. Das Kennzeichen
+          <em>Quellpaket beibehalten</em> lässt alles, was keine Regel trifft, dort landen, wo
+          es herkam.
+        </p>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Reihenfolge</th><th>Ziel</th></tr></thead>
+            <tbody>
+              <tr><td>1</td><td>eine Regel auf das Quellpaket</td></tr>
+              <tr><td>2</td><td>sonst das Quellpaket selbst, wenn <em>beibehalten</em> gesetzt ist</td></tr>
+              <tr><td>3</td><td>sonst das Zielpaket vom Bild — das bisherige Verhalten</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Das Quellpaket lag übrigens schon immer im Dokument: der Export schreibt es in die
+          Objektreferenz. Es wurde beim Import nur nie gelesen.
+        </p>
+        <div class="note">
+          <p><b>Ein Paket, das es hier nicht gibt, wird nicht angelegt.</b> Das ist eine
+          Entscheidung, die dem Entwickler gehört; es bleibt beim Zielpaket, und das Protokoll
+          sagt warum. Und der <b>Auftrag hängt am Paket dieses Objekts</b>, nicht an der
+          Eingabe: ein lokales Paket kennt keinen Auftrag, ein transportfähiges braucht einen.
+          Wer <code>$TMP</code> nach <code>ZBLE_WM</code> umlenkt, bekommt den Auftrag also auch
+          dann angehängt, wenn das Zielpaket lokal war.</p>
+        </div>
+
         <h3>Der Pflegeapparat</h3>
         <p>
           Bis zuletzt kam im Zielsystem ein View an, den <b>SM30 nicht kennt</b>. Der Dialog
@@ -1450,6 +1482,8 @@
               <tr><td><code>S_DEVELOP</code> vorab prüfen</td><td>beim Import prüfen die gerufenen Bausteine selbst, aber erst je Objekt. Eine Prüfung vor dem Lauf würde einen aussichtslosen Import gar nicht erst starten</td></tr>
               <tr><td>Reimport von Customizing</td><td>umgesetzt als BC-Set — der Documizer schreibt bewusst nicht in Customizing-Tabellen, siehe <a href="#bcset">BC-Sets &amp; Fehlliste</a></td></tr>
               <tr><td>Vorhandene Dynpros überschreiben</td><td>offen; <code>RPY_DYNPRO_INSERT</code> lehnt ein bestehendes Bild ab, und einen dialogfreien Weg zum Ersetzen gibt es nicht</td></tr>
+              <tr><td>IDoc-Erweiterungstypen (CIMTYPE)</td><td>offen; <code>IDOCTYPE_READ</code> kennt nur den Basistyp, Erweiterungen brauchen ein eigenes Paar Bausteine</td></tr>
+              <tr><td>Fehlende Pakete beim Import anlegen</td><td>offen; eine Paketregel auf ein Paket, das es im Zielsystem nicht gibt, greift nicht</td></tr>
               <tr><td>Pflegeeintrag im Transportauftrag</td><td>offen; <code>TVDIR</code>, <code>TVIMF</code> und <code>TDDAT</code> werden lokal geschrieben. Sie in den Auftrag zu hängen hieße, Tabellenschlüssel als <code>E071K</code> einzutragen</td></tr>
               <tr><td>Anzeigen ohne Anlegen</td><td>offen; eine XML-Datei nur einlesen und nach HTML rendern, ohne Systemzugriff — Parser und Renderer sind da, es fehlt der Schalter</td></tr>
               <tr><td>Bausteine im Verwendungsnachweis</td><td>für die Richtung „welcher Baustein wird von wem gerufen" gibt es keinen Index; ein Scan über alle Programme wäre zu teuer</td></tr>

@@ -8755,6 +8755,40 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       ENDIF.
     ENDIF.
 
+*   Ein Basistyp besteht aus seinen Segmenttypen. Die Hierarchie steht
+*   in der Syntaxtabelle und in keinem Querverweisindex - ohne diesen
+*   Umweg kaeme im Zielsystem ein Basistyp an, dessen Segmente es nicht
+*   gibt, und IDOCTYPE_CREATE lehnt ihn ab.
+*
+*   Angehaengt wird TABL, nicht SEGM: ein Segment traegt im Katalog TABL,
+*   und die Definitionsermittlung erkennt es dort. So laeuft es durch
+*   dieselben Wege wie jedes andere Objekt - Kurztext, Existenzpruefung,
+*   Nachpruefung - und zieht ueber seine Struktur die Datenelemente
+*   selbst nach.
+    IF iv_type = 'IDOC'.
+      DATA lv_ityp TYPE edi_iapi00-idoctyp.
+      DATA ls_iatt TYPE edi_iapi01.
+      DATA lt_isyn TYPE STANDARD TABLE OF edi_iapi02 WITH EMPTY KEY.
+
+      lv_ityp = iv_name.
+      CALL FUNCTION 'IDOCTYPE_READ'
+        EXPORTING  pi_idoctyp         = lv_ityp
+                   pi_check_authority = abap_true
+        IMPORTING  pe_attributes      = ls_iatt
+        TABLES     pt_syntax          = lt_isyn
+        EXCEPTIONS object_not_found   = 1
+                   no_authority       = 2
+                   db_error           = 3
+                   OTHERS             = 4.
+      IF sy-subrc = 0.
+        LOOP AT lt_isyn INTO DATA(ls_isyn).
+          IF ls_isyn-segtyp IS NOT INITIAL.
+            APPEND VALUE #( type = 'TABL' name = ls_isyn-segtyp ) TO rt_ref.
+          ENDIF.
+        ENDLOOP.
+      ENDIF.
+    ENDIF.
+
 *   Eine Transaktion steht auf dem, was sie aufruft: bei der
 *   Dialogtransaktion das Programm, bei der Parametertransaktion die
 *   gerufene Transaktion.

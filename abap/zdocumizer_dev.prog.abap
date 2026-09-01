@@ -191,6 +191,14 @@ TYPES: BEGIN OF ty_meta,
          node_total TYPE i,
        END OF ty_meta.
 
+*   Eine Paketregel: das Paket, in dem ein Objekt im Quellsystem lag,
+*   und das Paket, in dem es hier landen soll.
+TYPES: BEGIN OF ty_packmap,
+         from TYPE devclass,
+         to   TYPE devclass,
+       END OF ty_packmap.
+TYPES ty_packmaps TYPE STANDARD TABLE OF ty_packmap WITH EMPTY KEY.
+
 TYPES ty_chapters TYPE STANDARD TABLE OF REF TO lcl_chapter WITH EMPTY KEY.
 TYPES ty_objects  TYPE STANDARD TABLE OF REF TO lcl_object  WITH EMPTY KEY.
 
@@ -1157,16 +1165,31 @@ CLASS lcl_importer DEFINITION.
                 iv_over TYPE abap_bool
                 iv_act  TYPE abap_bool
                 iv_pack TYPE devclass
-                iv_tr   TYPE trkorr.
+                iv_tr   TYPE trkorr
+                iv_keep TYPE abap_bool DEFAULT abap_false
+                it_map  TYPE ty_packmaps OPTIONAL.
     METHODS run IMPORTING io_document TYPE REF TO lcl_document.
     METHODS get_log RETURNING VALUE(rt_log) TYPE ty_implog.
   PRIVATE SECTION.
     DATA mv_test TYPE abap_bool.
     DATA mv_over TYPE abap_bool.
     DATA mv_act  TYPE abap_bool.
+*   mv_pack und mv_tr sind das Paket und der Auftrag des Objekts, das
+*   gerade geschrieben wird - nicht die Eingabe vom Bild. Die steht in
+*   mv_pack0 und mv_tr0. Vor jedem Objekt setzt set_pack( ) die beiden
+*   um; so bleiben die zwanzig Stellen, die mv_pack lesen, unberuehrt.
     DATA mv_pack TYPE devclass.
     DATA mv_tr   TYPE trkorr.
+    DATA mv_pack0 TYPE devclass.
+    DATA mv_tr0   TYPE trkorr.
+    DATA mv_keep  TYPE abap_bool.
+    DATA mt_map   TYPE ty_packmaps.
+*   Welche Regel schon einmal gegriffen hat. Eine Meldung je Regel, nicht
+*   je Objekt - sonst steht das Protokoll voll mit derselben Zeile.
+    DATA mt_said  TYPE STANDARD TABLE OF string WITH EMPTY KEY.
     DATA mt_log  TYPE ty_implog.
+
+    METHODS set_pack IMPORTING io_chapter TYPE REF TO lcl_chapter.
 
     METHODS collect
       IMPORTING io_chapter TYPE REF TO lcl_chapter
@@ -1260,11 +1283,98 @@ ENDCLASS.
 CLASS lcl_importer IMPLEMENTATION.
 
   METHOD constructor.
-    mv_test = iv_test.
-    mv_over = iv_over.
-    mv_act  = iv_act.
-    mv_pack = iv_pack.
-    mv_tr   = iv_tr.
+    mv_test  = iv_test.
+    mv_over  = iv_over.
+    mv_act   = iv_act.
+    mv_pack  = iv_pack.
+    mv_tr    = iv_tr.
+    mv_pack0 = iv_pack.
+    mv_tr0   = iv_tr.
+    mv_keep  = iv_keep.
+    mt_map   = it_map.
+  ENDMETHOD.
+
+  METHOD set_pack.
+
+*   Das Zielpaket je Objekt. Reihenfolge:
+*     1. eine Regel auf das Quellpaket
+*     2. sonst das Quellpaket selbst, wenn "beibehalten" gesetzt ist
+*     3. sonst das Zielpaket vom Bild
+*
+*   Das Quellpaket steht am Kapitel: der Export schreibt es in die
+*   Objektreferenz. Fehlt es - ein Dokument aus einer aelteren Fassung -
+*   greift Fall 3.
+    DATA lv_new TYPE devclass.
+    DATA lv_src TYPE devclass.
+
+    mv_pack = mv_pack0.
+    mv_tr   = mv_tr0.
+
+    IF io_chapter IS NOT BOUND.
+      RETURN.
+    ENDIF.
+
+    lv_src = io_chapter->get_reference( )-tcode.
+    IF lv_src IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    READ TABLE mt_map INTO DATA(ls_map) WITH KEY from = lv_src.
+    IF sy-subrc = 0.
+      lv_new = ls_map-to.
+    ELSEIF mv_keep = abap_true.
+      lv_new = lv_src.
+    ELSE.
+      RETURN.
+    ENDIF.
+
+    IF lv_new IS INITIAL OR lv_new = mv_pack0.
+      RETURN.
+    ENDIF.
+
+*   Ein Paket, das es hier nicht gibt, wird nicht angelegt - das ist eine
+*   Entscheidung, die dem Entwickler gehoert. Stattdessen bleibt es beim
+*   Zielpaket vom Bild, und das Protokoll sagt warum.
+    IF lv_new NP '$*'.
+      SELECT SINGLE @abap_true FROM tdevc
+        WHERE devclass = @lv_new INTO @DATA(lv_ex).
+      IF lv_ex <> abap_true.
+        DATA(lv_key) = |!{ lv_new }|.
+        READ TABLE mt_said TRANSPORTING NO FIELDS WITH KEY table_line = lv_key.
+        IF sy-subrc <> 0.
+          APPEND lv_key TO mt_said.
+          log( iv_kind   = 'PACK'
+               iv_name   = CONV string( lv_new )
+               iv_action = lcl_t=>ui( d = `nicht verwendet` e = `not used` )
+               iv_text   = |{ lcl_t=>ui( d = `Paket gibt es hier nicht, es bleibt bei`
+                                         e = `package does not exist here, staying with` ) } | &&
+                           |{ mv_pack0 }| ).
+        ENDIF.
+        RETURN.
+      ENDIF.
+    ENDIF.
+
+    mv_pack = lv_new.
+
+*   Ein lokales Paket kennt keinen Auftrag, ein transportfaehiges
+*   braucht einen. Beides haengt am Paket dieses Objekts, nicht an der
+*   Eingabe vom Bild.
+    IF mv_pack CP '$*'.
+      CLEAR mv_tr.
+    ELSE.
+      mv_tr = mv_tr0.
+    ENDIF.
+
+    DATA(lv_note) = |{ lv_src }>{ mv_pack }|.
+    READ TABLE mt_said TRANSPORTING NO FIELDS WITH KEY table_line = lv_note.
+    IF sy-subrc <> 0.
+      APPEND lv_note TO mt_said.
+      log( iv_kind   = 'PACK'
+           iv_name   = CONV string( lv_src )
+           iv_action = lcl_t=>ui( d = `Paket gesetzt` e = `package mapped` )
+           iv_text   = |{ lv_src } -> { mv_pack }| ).
+    ENDIF.
+
   ENDMETHOD.
 
   METHOD get_log.
@@ -1300,6 +1410,7 @@ CLASS lcl_importer IMPLEMENTATION.
     SORT lt_work BY seq name.
 
     LOOP AT lt_work INTO DATA(ls_work).
+      set_pack( ls_work-chapter ).
       CASE ls_work-kind.
         WHEN 'DOMA'. put_doma( io_chapter = ls_work-chapter iv_name = ls_work-name ).
         WHEN 'DTEL'. put_dtel( io_chapter = ls_work-chapter iv_name = ls_work-name ).
@@ -4475,6 +4586,40 @@ SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE gv_blk4.
     SELECTION-SCREEN COMMENT 1(30) gv_titr FOR FIELD p_itr.
     PARAMETERS p_itr TYPE trkorr.
   SELECTION-SCREEN END OF LINE.
+
+* Das Zielpaket oben gilt fuer alles. Wer die Paketstruktur des
+* Quellsystems behalten oder umlenken will, nimmt die Regeln darunter:
+* links das Paket, in dem das Objekt drueben lag, rechts das Paket, in
+* dem es hier landen soll. Was keine Regel trifft, geht ins Zielpaket -
+* oder, mit "Quellpaket beibehalten", dorthin, wo es herkam.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tikep FOR FIELD p_ikeep.
+    PARAMETERS p_ikeep AS CHECKBOX.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(18) gv_tipm1 FOR FIELD p_iold1.
+    PARAMETERS p_iold1 TYPE devclass VISIBLE LENGTH 20.
+    SELECTION-SCREEN COMMENT 43(4) gv_tiar1.
+    PARAMETERS p_inew1 TYPE devclass VISIBLE LENGTH 20.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(18) gv_tipm2 FOR FIELD p_iold2.
+    PARAMETERS p_iold2 TYPE devclass VISIBLE LENGTH 20.
+    SELECTION-SCREEN COMMENT 43(4) gv_tiar2.
+    PARAMETERS p_inew2 TYPE devclass VISIBLE LENGTH 20.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(18) gv_tipm3 FOR FIELD p_iold3.
+    PARAMETERS p_iold3 TYPE devclass VISIBLE LENGTH 20.
+    SELECTION-SCREEN COMMENT 43(4) gv_tiar3.
+    PARAMETERS p_inew3 TYPE devclass VISIBLE LENGTH 20.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(18) gv_tipm4 FOR FIELD p_iold4.
+    PARAMETERS p_iold4 TYPE devclass VISIBLE LENGTH 20.
+    SELECTION-SCREEN COMMENT 43(4) gv_tiar4.
+    PARAMETERS p_inew4 TYPE devclass VISIBLE LENGTH 20.
+  SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b4.
 
 INITIALIZATION.
@@ -4525,6 +4670,15 @@ INITIALIZATION.
     gv_tiovr = 'Bestehende Objekte ueberschreiben'.
     gv_tiact = 'Nach dem Anlegen aktivieren'.
     gv_tipck = 'Zielpaket'.
+    gv_tikep = 'Quellpaket beibehalten'.
+    gv_tipm1 = 'Paket alt -> neu'.
+    gv_tipm2 = 'Paket alt -> neu'.
+    gv_tipm3 = 'Paket alt -> neu'.
+    gv_tipm4 = 'Paket alt -> neu'.
+    gv_tiar1 = '->'.
+    gv_tiar2 = '->'.
+    gv_tiar3 = '->'.
+    gv_tiar4 = '->'.
     gv_titr  = 'Auftrag'.
     %_s_objtyp_%_app_%-text = 'Objekttyp'.
     %_s_objnam_%_app_%-text = 'Objektname'.
@@ -4572,6 +4726,15 @@ INITIALIZATION.
     gv_tiovr = 'Overwrite existing objects'.
     gv_tiact = 'Activate after creation'.
     gv_tipck = 'Target package'.
+    gv_tikep = 'Keep source package'.
+    gv_tipm1 = 'Package old -> new'.
+    gv_tipm2 = 'Package old -> new'.
+    gv_tipm3 = 'Package old -> new'.
+    gv_tipm4 = 'Package old -> new'.
+    gv_tiar1 = '->'.
+    gv_tiar2 = '->'.
+    gv_tiar3 = '->'.
+    gv_tiar4 = '->'.
     gv_titr  = 'Request'.
 * Select-options take their label from the text pool; the COMMENT approach
 * used for the other fields does not apply. The generated fields
@@ -9630,7 +9793,9 @@ FORM screen_mode.
         ENDIF.
         MODIFY SCREEN.
       WHEN 'P_IFILE' OR 'P_ISRV' OR 'P_ITEST' OR 'P_IOVER'
-        OR 'P_IACT' OR 'P_IPACK' OR 'P_ITR'.
+        OR 'P_IACT' OR 'P_IPACK' OR 'P_ITR' OR 'P_IKEEP'
+        OR 'P_IOLD1' OR 'P_INEW1' OR 'P_IOLD2' OR 'P_INEW2'
+        OR 'P_IOLD3' OR 'P_INEW3' OR 'P_IOLD4' OR 'P_INEW4'.
         IF p_imp = abap_true.
           screen-input = 1.
         ELSE.
@@ -9964,13 +10129,44 @@ FORM import.
     WRITE: / lcl_t=>ui( d = `TESTLAUF - es wird nichts angelegt.`
                         e = `TEST RUN - nothing is created.` ).
   ENDIF.
+
+* Die vier Regelzeilen vom Bild werden hier zur Tabelle. Leere Zeilen
+* fallen weg; eine Regel ohne Ziel waere keine.
+  DATA lt_pmap TYPE ty_packmaps.
+  IF p_iold1 IS NOT INITIAL AND p_inew1 IS NOT INITIAL.
+    APPEND VALUE ty_packmap( from = p_iold1 to = p_inew1 ) TO lt_pmap.
+  ENDIF.
+  IF p_iold2 IS NOT INITIAL AND p_inew2 IS NOT INITIAL.
+    APPEND VALUE ty_packmap( from = p_iold2 to = p_inew2 ) TO lt_pmap.
+  ENDIF.
+  IF p_iold3 IS NOT INITIAL AND p_inew3 IS NOT INITIAL.
+    APPEND VALUE ty_packmap( from = p_iold3 to = p_inew3 ) TO lt_pmap.
+  ENDIF.
+  IF p_iold4 IS NOT INITIAL AND p_inew4 IS NOT INITIAL.
+    APPEND VALUE ty_packmap( from = p_iold4 to = p_inew4 ) TO lt_pmap.
+  ENDIF.
+
+  IF lt_pmap IS NOT INITIAL.
+    LOOP AT lt_pmap INTO DATA(ls_pmap).
+      WRITE: / lcl_t=>ui( d = `Paketregel                       :`
+                          e = `Package rule                     :` ),
+               ls_pmap-from, '->', ls_pmap-to.
+    ENDLOOP.
+  ENDIF.
+  IF p_ikeep = abap_true.
+    WRITE: / lcl_t=>ui( d = `Quellpaket beibehalten, wo keine Regel greift.`
+                        e = `Source package kept where no rule applies.` ).
+  ENDIF.
+
   SKIP.
 
   DATA(lo_imp) = NEW lcl_importer( iv_test = p_itest
                                    iv_over = p_iover
                                    iv_act  = p_iact
                                    iv_pack = p_ipack
-                                   iv_tr   = p_itr ).
+                                   iv_tr   = p_itr
+                                   iv_keep = p_ikeep
+                                   it_map  = lt_pmap ).
   lo_imp->run( lo_doc ).
 
 * Fixed-width columns through typed fields, not through offsets on the

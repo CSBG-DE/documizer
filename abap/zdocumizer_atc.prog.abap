@@ -26,7 +26,10 @@ REPORT zdocumizer_atc.
 * Datenbank: SCICHKV_PA ist ein INDX-Cluster. Deshalb fuehrt der Weg
 * ueber die API und nicht ueber SELECT.
 *
-* Copyright 2026 consiness GmbH
+* Autor     Christian Gathmann, consiness GmbH & Co. KG
+*           gathmann@consiness.de
+*
+* Copyright 2026 consiness GmbH & Co. KG
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.

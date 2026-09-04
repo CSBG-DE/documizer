@@ -24,7 +24,10 @@ REPORT zdocumizer_img.
 * The node reference sits in HIER_REF with REF_TYPE = 'COBJ';
 * REF_OBJECT is the IMG activity.
 *
-* Copyright 2026 consiness GmbH
+* Autor     Christian Gathmann, consiness GmbH & Co. KG
+*           gathmann@consiness.de
+*
+* Copyright 2026 consiness GmbH & Co. KG
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.

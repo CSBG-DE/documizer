@@ -20,7 +20,10 @@ REPORT zdocumizer_dev.
 *   DOCU_GET                                           object documentation
 *   DD03L, SEOCOMPO, FUPARAREF                         detail information
 *
-* Copyright 2026 consiness GmbH
+* Autor     Christian Gathmann, consiness GmbH & Co. KG
+*           gathmann@consiness.de
+*
+* Copyright 2026 consiness GmbH & Co. KG
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.

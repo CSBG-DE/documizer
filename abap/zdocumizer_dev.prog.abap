@@ -9250,13 +9250,34 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *   of.
     IF iv_type = 'TABL' OR iv_type = 'VIEW'.
       DATA lv_tab TYPE dd03l-tabname.
+      DATA lv_sg2 TYPE edisegment-segtyp.
+
       lv_tab = iv_name.
-      SELECT DISTINCT rollname FROM dd03l
-        WHERE tabname = @lv_tab AND as4local = 'A' AND rollname <> ''
-        INTO TABLE @DATA(lt_rol).
-      LOOP AT lt_rol INTO DATA(ls_rol).
-        APPEND VALUE #( type = 'DTEL' name = ls_rol-rollname ) TO rt_ref.
-      ENDLOOP.
+
+*     Bei einem IDoc-Segment steht in DD03L kein Datenelement - die
+*     erzeugte Struktur ist eine flache Zeichenstruktur. Wer hier nur
+*     DD03L fragt, nimmt kein einziges Datenelement mit, und im
+*     Zielsystem scheitert SEGMENT_CREATE an Feldern, deren Datenelement
+*     es dort nicht gibt. Dieselbe Falle wie bei der Feldliste.
+      lv_sg2 = iv_name.
+      SELECT SINGLE @abap_true FROM edisegment
+        WHERE segtyp = @lv_sg2 INTO @DATA(lv_isg2).
+
+      IF lv_isg2 = abap_true.
+        SELECT DISTINCT rollname FROM edsappl
+          WHERE segtyp = @lv_sg2 AND rollname <> ''
+          INTO TABLE @DATA(lt_srol).
+        LOOP AT lt_srol INTO DATA(ls_srol).
+          APPEND VALUE #( type = 'DTEL' name = ls_srol-rollname ) TO rt_ref.
+        ENDLOOP.
+      ELSE.
+        SELECT DISTINCT rollname FROM dd03l
+          WHERE tabname = @lv_tab AND as4local = 'A' AND rollname <> ''
+          INTO TABLE @DATA(lt_rol).
+        LOOP AT lt_rol INTO DATA(ls_rol).
+          APPEND VALUE #( type = 'DTEL' name = ls_rol-rollname ) TO rt_ref.
+        ENDLOOP.
+      ENDIF.
     ENDIF.
 
 *   The includes of a program. INCLUDE ZBBC_ZAI0003. is a static

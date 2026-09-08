@@ -4752,7 +4752,7 @@ INITIALIZATION.
     gv_tstyp = 'Typ'.
     gv_tsval = 'Name (Paket, Report, ...)'.
     gv_tafil = 'Fehlliste (nur bei Typ AL)'.
-    gv_tasrv = 'Datei liegt auf Appl.-Server'.
+    gv_tasrv = 'Fehlliste liegt auf Appl.-Server'.
     gv_trec  = 'Unterpakete rekursiv (Paket)'.
     gv_tloc  = 'lokale Pakete einbeziehen'.
     gv_tlang = 'Ausgabesprache'.
@@ -4785,7 +4785,7 @@ INITIALIZATION.
     gv_blk4  = 'Import in dieses System'.
     gv_timp  = 'Importieren statt dokumentieren'.
     gv_tifil = 'XML-Datei'.
-    gv_tisrv = 'Datei auf Applikationsserver'.
+    gv_tisrv = 'XML-Datei liegt auf Appl.-Server'.
     gv_titst = 'Testlauf (nichts anlegen)'.
     gv_tiovr = 'Bestehende Objekte ueberschreiben'.
     gv_tiact = 'Nach dem Anlegen aktivieren'.
@@ -4810,7 +4810,7 @@ INITIALIZATION.
     gv_tstyp = 'Type'.
     gv_tsval = 'Name (package, report, ...)'.
     gv_tafil = 'Request list (type AL only)'.
-    gv_tasrv = 'File is on the app server'.
+    gv_tasrv = 'Request list is on the app server'.
     gv_trec  = 'Include subpackages (package)'.
     gv_tloc  = 'Include local packages'.
     gv_tlang = 'Output language'.
@@ -4843,7 +4843,7 @@ INITIALIZATION.
     gv_blk4  = 'Import into this system'.
     gv_timp  = 'Import instead of document'.
     gv_tifil = 'XML file'.
-    gv_tisrv = 'File on application server'.
+    gv_tisrv = 'XML file is on the app server'.
     gv_titst = 'Test run (create nothing)'.
     gv_tiovr = 'Overwrite existing objects'.
     gv_tiact = 'Activate after creation'.

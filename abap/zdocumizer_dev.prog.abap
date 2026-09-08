@@ -7500,10 +7500,17 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *            It has no source to scan and no frame program behind it.
              ddic  TYPE abap_bool,
              cls   TYPE c LENGTH 4,
+*            Die Felder, die diese Stelle anfasst. WBCROSSGT fuehrt eine
+*            Feldverwendung unter <Struktur>\TY:<Feld>; der Name allein
+*            findet sie nicht.
+             flds  TYPE string,
            END OF ty_use.
     DATA lt_use TYPE STANDARD TABLE OF ty_use.
     DATA ls_use TYPE ty_use.
     DATA lv_max TYPE i.
+*   Hat eine der Abfragen an ihrer Zeilengrenze abgeschnitten? Dann ist
+*   die Liste unvollstaendig, und das gehoert ins Dokument.
+    DATA lv_cut TYPE abap_bool.
 
     lv_max = mv_maxuse.
     IF lv_max <= 0.
@@ -7565,6 +7572,54 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       ENDLOOP.
 
     ENDIF.
+
+*   Feldverwendungen. WBCROSSGT fuehrt sie unter <Struktur>\TY:<Feld> -
+*   die Suche nach dem blossen Strukturnamen findet keine einzige davon.
+*   Das ist die Liste, die SE11 unter "Verwendungsnachweis Strukturfeld"
+*   zeigt, und bei einem IDoc-Segment oft die einzige, die es gibt: das
+*   Segment als Ganzes wird selten typisiert, seine Felder dauernd
+*   gelesen.
+*
+*   Der Unterstrich ist im LIKE ein Platzhalter fuer ein Zeichen. Ein
+*   Strukturname wie ZBLE_MBXSH wuerde ohne Maskierung auch ZBLEXMBXSH
+*   treffen, deshalb die Fluchtsequenz.
+    DATA lv_fpat TYPE wbcrossgt-name.
+    DATA lv_fesc TYPE string.
+
+    lv_fesc = iv_name.
+    REPLACE ALL OCCURRENCES OF `#` IN lv_fesc WITH `##`.
+    REPLACE ALL OCCURRENCES OF `_` IN lv_fesc WITH `#_`.
+    REPLACE ALL OCCURRENCES OF `%` IN lv_fesc WITH `#%`.
+    lv_fpat = lv_fesc && '\TY:%'.
+
+    SELECT name, include FROM wbcrossgt
+      WHERE otype = 'TY' AND name LIKE @lv_fpat ESCAPE '#'
+      INTO TABLE @DATA(lt_fu)
+      UP TO @lv_max ROWS.
+
+    IF lines( lt_fu ) >= lv_max.
+      lv_cut = abap_true.
+    ENDIF.
+
+*   Angehaengt wird je Treffer eine Zeile; zusammengezogen wird weiter
+*   unten in einem Durchlauf. Hier je Treffer die Liste zu durchsuchen
+*   waere quadratisch, und bei einer viel benutzten Struktur sind das
+*   schnell Millionen Vergleiche.
+    LOOP AT lt_fu INTO DATA(ls_fu).
+
+      DATA lv_fld TYPE string.
+      SPLIT ls_fu-name AT ':' INTO DATA(lv_dummy) lv_fld.
+      IF lv_fld IS INITIAL.
+        CONTINUE.
+      ENDIF.
+
+      CLEAR ls_use.
+      ls_use-where = ls_fu-include.
+      ls_use-kind  = lcl_t=>t( d = 'Feldverwendung' e = 'Field usage' ).
+      ls_use-flds  = lv_fld.
+      APPEND ls_use TO lt_use.
+
+    ENDLOOP.
 
 *   A table is not only used in code. Views and CDS views are built on it,
 *   and the cross-reference index does not know about either - the DDIC
@@ -7632,8 +7687,9 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         APPEND ls_use TO lt_use.
       ENDLOOP.
 
-      SORT lt_use BY where.
-      DELETE ADJACENT DUPLICATES FROM lt_use COMPARING where.
+*     Hier wurde frueher entdoppelt. Das faellt weg: der Durchlauf
+*     weiter unten tut dasselbe und nimmt dabei die Feldangaben mit -
+*     ein DELETE ADJACENT DUPLICATES an dieser Stelle warf sie weg.
 
     ENDIF.
 
@@ -7649,12 +7705,43 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     ENDIF.
 
     SORT lt_use BY where kind.
-    DELETE ADJACENT DUPLICATES FROM lt_use COMPARING where.
+
+*   Entdoppeln und dabei die Feldangaben zusammenziehen. Ein blosses
+*   DELETE ADJACENT DUPLICATES wuerde die Zeile mit den Feldern
+*   wegwerfen, wenn dieselbe Fundstelle auch ueber den Typ gefunden
+*   wurde - und genau das ist der Normalfall.
+    DATA lt_mrg TYPE STANDARD TABLE OF ty_use.
+    DATA ls_cur TYPE ty_use.
+
+    LOOP AT lt_use INTO ls_use.
+      IF ls_cur-where <> ls_use-where.
+        IF ls_cur-where IS NOT INITIAL.
+          APPEND ls_cur TO lt_mrg.
+        ENDIF.
+        ls_cur = ls_use.
+      ELSE.
+        IF ls_cur-flds IS INITIAL.
+          ls_cur-flds = ls_use-flds.
+        ELSEIF ls_use-flds IS NOT INITIAL AND NOT ls_cur-flds CS ls_use-flds.
+          ls_cur-flds = |{ ls_cur-flds }, { ls_use-flds }|.
+        ENDIF.
+*       Eine Fundstelle, die auch ueber den Typ kam, ist keine reine
+*       Feldverwendung mehr.
+        IF ls_cur-kind = lcl_t=>t( d = 'Feldverwendung' e = 'Field usage' )
+           AND ls_use-kind <> ls_cur-kind.
+          ls_cur-kind = ls_use-kind.
+        ENDIF.
+      ENDIF.
+    ENDLOOP.
+    IF ls_cur-where IS NOT INITIAL.
+      APPEND ls_cur TO lt_mrg.
+    ENDIF.
+    lt_use = lt_mrg.
 
     DATA(lo_u) = NEW lcl_object( iv_type = 'USAGE'
                                  iv_name = CONV string( iv_name ) ).
 
-    IF mv_maxuse > 0 AND lines( lt_use ) >= mv_maxuse.
+    IF mv_maxuse > 0 AND ( lines( lt_use ) >= mv_maxuse OR lv_cut = abap_true ).
       lo_u->set_note( |{ lcl_t=>t( d = `Verwendungsnachweis` e = `Where-used list` ) }| &&
                       | { lcl_t=>t( d = `(gekürzt bei` e = `(truncated at` ) }| &&
                       | { mv_maxuse })| ).
@@ -7801,6 +7888,13 @@ CLASS lcl_collector_dev IMPLEMENTATION.
            WITH KEY prog = ls_use-where BINARY SEARCH.
       IF sy-subrc = 0 AND ls_acc-acc IS NOT INITIAL.
         lv_kind = |{ lv_kind } - { ls_acc-acc }|.
+      ENDIF.
+
+*     Welche Felder diese Stelle anfasst. Ohne die Angabe steht in der
+*     Liste nur, dass eine Klasse etwas mit der Struktur zu tun hat.
+      IF ls_use-flds IS NOT INITIAL.
+        lv_kind = |{ lv_kind } - { lcl_t=>t( d = `Felder` e = `fields` ) }| &&
+                  | { ls_use-flds }|.
       ENDIF.
 
       lo_u->add_field( VALUE ty_field( name     = ls_use-where
@@ -8193,10 +8287,46 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
       WHEN 'TABL' OR 'VIEW'.
         lv_tab = iv_name.
-        SELECT fieldname, rollname, keyflag FROM dd03l
-          WHERE tabname = @lv_tab AND as4local = 'A' AND fieldname NOT LIKE '.%'
-          ORDER BY position
-          INTO TABLE @DATA(lt_f).
+
+*       Ein IDoc-Segment ist im Dictionary eine flache Zeichenstruktur:
+*       DD03L fuehrt jedes Feld als CHAR ohne Datenelement. Das
+*       Datenelement, das WE31 zeigt, steht allein in EDSAPPL, unter dem
+*       Segmenttyp. Ohne diesen Umweg kaeme eine Feldliste heraus, in der
+*       die Spalte Datenelement durchgaengig leer bleibt.
+        DATA lt_f TYPE STANDARD TABLE OF ty_field WITH EMPTY KEY.
+        DATA lv_seg TYPE edisegment-segtyp.
+
+        CLEAR lt_f.
+        lv_seg = iv_name.
+        SELECT SINGLE @abap_true FROM edisegment
+          WHERE segtyp = @lv_seg INTO @DATA(lv_is_seg).
+
+        IF lv_is_seg = abap_true.
+          SELECT fieldname, rollname FROM edsappl
+            WHERE segtyp = @lv_seg
+            ORDER BY pos
+            INTO TABLE @DATA(lt_sf).
+          LOOP AT lt_sf INTO DATA(ls_sf).
+            APPEND VALUE ty_field( name     = ls_sf-fieldname
+                                   rollname = ls_sf-rollname ) TO lt_f.
+          ENDLOOP.
+        ENDIF.
+
+*       Kein Segment, oder eines ohne Feldsaetze: der gewohnte Weg.
+        IF lt_f IS INITIAL.
+          SELECT fieldname, rollname, keyflag FROM dd03l
+            WHERE tabname = @lv_tab AND as4local = 'A' AND fieldname NOT LIKE '.%'
+            ORDER BY position
+            INTO TABLE @DATA(lt_d3).
+          LOOP AT lt_d3 INTO DATA(ls_d3).
+            APPEND VALUE ty_field(
+              name     = ls_d3-fieldname
+              rollname = ls_d3-rollname
+              keyflag  = COND #( WHEN ls_d3-keyflag = 'X' THEN abap_true
+                                 ELSE abap_false ) ) TO lt_f.
+          ENDLOOP.
+        ENDIF.
+
         IF lt_f IS INITIAL.
           RETURN.
         ENDIF.
@@ -8204,10 +8334,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
                                       iv_name = CONV string( iv_name ) ).
         lo_o1->set_note( lcl_t=>t( d = 'Feldliste' e = 'Field list' ) ).
         LOOP AT lt_f INTO DATA(ls_f).
-          lo_o1->add_field( VALUE ty_field(
-            name     = ls_f-fieldname
-            rollname = ls_f-rollname
-            keyflag  = COND #( WHEN ls_f-keyflag = 'X' THEN abap_true ELSE abap_false ) ) ).
+          lo_o1->add_field( ls_f ).
         ENDLOOP.
         io_chapter->add_object( lo_o1 ).
 

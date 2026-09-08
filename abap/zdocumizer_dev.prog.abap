@@ -8416,6 +8416,151 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         ENDLOOP.
         io_chapter->add_object( lo_o2 ).
 
+      WHEN 'IDOC'.
+
+*       Ein Basistyp stand bisher als blosse Kopfzeile im Dokument. Drei
+*       Sichten machen ihn lesbar, und alle drei zeigt SAP in eigenen
+*       Transaktionen:
+*
+*         WE60  die Segmenthierarchie - Ebene, Vatersegment, Muss und
+*               Wiederholbereich. Das ist der Baum, den WE30 pflegt.
+*         WE82  welche Nachrichtentypen auf diesem Basistyp fahren.
+*         WE57  welche Bausteine ihn verarbeiten, je Richtung.
+*
+*       Die Hierarchie kommt aus derselben Schnittstelle, aus der auch
+*       die Definitionsdaten stammen - IDOCTYPE_READ. Die beiden
+*       Zuordnungen stehen in EDIMSG und EDIFCT.
+        DATA lv_ity  TYPE edi_iapi00-idoctyp.
+        DATA ls_iat  TYPE edi_iapi01.
+        DATA lt_isy  TYPE STANDARD TABLE OF edi_iapi02 WITH EMPTY KEY.
+
+        lv_ity = iv_name.
+        CALL FUNCTION 'IDOCTYPE_READ'
+          EXPORTING  pi_idoctyp         = lv_ity
+                     pi_check_authority = abap_true
+          IMPORTING  pe_attributes      = ls_iat
+          TABLES     pt_syntax          = lt_isy
+          EXCEPTIONS object_not_found   = 1
+                     no_authority       = 2
+                     db_error           = 3
+                     OTHERS             = 4.
+
+        IF sy-subrc = 0 AND lt_isy IS NOT INITIAL.
+
+          DATA(lo_ih) = NEW lcl_object( iv_type = CONV string( iv_type )
+                                        iv_name = CONV string( iv_name ) ).
+          lo_ih->set_note( lcl_t=>t( d = 'Segmenthierarchie (WE60)'
+                                     e = 'Segment hierarchy (WE60)' ) ).
+
+          SORT lt_isy BY nr.
+          LOOP AT lt_isy INTO DATA(ls_isy).
+
+            DATA lv_ihk TYPE string.
+            CLEAR lv_ihk.
+
+*           Die Ebene sagt, wie tief das Segment haengt; das
+*           Vatersegment, woran. Beides zusammen ist der Baum.
+*           Ebene und Wiederholbereich sind NUMC und kaemen sonst mit
+*           fuehrenden Nullen heraus - 0000000001..0000009999 statt
+*           1..9999, wie WE60 es zeigt.
+            DATA lv_lvl TYPE i.
+            DATA lv_min TYPE i.
+            DATA lv_max2 TYPE i.
+            lv_lvl  = ls_isy-hlevel.
+            lv_min  = ls_isy-occmin.
+            lv_max2 = ls_isy-occmax.
+
+            lv_ihk = |{ lcl_t=>t( d = `Ebene` e = `level` ) } { lv_lvl }|.
+            IF ls_isy-parseg IS NOT INITIAL.
+              lv_ihk = |{ lv_ihk }, { lcl_t=>t( d = `unter` e = `under` ) }| &&
+                       | { ls_isy-parseg }|.
+            ENDIF.
+            IF ls_isy-mustfl = abap_true.
+              lv_ihk = |{ lv_ihk }, { lcl_t=>t( d = `Mussfeld` e = `mandatory` ) }|.
+            ENDIF.
+            lv_ihk = |{ lv_ihk }, { lv_min }..{ lv_max2 }|.
+
+            lo_ih->add_field( VALUE ty_field( name     = ls_isy-segtyp
+                                              rollname = lv_ihk ) ).
+          ENDLOOP.
+          io_chapter->add_object( lo_ih ).
+        ENDIF.
+
+*       WE82: Nachrichtentypen auf diesem Basistyp. Ohne eine solche
+*       Zuordnung faehrt der Basistyp nirgends - er waere eine
+*       Struktur ohne Verkehr.
+        SELECT mestyp, cimtyp, released, actflag FROM edimsg
+          WHERE idoctyp = @lv_ity
+          ORDER BY mestyp, cimtyp
+          INTO TABLE @DATA(lt_msg).
+
+        IF lt_msg IS NOT INITIAL.
+          DATA(lo_im) = NEW lcl_object( iv_type = CONV string( iv_type )
+                                        iv_name = CONV string( iv_name ) ).
+          lo_im->set_note( lcl_t=>t( d = 'Nachrichtentypen (WE82)'
+                                     e = 'Message types (WE82)' ) ).
+          LOOP AT lt_msg INTO DATA(ls_msg).
+            DATA lv_imk TYPE string.
+            CLEAR lv_imk.
+            IF ls_msg-cimtyp IS NOT INITIAL.
+              lv_imk = |{ lcl_t=>t( d = `Erweiterung` e = `extension` ) }| &&
+                       | { ls_msg-cimtyp }|.
+            ENDIF.
+            IF ls_msg-released IS NOT INITIAL.
+              lv_imk = |{ lv_imk } { lcl_t=>t( d = `ab Release`
+                                               e = `from release` ) } | &&
+                       |{ ls_msg-released }|.
+            ENDIF.
+            IF ls_msg-actflag IS NOT INITIAL.
+              lv_imk = |{ lv_imk } { lcl_t=>t( d = `(inaktiv)`
+                                               e = `(inactive)` ) }|.
+            ENDIF.
+            CONDENSE lv_imk.
+            lo_im->add_field( VALUE ty_field( name     = ls_msg-mestyp
+                                              rollname = lv_imk ) ).
+          ENDLOOP.
+          io_chapter->add_object( lo_im ).
+        ENDIF.
+
+*       WE57: welcher Baustein verarbeitet den Typ, und in welcher
+*       Richtung. Das ist die Stelle, an der ein IDoc auf Code trifft.
+        SELECT fctnam, mestyp, cimtyp, direct, objnam FROM edifct
+          WHERE idoctyp = @lv_ity
+          ORDER BY direct, fctnam
+          INTO TABLE @DATA(lt_fct).
+
+        IF lt_fct IS NOT INITIAL.
+          DATA(lo_if) = NEW lcl_object( iv_type = CONV string( iv_type )
+                                        iv_name = CONV string( iv_name ) ).
+          lo_if->set_note( lcl_t=>t( d = 'Verarbeitende Bausteine (WE57)'
+                                     e = 'Processing modules (WE57)' ) ).
+          LOOP AT lt_fct INTO DATA(ls_fct).
+            DATA lv_ifk TYPE string.
+            CASE ls_fct-direct.
+              WHEN '1'. lv_ifk = lcl_t=>t( d = 'ausgehend' e = 'outbound' ).
+              WHEN '2'. lv_ifk = lcl_t=>t( d = 'eingehend' e = 'inbound' ).
+              WHEN OTHERS. lv_ifk = |{ lcl_t=>t( d = `Richtung` e = `direction` ) }| &&
+                                    | { ls_fct-direct }|.
+            ENDCASE.
+            IF ls_fct-mestyp IS NOT INITIAL.
+              lv_ifk = |{ lv_ifk }, { ls_fct-mestyp }|.
+            ENDIF.
+            IF ls_fct-cimtyp IS NOT INITIAL.
+              lv_ifk = |{ lv_ifk }, { lcl_t=>t( d = `Erweiterung`
+                                                e = `extension` ) } | &&
+                       |{ ls_fct-cimtyp }|.
+            ENDIF.
+            IF ls_fct-objnam IS NOT INITIAL.
+              lv_ifk = |{ lv_ifk }, { lcl_t=>t( d = `Objekttyp`
+                                                e = `object type` ) } | &&
+                       |{ ls_fct-objnam }|.
+            ENDIF.
+            lo_if->add_field( VALUE ty_field( name     = ls_fct-fctnam
+                                              rollname = lv_ifk ) ).
+          ENDLOOP.
+          io_chapter->add_object( lo_if ).
+        ENDIF.
+
       WHEN 'PROG'.
         " Text elements carry the actual operating instructions of a report:
         " title, selection texts, text symbols and list headings. READ

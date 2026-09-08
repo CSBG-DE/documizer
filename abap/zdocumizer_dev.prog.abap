@@ -2768,16 +2768,22 @@ CLASS lcl_importer IMPLEMENTATION.
       lv_ord = mv_tr.
     ENDIF.
 
+*   DEVCLASS und ORDER sind CHANGING, nicht EXPORTING - der Baustein
+*   gibt beide auch wieder heraus. Als EXPORTING uebergeben endete der
+*   Aufruf in CALL_FUNCTION_PARM_UNKNOWN, und ORDER stand nur als
+*   Variable herum, ohne je anzukommen: ein transportfaehiges Paket
+*   haette den Auftrag nie gesehen.
     CALL FUNCTION 'SEGMENT_CREATE'
-      EXPORTING  devclass            = lv_dev
-                 segmenteditor       = space
+      EXPORTING  segmenteditor       = space
       IMPORTING  segmentdefinition   = ls_def
                  task                = lv_task
       TABLES     segmentstructure    = lt_stru
       CHANGING   segmentheader       = ls_head
+                 devclass            = lv_dev
+                 order               = lv_ord
       EXCEPTIONS lock_error          = 1
-                 no_authority        = 2
-                 creation_failed     = 3
+                 creation_failed     = 2
+                 no_authority        = 3
                  transport_error     = 4
                  namespace_violation = 5
                  OTHERS              = 6.

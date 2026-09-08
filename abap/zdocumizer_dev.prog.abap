@@ -4594,6 +4594,15 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE gv_blk2.
     SELECTION-SCREEN COMMENT 1(30) gv_tudep FOR FIELD p_udep.
     PARAMETERS p_udep TYPE i DEFAULT 0.
   SELECTION-SCREEN END OF LINE.
+* Ohne dieses Kennzeichen wird der Verwendungsnachweis nur zum
+* Startobjekt gezogen. Das ist die richtige Vorgabe: ein Datenelement wie
+* CHAR255 haengt an tausenden SAP-Programmen und begruebe das Dokument
+* unter seiner eigenen Liste. Wer einen IDoc-Basistyp dokumentiert, will
+* aber wissen, wer seine Segmente liest - dafuer der Schalter.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tuall FOR FIELD p_useall.
+    PARAMETERS p_useall AS CHECKBOX.
+  SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tmaxh FOR FIELD p_maxhit.
     PARAMETERS p_maxhit TYPE i DEFAULT 40.
@@ -4760,6 +4769,7 @@ INITIALIZATION.
     gv_tnsap = 'SAP-Standard ausschliessen'.
     gv_tmaxu = 'Max. Verwendungen je Objekt'.
     gv_tudep = 'Verwendungstiefe (0 = keine)'.
+    gv_tuall = 'auch fuer verwendete Objekte'.
     gv_tmaxh = 'Max. Fundstellen je Stelle'.
     gv_tfsrc = 'Fundstellen im ganzen Quelltext'.
     gv_txml  = 'XML erzeugen/ausgeben'.
@@ -4817,6 +4827,7 @@ INITIALIZATION.
     gv_tnsap = 'Exclude SAP standard'.
     gv_tmaxu = 'Max. entries per object'.
     gv_tudep = 'Usage depth (0 = none)'.
+    gv_tuall = 'also for used objects'.
     gv_tmaxh = 'Max. occurrences per place'.
     gv_tfsrc = 'Occurrences in full source'.
     gv_txml  = 'Create/show XML'.
@@ -5290,6 +5301,7 @@ CLASS lcl_collector_dev DEFINITION.
                 iv_src    TYPE abap_bool
                 iv_maxsrc TYPE i
                 iv_used   TYPE abap_bool
+                iv_useall TYPE abap_bool DEFAULT abap_false
                 iv_maxuse TYPE i
                 iv_falb   TYPE abap_bool
                 iv_flang  TYPE sy-langu
@@ -5326,6 +5338,9 @@ CLASS lcl_collector_dev DEFINITION.
     DATA mv_src    TYPE abap_bool.
     DATA mv_maxsrc TYPE i.
     DATA mv_used   TYPE abap_bool.
+*   Verwendungsnachweis auch zu den verwendeten Objekten, nicht nur zum
+*   Startobjekt.
+    DATA mv_useall TYPE abap_bool.
     DATA mv_maxuse TYPE i.
     DATA mv_calls  TYPE abap_bool.
     DATA mv_nosap  TYPE abap_bool.
@@ -5583,6 +5598,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     mv_src    = iv_src.
     mv_maxsrc = iv_maxsrc.
     mv_used   = iv_used.
+    mv_useall = iv_useall.
     mv_calls  = iv_calls.
     mv_nosap  = iv_nosap.
     mv_maxhit = iv_maxhit.
@@ -9289,11 +9305,17 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       add_details( iv_type = iv_type iv_name = iv_name io_chapter = ro_chapter ).
     ENDIF.
 
-*   Only for the object the user asked about. The question "who uses this"
-*   is about the entry point, not about its neighbourhood - a data element
-*   like CHAR255 is used in thousands of SAP programs and would bury the
-*   document under its own where-used list.
-    IF mv_used = abap_true AND iv_root = abap_true.
+*   Normalerweise nur fuer das Objekt, nach dem gefragt wurde. Die Frage
+*   "wer benutzt das" gilt dem Einstieg, nicht seiner Nachbarschaft - ein
+*   Datenelement wie CHAR255 haengt an tausenden SAP-Programmen und
+*   begruebe das Dokument unter seiner eigenen Liste.
+*
+*   Es gibt aber Faelle, in denen die Nachbarschaft die eigentliche Frage
+*   ist: bei einem IDoc-Basistyp will man wissen, wer seine Segmente
+*   liest, nicht wer den Basistyp typisiert - den typisiert niemand.
+*   Dafuer das Kennzeichen; die Vorgabe bleibt beim Startobjekt.
+    IF mv_used = abap_true
+       AND ( iv_root = abap_true OR mv_useall = abap_true ).
       add_usages( iv_type = iv_type iv_name = iv_name io_chapter = ro_chapter ).
     ENDIF.
 
@@ -10739,6 +10761,7 @@ START-OF-SELECTION.
                                               iv_src    = p_src
                                               iv_maxsrc = p_maxsrc
                                               iv_used   = p_used
+                                              iv_useall = p_useall
                                               iv_maxuse = p_maxuse
                                               iv_falb   = p_falb
                                               iv_flang  = p_flang

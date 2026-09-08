@@ -8463,12 +8463,24 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *           Ebene und Wiederholbereich sind NUMC und kaemen sonst mit
 *           fuehrenden Nullen heraus - 0000000001..0000009999 statt
 *           1..9999, wie WE60 es zeigt.
-            DATA lv_lvl TYPE i.
-            DATA lv_min TYPE i.
-            DATA lv_max2 TYPE i.
+*
+*           Abgeschnitten wird textuell, nicht gerechnet: OCCMIN und
+*           OCCMAX sind NUMC(10), und der Wert 9999999999 - die Marke
+*           fuer unbegrenzt - passt in kein TYPE I. Der erste Versuch
+*           tat genau das und endete in BCD_OVERFLOW.
+            DATA lv_lvl  TYPE string.
+            DATA lv_min  TYPE string.
+            DATA lv_max2 TYPE string.
+
             lv_lvl  = ls_isy-hlevel.
             lv_min  = ls_isy-occmin.
             lv_max2 = ls_isy-occmax.
+            SHIFT lv_lvl  LEFT DELETING LEADING '0'.
+            SHIFT lv_min  LEFT DELETING LEADING '0'.
+            SHIFT lv_max2 LEFT DELETING LEADING '0'.
+            IF lv_lvl  IS INITIAL. lv_lvl  = '0'. ENDIF.
+            IF lv_min  IS INITIAL. lv_min  = '0'. ENDIF.
+            IF lv_max2 IS INITIAL. lv_max2 = '0'. ENDIF.
 
             lv_ihk = |{ lcl_t=>t( d = `Ebene` e = `level` ) } { lv_lvl }|.
             IF ls_isy-parseg IS NOT INITIAL.

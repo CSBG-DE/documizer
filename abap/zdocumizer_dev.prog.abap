@@ -1204,6 +1204,10 @@ CLASS lcl_importer DEFINITION.
                 iv_action TYPE string
                 iv_text   TYPE string OPTIONAL.
     METHODS last_message RETURNING VALUE(rv_text) TYPE string.
+    METHODS act_reason
+      IMPORTING iv_kind        TYPE string
+                iv_name        TYPE string
+      RETURNING VALUE(rv_text) TYPE string.
     METHODS exists
       IMPORTING iv_kind        TYPE string
                 iv_name        TYPE string
@@ -1415,6 +1419,77 @@ CLASS lcl_importer IMPLEMENTATION.
 
   METHOD get_log.
     rt_log = mt_log.
+  ENDMETHOD.
+
+  METHOD act_reason.
+
+*   Warum die Aktivierung nicht geklappt hat. DDIF_*_ACTIVATE gibt nur
+*   einen Code heraus - rc 8 heisst "ging nicht" und sonst nichts. Wer
+*   das liest, muss raten.
+*
+*   In aller Regel fehlt ein Baustein, auf dem das Objekt steht: die
+*   Domaene unter dem Datenelement, das Datenelement unter dem Feld, die
+*   Basistabelle unter dem View. Genau danach wird hier gesucht, und
+*   zwar nach dem aktiven Stand - ein inaktiv angelegter Vorgaenger
+*   traegt die Aktivierung nicht.
+    DATA lv_obj TYPE ddobjname.
+    DATA lt_mis TYPE STANDARD TABLE OF string WITH EMPTY KEY.
+
+    lv_obj = iv_name.
+
+    CASE iv_kind.
+
+      WHEN 'DTEL'.
+        SELECT SINGLE domname FROM dd04l
+          WHERE rollname = @lv_obj AND as4local = 'L'
+          INTO @DATA(lv_dom).
+        IF sy-subrc <> 0.
+          SELECT SINGLE domname FROM dd04l
+            WHERE rollname = @lv_obj AND as4local = 'A'
+            INTO @lv_dom.
+        ENDIF.
+        IF lv_dom IS NOT INITIAL.
+          SELECT SINGLE @abap_true FROM dd01l
+            WHERE domname = @lv_dom AND as4local = 'A'
+            INTO @DATA(lv_dok).
+          IF lv_dok <> abap_true.
+            APPEND |{ lcl_t=>ui( d = `Domaene` e = `domain` ) } { lv_dom }| TO lt_mis.
+          ENDIF.
+        ENDIF.
+
+      WHEN 'TABL' OR 'VIEW'.
+*       Die Datenelemente der Felder. Mehr als drei zu nennen hilft
+*       niemandem - wer drei fehlende sieht, weiss Bescheid.
+        SELECT DISTINCT rollname FROM dd03l
+          WHERE tabname = @lv_obj AND rollname <> ''
+          INTO TABLE @DATA(lt_rl).
+        LOOP AT lt_rl INTO DATA(ls_rl).
+          SELECT SINGLE @abap_true FROM dd04l
+            WHERE rollname = @ls_rl-rollname AND as4local = 'A'
+            INTO @DATA(lv_dtok).
+          IF lv_dtok <> abap_true.
+            APPEND |{ lcl_t=>ui( d = `Datenelement` e = `data element` ) }| &&
+                   | { ls_rl-rollname }| TO lt_mis.
+          ENDIF.
+          IF lines( lt_mis ) >= 3.
+            EXIT.
+          ENDIF.
+        ENDLOOP.
+
+    ENDCASE.
+
+    IF lt_mis IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    LOOP AT lt_mis INTO DATA(lv_m).
+      IF rv_text IS INITIAL.
+        rv_text = |{ lcl_t=>ui( d = `fehlt oder inaktiv:` e = `missing or inactive:` ) } { lv_m }|.
+      ELSE.
+        rv_text = |{ rv_text }, { lv_m }|.
+      ENDIF.
+    ENDLOOP.
+
   ENDMETHOD.
 
   METHOD last_message.
@@ -2209,9 +2284,10 @@ CLASS lcl_importer IMPLEMENTATION.
                    put_failure = 2
                    OTHERS      = 3.
       IF sy-subrc <> 0 OR lv_rc > 4.
+        DATA(lv_why_dtel) = act_reason( iv_kind = 'DTEL' iv_name = iv_name ).
         log( iv_kind = 'DTEL' iv_name = iv_name
              iv_action = lcl_t=>ui( d = `angelegt, inaktiv` e = `created, inactive` )
-             iv_text   = |DDIF_DTEL_ACTIVATE rc { lv_rc }| ).
+             iv_text   = |DDIF_DTEL_ACTIVATE rc { lv_rc } { lv_why_dtel }| ).
         RETURN.
       ENDIF.
     ENDIF.
@@ -2337,9 +2413,10 @@ CLASS lcl_importer IMPLEMENTATION.
                    put_failure = 2
                    OTHERS      = 3.
       IF sy-subrc <> 0 OR lv_rc > 4.
+        DATA(lv_why_tabl) = act_reason( iv_kind = 'TABL' iv_name = iv_name ).
         log( iv_kind = 'TABL' iv_name = iv_name
              iv_action = lcl_t=>ui( d = `angelegt, inaktiv` e = `created, inactive` )
-             iv_text   = |DDIF_TABL_ACTIVATE rc { lv_rc }| ).
+             iv_text   = |DDIF_TABL_ACTIVATE rc { lv_rc } { lv_why_tabl }| ).
         RETURN.
       ENDIF.
     ENDIF.
@@ -3937,9 +4014,10 @@ CLASS lcl_importer IMPLEMENTATION.
                    put_failure = 2
                    OTHERS      = 3.
       IF sy-subrc <> 0 OR lv_rc > 4.
+        DATA(lv_why_view) = act_reason( iv_kind = 'VIEW' iv_name = iv_name ).
         log( iv_kind = 'VIEW' iv_name = iv_name
              iv_action = lcl_t=>ui( d = `angelegt, inaktiv` e = `created, inactive` )
-             iv_text   = |DDIF_VIEW_ACTIVATE rc { lv_rc }| ).
+             iv_text   = |DDIF_VIEW_ACTIVATE rc { lv_rc } { lv_why_view }| ).
         RETURN.
       ENDIF.
     ENDIF.

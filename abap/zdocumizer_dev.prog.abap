@@ -2562,11 +2562,23 @@ CLASS lcl_importer IMPLEMENTATION.
            ls_trdir-stime, ls_trdir-idate, ls_trdir-itime.
     ls_trdir-name = iv_name.
 
+    TYPES: BEGIN OF ty_tpl,
+             langu TYPE sy-langu,
+             tp    TYPE textpool,
+           END OF ty_tpl.
+    DATA lt_tpl TYPE STANDARD TABLE OF ty_tpl WITH EMPTY KEY.
+
     LOOP AT io_chapter->get_defrows( ) INTO DATA(ls_row) WHERE tag = 'TPOOL'.
       CLEAR ls_tp.
       lcl_attr=>to_struct( EXPORTING it_attrs = ls_row-attrs
                            CHANGING  cs_data  = ls_tp ).
       APPEND ls_tp TO lt_tpool.
+*     Die Sprache, in der die Zeile gelesen wurde. Aeltere Dokumente
+*     tragen sie nicht; dann bleibt es beim bisherigen Verhalten.
+      DATA(lv_tpls) = lcl_attr=>value( it_attrs = ls_row-attrs iv_name = '_SPRSL' ).
+      APPEND VALUE ty_tpl( langu = COND #( WHEN lv_tpls IS NOT INITIAL
+                                           THEN lv_tpls ELSE sy-langu )
+                           tp    = ls_tp ) TO lt_tpl.
     ENDLOOP.
 
     IF mv_test = abap_true.
@@ -2596,8 +2608,25 @@ CLASS lcl_importer IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    IF lt_tpool IS NOT INITIAL.
-      INSERT TEXTPOOL lv_prog FROM lt_tpool LANGUAGE sy-langu STATE 'A'.
+*   Je Sprache ein INSERT TEXTPOOL. Bisher ging alles in die
+*   Anmeldesprache des Importierenden: englische Selektionstexte landeten
+*   als deutsche, und in der eigentlichen Sprache stand nichts.
+    DATA lt_tpone TYPE STANDARD TABLE OF textpool WITH EMPTY KEY.
+    DATA lv_tpcur TYPE sy-langu.
+    DATA lv_tplog TYPE string.
+    SORT lt_tpl BY langu.
+    LOOP AT lt_tpl INTO DATA(ls_tpl).
+      IF ls_tpl-langu <> lv_tpcur AND lt_tpone IS NOT INITIAL.
+        INSERT TEXTPOOL lv_prog FROM lt_tpone LANGUAGE lv_tpcur STATE 'A'.
+        lv_tplog = |{ lv_tplog } { lv_tpcur }:{ lines( lt_tpone ) }|.
+        CLEAR lt_tpone.
+      ENDIF.
+      lv_tpcur = ls_tpl-langu.
+      APPEND ls_tpl-tp TO lt_tpone.
+    ENDLOOP.
+    IF lt_tpone IS NOT INITIAL.
+      INSERT TEXTPOOL lv_prog FROM lt_tpone LANGUAGE lv_tpcur STATE 'A'.
+      lv_tplog = |{ lv_tplog } { lv_tpcur }:{ lines( lt_tpone ) }|.
     ENDIF.
 
     tadir( iv_object = 'PROG' iv_name = CONV sobj_name( iv_name ) ).
@@ -2607,6 +2636,12 @@ CLASS lcl_importer IMPLEMENTATION.
                              THEN lcl_t=>ui( d = `geaendert` e = `changed` )
                              ELSE lcl_t=>ui( d = `angelegt` e = `created` ) )
          iv_text   = |{ lines( lt_code ) } { lcl_t=>ui( d = `Zeilen` e = `lines` ) }| ).
+
+    IF lv_tplog IS NOT INITIAL.
+      log( iv_kind = 'TEXT' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `Textelemente gesetzt` e = `text elements written` )
+           iv_text   = condense( lv_tplog ) ).
+    ENDIF.
 
     put_cua( io_chapter = io_chapter iv_prog = lv_prog ).
     put_docu( io_chapter = io_chapter iv_kind = 'PROG' iv_name = iv_name ).
@@ -4514,8 +4549,7 @@ CLASS lcl_importer IMPLEMENTATION.
     DATA lt_raw  TYPE STANDARD TABLE OF string WITH EMPTY KEY.
     DATA lv_id   TYPE dokhl-id.
 
-    DATA(lv_text) = io_chapter->get_documentation( ).
-    IF lv_text IS INITIAL OR mv_test = abap_true.
+    IF mv_test = abap_true.
       RETURN.
     ENDIF.
 
@@ -4525,6 +4559,54 @@ CLASS lcl_importer IMPLEMENTATION.
       WHEN 'DTEL'. lv_id = 'DE'.
       WHEN OTHERS. RETURN.
     ENDCASE.
+
+*   Neuere Dokumente tragen die Dokumentation als DOCU-Zeilen, eine je
+*   Sprache. Sie haben Vorrang vor dem Dokumentationstext des Kapitels,
+*   der nur mit angehakter Objektdokumentation da ist und nur eine
+*   Sprache kennt.
+    DATA lv_ndoc TYPE i.
+    DATA lv_dlog TYPE string.
+    LOOP AT io_chapter->get_defrows( ) INTO DATA(ls_dr) WHERE tag = 'DOCU'.
+      DATA(lv_dlang) = lcl_attr=>value( it_attrs = ls_dr-attrs iv_name = 'LANGU' ).
+      IF lv_dlang IS INITIAL OR ls_dr-src IS INITIAL.
+        CONTINUE.
+      ENDIF.
+      CLEAR: lt_line, lt_raw, ls_head.
+      SPLIT ls_dr-src AT cl_abap_char_utilities=>newline INTO TABLE lt_raw.
+      LOOP AT lt_raw INTO DATA(lv_dl).
+        DATA ls_dln TYPE tline.
+        CLEAR ls_dln.
+        SPLIT lv_dl AT cl_abap_char_utilities=>horizontal_tab
+              INTO ls_dln-tdformat ls_dln-tdline.
+        APPEND ls_dln TO lt_line.
+      ENDLOOP.
+      ls_head-tdid     = lv_id.
+      ls_head-tdspras  = lv_dlang.
+      ls_head-tdname   = iv_name.
+      ls_head-tdobject = 'DOKU'.
+      CALL FUNCTION 'DOCU_UPDATE'
+        EXPORTING  head    = ls_head
+                   state   = 'A'
+                   typ     = 'E'
+                   version = 0
+        TABLES     line    = lt_line
+        EXCEPTIONS OTHERS  = 1.
+      IF sy-subrc = 0.
+        lv_ndoc = lv_ndoc + 1.
+        lv_dlog = |{ lv_dlog } { lv_dlang }|.
+      ENDIF.
+    ENDLOOP.
+    IF lv_ndoc > 0.
+      log( iv_kind = 'DOKU' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `Dokumentation gesetzt` e = `documentation written` )
+           iv_text   = |{ lcl_t=>ui( d = `Sprachen` e = `languages` ) }{ lv_dlog }| ).
+      RETURN.
+    ENDIF.
+
+    DATA(lv_text) = io_chapter->get_documentation( ).
+    IF lv_text IS INITIAL.
+      RETURN.
+    ENDIF.
 
 *   The text travels as ITF, one line per row, tag and text separated by
 *   a tabulator - the same shape READ_TEXT hands out.
@@ -5476,6 +5558,10 @@ CLASS lcl_collector_dev DEFINITION.
     METHODS def_dynp
       IMPORTING io_chapter TYPE REF TO lcl_chapter
                 iv_prog    TYPE progname.
+    METHODS def_docu
+      IMPORTING iv_kind    TYPE trobjtype
+                iv_name    TYPE sobj_name
+                io_chapter TYPE REF TO lcl_chapter.
     METHODS def_tran
       IMPORTING iv_name      TYPE sobj_name
                 io_chapter   TYPE REF TO lcl_chapter
@@ -5776,6 +5862,12 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
     IF lv_ok = abap_true.
       mv_n_def = mv_n_def + 1.
+*     Die Objektdokumentation faehrt mit den Definitionsdaten, in allen
+*     Sprachen - unabhaengig davon, ob sie im lesbaren Dokument
+*     angezeigt wird. Bisher kam sie nur ueber den Dokumentationstext
+*     des Kapitels, also nur mit angehakter Objektdokumentation und nur
+*     in einer Sprache.
+      def_docu( iv_kind = lv_kind iv_name = iv_name io_chapter = io_chapter ).
     ENDIF.
 
   ENDMETHOD.
@@ -5949,10 +6041,26 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
 *   Text elements are part of the program and are stored apart from the
 *   source; without them selection texts and list headings are lost.
-    READ TEXTPOOL lv_prog INTO lt_tpool LANGUAGE mv_langu.
-    LOOP AT lt_tpool INTO DATA(ls_tp).
-      io_chapter->add_defrow( VALUE ty_defrow(
-        tag = 'TPOOL' attrs = lcl_attr=>from_struct( ls_tp ) ) ).
+*   In jeder gepflegten Sprache, nicht nur in der Ausgabesprache. Wer
+*   den Report auf Englisch dokumentierte, nahm sonst die deutschen
+*   Selektionstexte nicht mit - und umgekehrt. Jede Zeile traegt ihre
+*   Sprache in _SPRSL; der Import schreibt sie genau dorthin zurueck.
+    SELECT DISTINCT language FROM repotext
+      WHERE progname = @lv_prog AND r3state = 'A'
+      INTO TABLE @DATA(lt_tplang).
+    IF lt_tplang IS INITIAL.
+      APPEND VALUE #( language = mv_langu ) TO lt_tplang.
+    ENDIF.
+    LOOP AT lt_tplang INTO DATA(ls_tpl).
+      CLEAR lt_tpool.
+      READ TEXTPOOL lv_prog INTO lt_tpool LANGUAGE ls_tpl-language.
+      LOOP AT lt_tpool INTO DATA(ls_tp).
+        DATA(lt_tpa) = lcl_attr=>from_struct( ls_tp ).
+        INSERT VALUE ty_attr( name  = '_SPRSL'
+                              value = CONV string( ls_tpl-language ) )
+               INTO lt_tpa INDEX 1.
+        io_chapter->add_defrow( VALUE ty_defrow( tag = 'TPOOL' attrs = lt_tpa ) ).
+      ENDLOOP.
     ENDLOOP.
 
     SELECT SINGLE text FROM trdirt
@@ -6807,6 +6915,58 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
   ENDMETHOD.
 
+  METHOD def_docu.
+
+    DATA lv_id   TYPE dokhl-id.
+    DATA lv_obj  TYPE dokhl-object.
+    DATA lt_ln   TYPE STANDARD TABLE OF tline WITH EMPTY KEY.
+    DATA lv_body TYPE string.
+
+    CASE iv_kind.
+      WHEN 'PROG'. lv_id = 'RE'.
+      WHEN 'DTEL'. lv_id = 'DE'.
+      WHEN OTHERS. RETURN.
+    ENDCASE.
+    lv_obj = iv_name.
+
+    SELECT DISTINCT langu FROM dokhl
+      WHERE id = @lv_id AND object = @lv_obj AND typ = 'E'
+      INTO TABLE @DATA(lt_dl).
+
+    LOOP AT lt_dl INTO DATA(ls_dl).
+      CLEAR: lt_ln, lv_body.
+      CALL FUNCTION 'DOCU_GET'
+        EXPORTING  id                = lv_id
+                   langu             = ls_dl-langu
+                   object            = lv_obj
+                   typ               = 'E'
+        TABLES     line              = lt_ln
+        EXCEPTIONS no_docu_on_screen = 1
+                   no_docu_self_def  = 2
+                   no_docu_temp      = 3
+                   ret_code          = 4
+                   OTHERS            = 5.
+      IF sy-subrc <> 0 OR lt_ln IS INITIAL.
+        CONTINUE.
+      ENDIF.
+*     Format und Zeile getrennt durch einen Tabulator - die Form, die der
+*     Import schon kennt. Das ITF-Format bleibt so erhalten.
+      LOOP AT lt_ln INTO DATA(ls_ln).
+        DATA(lv_one) = |{ ls_ln-tdformat }{ cl_abap_char_utilities=>horizontal_tab }{ ls_ln-tdline }|.
+        IF lv_body IS INITIAL.
+          lv_body = lv_one.
+        ELSE.
+          lv_body = |{ lv_body }{ cl_abap_char_utilities=>newline }{ lv_one }|.
+        ENDIF.
+      ENDLOOP.
+      io_chapter->add_defrow( VALUE ty_defrow(
+        tag   = 'DOCU'
+        attrs = VALUE ty_attrs( ( name = 'LANGU' value = CONV string( ls_dl-langu ) ) )
+        src   = lv_body ) ).
+    ENDLOOP.
+
+  ENDMETHOD.
+
   METHOD def_dynp.
 
 *   Ein Dynpro besteht aus Kopf, Containern, Feldern, Ablauflogik und
@@ -7155,6 +7315,97 @@ CLASS lcl_collector_dev IMPLEMENTATION.
           WHERE vclname = @iv_name AND spras = @iv_langu INTO @DATA(lv_t9).
         rv_text = lv_t9.
 
+      WHEN 'DDLS' OR 'STOB'.
+*       Eine STOB-Entitaet traegt keinen eigenen Text; er steht an der
+*       DDL-Quelle, zu der sie gehoert.
+        DATA lv_tdl TYPE ddddlsrct-ddlname.
+        lv_tdl = iv_name.
+        IF iv_type = 'STOB'.
+          DATA lv_tob TYPE ddldependency-objectname.
+          lv_tob = iv_name.
+          SELECT SINGLE ddlname FROM ddldependency
+            WHERE objectname = @lv_tob AND objecttype = 'STOB' AND state = 'A'
+            INTO @lv_tdl.
+        ENDIF.
+        SELECT SINGLE ddtext FROM ddddlsrct
+          WHERE ddlname = @lv_tdl AND ddlanguage = @iv_langu AND as4local = 'A'
+          INTO @DATA(lv_t10).
+        rv_text = lv_t10.
+
+      WHEN 'MSAG'.
+        DATA lv_tmg TYPE t100t-arbgb.
+        lv_tmg = iv_name.
+        SELECT SINGLE stext FROM t100t
+          WHERE arbgb = @lv_tmg AND sprsl = @iv_langu INTO @DATA(lv_t11).
+        rv_text = lv_t11.
+
+      WHEN 'SRVD' OR 'SRVB' OR 'IWSV' OR 'IWMO' OR 'IWVB'.
+*       Service-Definition, Service-Binding und die Gateway-Objekte.
+*       Ihre Texttabellen gibt es nicht auf jedem Stand, deshalb
+*       dynamisch und abgefangen - ein fehlender Text darf den Lauf
+*       nicht beenden.
+*
+*       Die Gateway-Objekte tragen im Katalog Name und Version in einem
+*       Feld: technischer Name links, vierstellige Version rechts.
+        DATA lv_ttab  TYPE tabname.
+        DATA lv_twhr  TYPE string.
+        DATA lv_ttech TYPE string.
+        DATA lv_tver  TYPE string.
+        DATA lv_t12   TYPE c LENGTH 60.
+        CLEAR: lv_ttab, lv_twhr, lv_t12.
+        CASE iv_type.
+          WHEN 'SRVD'.
+            lv_ttab = 'SRVDSRCT'.
+            lv_twhr = |SRVDNAME = '{ iv_name }' AND VERSION = 'A'|.
+          WHEN 'SRVB'.
+            lv_ttab = 'SRVB_HEAD_T'.
+            lv_twhr = |SRVB_NAME = '{ iv_name }' AND VERSION = 'A'|.
+          WHEN 'IWSV'.
+            lv_ttech = iv_name(35).
+            lv_tver  = iv_name+35(4).
+            lv_ttab  = '/IWBEP/I_MGW_SRT'.
+            lv_twhr  = |TECHNICAL_NAME = '{ condense( lv_ttech ) }' AND VERSION = '{ lv_tver }'|.
+          WHEN 'IWMO'.
+            lv_ttech = iv_name(32).
+            lv_tver  = iv_name+32(4).
+            lv_ttab  = '/IWBEP/I_MGW_OHT'.
+            lv_twhr  = |TECHNICAL_NAME = '{ condense( lv_ttech ) }' AND VERSION = '{ lv_tver }'|.
+          WHEN 'IWVB'.
+            lv_ttech = iv_name(32).
+            lv_tver  = iv_name+32(4).
+            lv_ttab  = '/IWBEP/I_MGW_VOT'.
+            lv_twhr  = |VOCAB_ID = '{ condense( lv_ttech ) }' AND VERSION = '{ lv_tver }'|.
+        ENDCASE.
+        lv_twhr = |{ lv_twhr } AND LANGUAGE = '{ iv_langu }'|.
+        TRY.
+            SELECT SINGLE description FROM (lv_ttab) WHERE (lv_twhr) INTO @lv_t12.
+            rv_text = lv_t12.
+          CATCH cx_root.
+            CLEAR rv_text.
+        ENDTRY.
+
+      WHEN 'BDEF' OR 'DDLX'.
+*       Verhaltensdefinition und Metadata Extension haben keine
+*       Texttabelle, die sich lesen liesse. Die Beschreibung haelt der
+*       Workbench-Operator - derselbe, ueber den der Quelltext kommt.
+        DATA(ls_twbt) = lcl_wb=>obj_type( iv_type ).
+        IF ls_twbt-objtype_tr IS NOT INITIAL.
+          TRY.
+              DATA lo_tdm TYPE REF TO if_wb_object_data_model.
+              DATA(lo_top) = cl_wb_object_operator_factory=>create_object_operator(
+                               object_type = ls_twbt
+                               object_key  = CONV seu_objkey( iv_name ) ).
+              lo_top->read( EXPORTING version        = 'A'
+                                      data_selection = if_wb_object_data_selection_co=>c_all_data
+                            IMPORTING eo_object_data = lo_tdm ).
+              IF lo_tdm IS BOUND.
+                rv_text = lo_tdm->get_description( ).
+              ENDIF.
+            CATCH cx_root.
+              CLEAR rv_text.
+          ENDTRY.
+        ENDIF.
+
     ENDCASE.
 
   ENDMETHOD.
@@ -7309,6 +7560,38 @@ CLASS lcl_collector_dev IMPLEMENTATION.
           append_report( EXPORTING iv_prog = ls_i2
                          CHANGING  ct_source = lt_src ).
         ENDLOOP.
+
+      WHEN 'BDEF' OR 'SRVD' OR 'DDLX'.
+*       Verhaltensdefinition, Service-Definition und Metadata Extension
+*       sind Quelltext wie eine CDS-View, stehen aber in keiner Tabelle,
+*       die sich direkt lesen liesse. Sie kommen ueber den
+*       Workbench-Operator - denselben, den die Definitionsdaten nutzen.
+        DATA(ls_swbt) = lcl_wb=>obj_type( iv_type ).
+        IF ls_swbt-objtype_tr IS NOT INITIAL.
+          DATA lv_wsrc TYPE string.
+          CLEAR lv_wsrc.
+          TRY.
+              DATA lo_sdm TYPE REF TO if_wb_object_data_model.
+              DATA(lo_sop) = cl_wb_object_operator_factory=>create_object_operator(
+                               object_type = ls_swbt
+                               object_key  = CONV seu_objkey( iv_name ) ).
+              lo_sop->read( EXPORTING version        = 'A'
+                                      data_selection = if_wb_object_data_selection_co=>c_all_data
+                            IMPORTING eo_object_data = lo_sdm ).
+              IF lo_sdm IS BOUND.
+                lo_sdm->get_selected_data(
+                  EXPORTING p_data_selection = if_wb_object_data_selection_co=>c_data_content
+                  IMPORTING p_data           = lv_wsrc ).
+              ENDIF.
+            CATCH cx_root.
+              CLEAR lv_wsrc.
+          ENDTRY.
+          IF lv_wsrc IS NOT INITIAL.
+            REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf
+                    IN lv_wsrc WITH cl_abap_char_utilities=>newline.
+            SPLIT lv_wsrc AT cl_abap_char_utilities=>newline INTO TABLE lt_src.
+          ENDIF.
+        ENDIF.
 
       WHEN 'DDLS'.
         DATA lv_ddl TYPE ddddlsrc-ddlname.
@@ -8229,7 +8512,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
     SELECT object, obj_name FROM tadir
       FOR ALL ENTRIES IN @lt_obj
-      WHERE pgmid = 'R3TR'
+      WHERE pgmid = 'R3TR' AND delflag = @abap_false
         AND object IN ( 'PROG', 'FUGR', 'CLAS', 'INTF', 'TABL', 'VIEW',
                         'DDLS', 'MSAG' )
         AND obj_name = @lt_obj-table_line
@@ -8479,12 +8762,28 @@ CLASS lcl_collector_dev IMPLEMENTATION.
           WHERE clsname = @lv_cls
           ORDER BY cmptype, cmpname
           INTO TABLE @DATA(lt_c).
-        IF lt_c IS INITIAL.
-          RETURN.
-        ENDIF.
+*       Kein Abbruch bei leerer Komponentenliste. Eine Klasse, die nur
+*       eine Schnittstelle implementiert - ein Query Provider etwa -,
+*       hat in SEOCOMPO nichts Eigenes, und die Implementierung stand
+*       deshalb nie im Dokument.
         DATA(lo_o2) = NEW lcl_object( iv_type = CONV string( iv_type )
                                       iv_name = CONV string( iv_name ) ).
         lo_o2->set_note( lcl_t=>t( d = 'Komponenten' e = 'Components' ) ).
+
+*       Oberklasse und implementierte Schnittstellen.
+        SELECT refclsname, reltype FROM seometarel
+          WHERE clsname = @lv_cls AND version = '1'
+          ORDER BY reltype, refclsname
+          INTO TABLE @DATA(lt_rel).
+        LOOP AT lt_rel INTO DATA(ls_rel).
+          lo_o2->add_field( VALUE ty_field(
+            name     = ls_rel-refclsname
+            rollname = COND #( WHEN ls_rel-reltype = '1'
+                               THEN lcl_t=>t( d = 'Schnittstelle' e = 'interface' )
+                               WHEN ls_rel-reltype = '2'
+                               THEN lcl_t=>t( d = 'Oberklasse' e = 'superclass' )
+                               ELSE |{ lcl_t=>t( d = `Beziehung` e = `relation` ) } { ls_rel-reltype }| ) ) ).
+        ENDLOOP.
         " Continued below
         LOOP AT lt_c INTO DATA(ls_c).
           DATA lv_tkind TYPE string.
@@ -8498,7 +8797,70 @@ CLASS lcl_collector_dev IMPLEMENTATION.
           lo_o2->add_field( VALUE ty_field( name     = ls_c-cmpname
                                             rollname = lv_tkind ) ).
         ENDLOOP.
-        io_chapter->add_object( lo_o2 ).
+
+*       Implementierte Schnittstellenmethoden. SEOCOMPO fuehrt sie nicht,
+*       sie gehoeren der Schnittstelle. Im Methodenverzeichnis des
+*       Klassenpools stehen sie als SCHNITTSTELLE~METHODE.
+        SELECT methodname FROM tmdir
+          WHERE classname = @lv_cls AND methodname LIKE '%~%'
+          ORDER BY methodname
+          INTO TABLE @DATA(lt_im).
+        LOOP AT lt_im INTO DATA(ls_im).
+          lo_o2->add_field( VALUE ty_field(
+            name     = ls_im-methodname
+            rollname = lcl_t=>t( d = 'Methode (Schnittstelle)'
+                                 e = 'method (interface)' ) ) ).
+        ENDLOOP.
+
+*       Lokale Klassen im Implementierungsteil. Ein Behavior-Pool ist
+*       nach aussen leer; die Handler, die die Logik tragen, stehen als
+*       lokale Klassen im CCIMP-Include. Kein Katalog kennt sie, also
+*       wird der Quelltext gelesen.
+        DATA lv_ccimp TYPE syrepid.
+        DATA lt_cci   TYPE STANDARD TABLE OF string WITH EMPTY KEY.
+        DATA lv_lcl   TYPE string.
+        DATA lv_nloc  TYPE i.
+        CLEAR: lt_cci, lv_lcl, lv_nloc.
+        lv_ccimp = lv_cls.
+        DATA(lv_ccl) = strlen( lv_cls ).
+        WHILE lv_ccl < 30.
+          lv_ccimp = |{ lv_ccimp }=|.
+          lv_ccl = lv_ccl + 1.
+        ENDWHILE.
+        lv_ccimp = |{ lv_ccimp }CCIMP|.
+        READ REPORT lv_ccimp INTO lt_cci.
+        LOOP AT lt_cci INTO DATA(lv_cc).
+          IF lv_cc IS INITIAL OR lv_cc(1) = '*'.
+            CONTINUE.
+          ENDIF.
+          DATA(lv_ccu) = to_upper( condense( lv_cc ) ).
+          REPLACE ALL OCCURRENCES OF ':' IN lv_ccu WITH ` `.
+          REPLACE ALL OCCURRENCES OF '.' IN lv_ccu WITH ` `.
+          CONDENSE lv_ccu.
+          IF lv_ccu CP 'CLASS * DEFINITION*'
+             AND NOT lv_ccu CS 'DEFERRED' AND NOT lv_ccu CS ' LOAD'.
+            SPLIT lv_ccu AT ` ` INTO DATA(lv_ccw1) lv_lcl DATA(lv_ccrest).
+            lo_o2->add_field( VALUE ty_field(
+              name     = to_lower( lv_lcl )
+              rollname = lcl_t=>t( d = 'lokale Klasse' e = 'local class' ) ) ).
+            lv_nloc = lv_nloc + 1.
+          ELSEIF lv_lcl IS NOT INITIAL
+                 AND ( lv_ccu CP 'METHODS *' OR lv_ccu CP 'CLASS-METHODS *' ).
+            SPLIT lv_ccu AT ` ` INTO DATA(lv_ccm1) DATA(lv_ccm2) DATA(lv_ccm3).
+            REPLACE ALL OCCURRENCES OF ',' IN lv_ccm2 WITH ``.
+            lo_o2->add_field( VALUE ty_field(
+              name     = |{ to_lower( lv_lcl ) }->{ to_lower( lv_ccm2 ) }|
+              rollname = lcl_t=>t( d = 'lokale Methode' e = 'local method' ) ) ).
+            lv_nloc = lv_nloc + 1.
+          ELSEIF lv_ccu CP 'ENDCLASS*'.
+            CLEAR lv_lcl.
+          ENDIF.
+        ENDLOOP.
+
+        IF lt_c IS NOT INITIAL OR lt_rel IS NOT INITIAL
+           OR lt_im IS NOT INITIAL OR lv_nloc > 0.
+          io_chapter->add_object( lo_o2 ).
+        ENDIF.
 
       WHEN 'IDOC'.
 
@@ -8808,6 +9170,53 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         " Dependencies of the CDS view - the objects it consumes
         DATA lv_ddl TYPE ddldependency-ddlname.
         lv_ddl = iv_name.
+
+*       Die Feldliste der Entitaet. Bei einer CDS-View steht sie nicht in
+*       DD03L - dort liegt hoechstens der SQL-View, und eine View Entity
+*       oder Custom Entity hat keinen. DD03ND fuehrt die Elemente unter
+*       dem Entitaetsnamen, den DDLDEPENDENCY als STOB nennt.
+        SELECT SINGLE objectname FROM ddldependency
+          WHERE ddlname = @lv_ddl AND objecttype = 'STOB' AND state = 'A'
+          INTO @DATA(lv_ent).
+        IF lv_ent IS INITIAL.
+          lv_ent = iv_name.
+        ENDIF.
+        SELECT fieldname, keyflag, rollname, datatype, leng FROM dd03nd
+          WHERE strucobjn = @lv_ent AND as4local = 'A'
+          ORDER BY position
+          INTO TABLE @DATA(lt_ef).
+        IF lt_ef IS NOT INITIAL.
+          DATA(lo_oef) = NEW lcl_object( iv_type = CONV string( iv_type )
+                                         iv_name = CONV string( iv_name ) ).
+          lo_oef->set_note( lcl_t=>t( d = 'Feldliste' e = 'Field list' ) ).
+          DATA lt_efseen TYPE STANDARD TABLE OF string WITH EMPTY KEY.
+          CLEAR lt_efseen.
+          LOOP AT lt_ef INTO DATA(ls_ef).
+            READ TABLE lt_efseen TRANSPORTING NO FIELDS
+                 WITH KEY table_line = CONV string( ls_ef-fieldname ).
+            IF sy-subrc = 0.
+              CONTINUE.
+            ENDIF.
+            APPEND CONV string( ls_ef-fieldname ) TO lt_efseen.
+            DATA lv_eft TYPE string.
+            IF ls_ef-rollname IS NOT INITIAL.
+              lv_eft = ls_ef-rollname.
+            ELSE.
+*             NUMC - ohne Rechnen, die Nullen fallen textuell weg.
+              DATA lv_efl TYPE string.
+              lv_efl = ls_ef-leng.
+              SHIFT lv_efl LEFT DELETING LEADING '0'.
+              lv_eft = |{ ls_ef-datatype } { lv_efl }|.
+              CONDENSE lv_eft.
+            ENDIF.
+            lo_oef->add_field( VALUE ty_field(
+              name     = ls_ef-fieldname
+              rollname = lv_eft
+              keyflag  = COND #( WHEN ls_ef-keyflag = 'X' THEN abap_true
+                                 ELSE abap_false ) ) ).
+          ENDLOOP.
+          io_chapter->add_object( lo_oef ).
+        ENDIF.
         " The view itself is listed in the dependency table as well and is
         " hidden - it is not a usage.
         SELECT objectname, objecttype, state FROM ddldependency
@@ -8859,7 +9268,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *       A class and an interface share one input field, as in SE80. Which
 *       of the two it is comes from the catalog.
         SELECT SINGLE object FROM tadir
-          WHERE pgmid = 'R3TR' AND object IN ( 'CLAS', 'INTF' )
+          WHERE pgmid = 'R3TR' AND delflag = @abap_false AND object IN ( 'CLAS', 'INTF' )
             AND obj_name = @lv_name
           INTO @DATA(lv_obj).
         IF sy-subrc = 0.
@@ -8905,7 +9314,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
     SELECT obj_name, devclass FROM tadir
       FOR ALL ENTRIES IN @it_name
-      WHERE pgmid = 'R3TR' AND obj_name = @it_name-table_line
+      WHERE pgmid = 'R3TR' AND delflag = @abap_false AND obj_name = @it_name-table_line
       INTO TABLE @DATA(lt_t).
     IF lt_t IS INITIAL.
       RETURN.
@@ -8984,7 +9393,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     IF lt_unkn IS NOT INITIAL.
       SELECT obj_name FROM tadir
         FOR ALL ENTRIES IN @lt_unkn
-        WHERE pgmid = 'R3TR' AND object = 'PROG'
+        WHERE pgmid = 'R3TR' AND delflag = @abap_false AND object = 'PROG'
           AND obj_name = @lt_unkn-table_line
         INTO TABLE @DATA(lt_cat).
       SORT lt_cat BY table_line.
@@ -9036,7 +9445,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     ENDIF.
 
     SELECT SINGLE object FROM tadir
-      WHERE pgmid = 'R3TR'
+      WHERE pgmid = 'R3TR' AND delflag = @abap_false
         AND object IN ( 'CLAS', 'INTF', 'TABL', 'VIEW', 'DTEL', 'DOMA',
                         'TTYP', 'DDLS', 'PROG', 'FUGR', 'MSAG', 'SHLP',
                         'ENQU', 'BDEF', 'SRVD', 'SRVB', 'DDLX', 'IDOC', 'WAPA' )
@@ -9216,7 +9625,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     IF lt_tab IS NOT INITIAL.
       SELECT object, obj_name FROM tadir
         FOR ALL ENTRIES IN @lt_tab
-        WHERE pgmid = 'R3TR' AND object IN ( 'TABL', 'VIEW' )
+        WHERE pgmid = 'R3TR' AND delflag = @abap_false AND object IN ( 'TABL', 'VIEW' )
           AND obj_name = @lt_tab-table_line
         INTO TABLE @DATA(lt_tok).
       LOOP AT lt_tok INTO DATA(ls_tok).
@@ -9232,7 +9641,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     IF lt_cls IS NOT INITIAL.
       SELECT object, obj_name FROM tadir
         FOR ALL ENTRIES IN @lt_cls
-        WHERE pgmid = 'R3TR' AND object IN ( 'CLAS', 'INTF' )
+        WHERE pgmid = 'R3TR' AND delflag = @abap_false AND object IN ( 'CLAS', 'INTF' )
           AND obj_name = @lt_cls-table_line
         INTO TABLE @DATA(lt_cok).
       LOOP AT lt_cok INTO DATA(ls_cok).
@@ -9250,7 +9659,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     IF lt_lit IS NOT INITIAL.
       SELECT object, obj_name FROM tadir
         FOR ALL ENTRIES IN @lt_lit
-        WHERE pgmid = 'R3TR'
+        WHERE pgmid = 'R3TR' AND delflag = @abap_false
           AND object IN ( 'TABL', 'VIEW', 'DDLS', 'CLAS', 'INTF',
                           'PROG', 'DOMA', 'DTEL', 'FUGR' )
           AND obj_name = @lt_lit-table_line
@@ -9304,7 +9713,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       IF lt_name IS NOT INITIAL.
         SELECT object, obj_name FROM tadir
           FOR ALL ENTRIES IN @lt_name
-          WHERE pgmid = 'R3TR'
+          WHERE pgmid = 'R3TR' AND delflag = @abap_false
             AND object IN ( 'CLAS', 'INTF', 'TABL', 'VIEW', 'DTEL', 'DOMA',
                             'TTYP', 'DDLS', 'PROG', 'FUGR', 'MSAG', 'SHLP',
                             'ENQU', 'BDEF', 'SRVD', 'SRVB', 'DDLX', 'IDOC', 'WAPA' )
@@ -9538,11 +9947,11 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     IF iv_type = 'FUNC'.
       DATA(lv_g) = func_group( CONV rs38l_fnam( iv_name ) ).
       SELECT SINGLE devclass, author FROM tadir
-        WHERE pgmid = 'R3TR' AND object = 'FUGR' AND obj_name = @lv_g
+        WHERE pgmid = 'R3TR' AND delflag = @abap_false AND object = 'FUGR' AND obj_name = @lv_g
         INTO ( @lv_pack, @lv_auth ).
     ELSE.
       SELECT SINGLE devclass, author FROM tadir
-        WHERE pgmid = 'R3TR' AND object = @iv_type AND obj_name = @iv_name
+        WHERE pgmid = 'R3TR' AND delflag = @abap_false AND object = @iv_type AND obj_name = @iv_name
         INTO ( @lv_pack, @lv_auth ).
     ENDIF.
 
@@ -9968,6 +10377,15 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       " Group the objects by type
       SORT lt_tadir BY object_type object_name.
 
+*     Geloeschte Objekte bleiben in TADIR stehen, solange der Auftrag,
+*     in dem sie geloescht wurden, nicht freigegeben ist - mit
+*     DELFLAG = X. Der Paketbaustein liefert sie trotzdem mit. Ohne
+*     diesen Filter erscheint im Dokument eine Klasse, die es im System
+*     nicht mehr gibt.
+      SELECT object, obj_name FROM tadir
+        WHERE devclass = @lv_pack AND delflag = @abap_true
+        INTO TABLE @DATA(lt_gone).
+
       DATA lv_last_type TYPE trobjtype.
       DATA lo_tchap TYPE REF TO lcl_chapter.
       DATA lv_tno TYPE i.
@@ -9985,6 +10403,15 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         ENDIF.
         IF s_objnam[] IS NOT INITIAL AND ls_tadir-object_name NOT IN s_objnam.
           CONTINUE.
+        ENDIF.
+
+        IF lt_gone IS NOT INITIAL.
+          READ TABLE lt_gone TRANSPORTING NO FIELDS
+               WITH KEY object   = ls_tadir-object_type
+                        obj_name = ls_tadir-object_name.
+          IF sy-subrc = 0.
+            CONTINUE.
+          ENDIF.
         ENDIF.
 
         mv_n_tot = mv_n_tot + 1.

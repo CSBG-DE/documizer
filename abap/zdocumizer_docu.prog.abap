@@ -218,7 +218,10 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = 'B1' iv_t = 'Typ und Name bilden den Einstieg, wie im Object Navigator: K Paket,' ).
     a( iv_f = '=' iv_t = 'P Programm, C Klasse oder Interface, FF Funktionsbaustein,' ).
     a( iv_f = '=' iv_t = 'F Funktionsgruppe, T Tabelle, V View, D Datenelement, DO Domaene,' ).
-    a( iv_f = '=' iv_t = 'W CDS View. Beide Felder haben eine Wertehilfe.' ).
+    a( iv_f = '=' iv_t = 'W CDS View, MX Metadata Extension, BD Verhaltensdefinition,' ).
+    a( iv_f = '=' iv_t = 'SD Service-Definition, SB Service-Binding, IS IDoc-Segmenttyp,' ).
+    a( iv_f = '=' iv_t = 'IT IDoc-Basistyp, U5 UI5-Anwendung, AL Arbeitsliste aus' ).
+    a( iv_f = '=' iv_t = 'Fehlliste. Beide Felder haben eine Wertehilfe.' ).
     a( iv_f = 'B1' iv_t = 'Bei einem Paket entsteht die Gliederung Paket, Objekttyp, Objekt. Bei' ).
     a( iv_f = '=' iv_t = 'einem Einzelobjekt steht dieses in Kapitel eins, die verwendeten' ).
     a( iv_f = '=' iv_t = 'Objekte folgen in Kapitel zwei.' ).
@@ -231,6 +234,8 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'ihm beim Anlegen eines BC-Sets Objekte fehlen. Der Startpunkt' ).
     a( iv_f = '=' iv_t = 'steht dann in der Datei, nicht im Namensfeld; jedes Objekt der' ).
     a( iv_f = '=' iv_t = 'Liste wird ein eigenes Kapitel.' ).
+    a( iv_f = '=' iv_t = 'Liegt die Fehlliste auf dem Applikationsserver, wird das eigens' ).
+    a( iv_f = '=' iv_t = 'angekreuzt; das Kennzeichen gehoert zur Fehlliste, nicht zum Import.' ).
 
     a( iv_f = 'AS' iv_t = 'Umfang' ).
     a( iv_f = 'B1' iv_t = 'Objekttyp und Objektname grenzen die Objektliste ein.' ).
@@ -239,18 +244,39 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = 'B1' iv_t = 'Objektdokumentation: liest die klassische Objektdokumentation fuer' ).
     a( iv_f = '=' iv_t = 'Programme, Transaktionen und Datenelemente.' ).
     a( iv_f = 'B1' iv_t = 'Details: ergaenzt Feldlisten fuer Tabellen, Basistabellen und' ).
-    a( iv_f = '=' iv_t = 'Verknuepfung fuer Views, Komponenten fuer Klassen und Interfaces,' ).
-    a( iv_f = '=' iv_t = 'Textelemente fuer Programme, Festwerte fuer Domaenen,' ).
-    a( iv_f = '=' iv_t = 'Feldbezeichner fuer Datenelemente, die Schnittstelle fuer' ).
-    a( iv_f = '=' iv_t = 'Funktionsbausteine und verwendete Objekte fuer CDS Views.' ).
+    a( iv_f = '=' iv_t = 'Verknuepfung fuer Views, Textelemente fuer Programme, Festwerte' ).
+    a( iv_f = '=' iv_t = 'fuer Domaenen, Feldbezeichner fuer Datenelemente und die' ).
+    a( iv_f = '=' iv_t = 'Schnittstelle fuer Funktionsbausteine.' ).
+    a( iv_f = 'B1' iv_t = 'Zu Klassen und Interfaces stehen Oberklasse, Schnittstellen,' ).
+    a( iv_f = '=' iv_t = 'Komponenten, implementierte Schnittstellenmethoden und die lokalen' ).
+    a( iv_f = '=' iv_t = 'Klassen samt Methoden. Ein Behavior-Pool ist nach aussen leer; die' ).
+    a( iv_f = '=' iv_t = 'Handler, die die Logik tragen, stehen als lokale Klassen darin.' ).
+    a( iv_f = 'B1' iv_t = 'Zu einer CDS View stehen die Feldliste der Entitaet und die' ).
+    a( iv_f = '=' iv_t = 'verwendeten Objekte. Die Feldliste eines IDoc-Segments nennt die' ).
+    a( iv_f = '=' iv_t = 'Datenelemente, die WE31 zeigt - im Dictionary fuehrt das Segment' ).
+    a( iv_f = '=' iv_t = 'nur Zeichenfelder ohne Datenelement.' ).
+    a( iv_f = 'B1' iv_t = 'Zu einem IDoc-Basistyp stehen drei Sichten, jede nach der' ).
+    a( iv_f = '=' iv_t = 'Transaktion benannt, in der SAP dasselbe zeigt: die' ).
+    a( iv_f = '=' iv_t = 'Segmenthierarchie (WE60), die Nachrichtentypen (WE82) und die' ).
+    a( iv_f = '=' iv_t = 'verarbeitenden Bausteine je Richtung (WE57).' ).
     a( iv_f = 'B1' iv_t = 'Quelltext ausgeben: nimmt den Quelltext auf. Fuer Funktionsgruppen und' ).
-    a( iv_f = '=' iv_t = 'Klassen werden alle zugehoerigen Includes gelesen.' ).
+    a( iv_f = '=' iv_t = 'Klassen werden alle zugehoerigen Includes gelesen. Auch' ).
+    a( iv_f = '=' iv_t = 'Verhaltensdefinition, Service-Definition und Metadata Extension' ).
+    a( iv_f = '=' iv_t = 'haben Quelltext.' ).
     a( iv_f = 'B1' iv_t = 'Max. Zeilen je Objekt begrenzt den Quelltext. Wird die Grenze' ).
     a( iv_f = '=' iv_t = 'erreicht, steht der Hinweis mit der Gesamtzahl im Quelltext selbst.' ).
     a( iv_f = 'B1' iv_t = 'Verwendungsnachweis: zeigt, wo das Startobjekt verwendet wird, mit' ).
     a( iv_f = '=' iv_t = 'Programmart und - bei einer Tabelle - der Zugriffsart lesend oder' ).
     a( iv_f = '=' iv_t = 'schreibend. Dazu die Fundstellen mit Zeilennummer. Zu einer Tabelle' ).
     a( iv_f = '=' iv_t = 'werden auch die Views und CDS Views genannt, die auf ihr aufsetzen.' ).
+    a( iv_f = '=' iv_t = 'Zu Tabellen und Strukturen kommen die Stellen hinzu, die einzelne' ).
+    a( iv_f = '=' iv_t = 'Felder anfassen, mit den Feldnamen hinter der Fundstelle.' ).
+    a( iv_f = 'B1' iv_t = 'Auch fuer verwendete Objekte: zieht den Verwendungsnachweis nicht' ).
+    a( iv_f = '=' iv_t = 'nur zum Startobjekt, sondern zu jedem Objekt im Dokument. Bei einem' ).
+    a( iv_f = '=' iv_t = 'IDoc-Basistyp ist das die eigentliche Frage - den Basistyp' ).
+    a( iv_f = '=' iv_t = 'typisiert niemand, seine Segmente werden dauernd gelesen. Ohne' ).
+    a( iv_f = '=' iv_t = 'Haken bleibt es beim Startobjekt, denn ein Datenelement wie CHAR255' ).
+    a( iv_f = '=' iv_t = 'haengt an tausenden Programmen.' ).
     a( iv_f = 'B1' iv_t = 'Ausgehende Aufrufe: die Gegenrichtung. Neben den Querverweistabellen' ).
     a( iv_f = '=' iv_t = 'wird der Quelltext nach CALL FUNCTION, SUBMIT, Tabellenzugriffen und' ).
     a( iv_f = '=' iv_t = 'Klassen durchsucht; Funktionsbausteine stehen in keinem Index.' ).
@@ -260,6 +286,9 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'und werden deshalb nicht begrenzt.' ).
     a( iv_f = 'B1' iv_t = 'Verweistiefe: wie weit die Verweise verfolgt werden. Null bedeutet' ).
     a( iv_f = '=' iv_t = 'nicht verfolgen, eins die direkten Nachbarn dokumentieren.' ).
+    a( iv_f = 'B1' iv_t = 'Verwendungstiefe: die Gegenrichtung. Die gefundenen Verwender' ).
+    a( iv_f = '=' iv_t = 'werden selbst als Kapitel dokumentiert. Null bedeutet nicht' ).
+    a( iv_f = '=' iv_t = 'verfolgen.' ).
     a( iv_f = 'B1' iv_t = 'SAP-Standard ausschliessen: laesst nur Objekte der Eigenentwicklung' ).
     a( iv_f = '=' iv_t = 'stehen. Massstab ist die Auslieferungseinheit des Pakets. Ein' ).
     a( iv_f = '=' iv_t = 'Include hat oft gar keinen Katalogeintrag; dann bleibt es stehen,' ).
@@ -305,6 +334,8 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'keine Mussfelder - sonst waere das Ankreuzfeld nicht erreichbar,' ).
     a( iv_f = '=' iv_t = 'ohne vorher etwas einzugeben, was der Import gar nicht verwendet.' ).
     a( iv_f = '=' iv_t = 'Geprueft wird erst beim Ausfuehren.' ).
+    a( iv_f = 'B1' iv_t = 'XML-Datei liegt auf Appl.-Server: liest die Datei vom' ).
+    a( iv_f = '=' iv_t = 'Applikationsserver statt vom PC.' ).
     a( iv_f = 'B1' iv_t = 'Angelegt werden Domaenen, Datenelemente, Tabellen, Strukturen,' ).
     a( iv_f = '=' iv_t = 'Views, CDS-Quellen, Programme samt Textelementen, Klassen,' ).
     a( iv_f = '=' iv_t = 'Interfaces und Funktionsgruppen mit ihren Bausteinen.' ).
@@ -339,6 +370,10 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'steht in der Syntaxtabelle und in keinem Querverweisindex; ohne' ).
     a( iv_f = '=' iv_t = 'diesen Umweg kaeme drueben ein Basistyp an, dessen Segmente es' ).
     a( iv_f = '=' iv_t = 'nicht gibt, und das Anlegen schluege fehl.' ).
+    a( iv_f = 'B1' iv_t = 'Damit ein Basistyp drueben entsteht, muss das Dokument alles tragen,' ).
+    a( iv_f = '=' iv_t = 'worauf er steht: Segmente, deren Datenelemente und eigene Domaenen.' ).
+    a( iv_f = '=' iv_t = 'Das heisst Export mit Definitionsdaten und Verweistiefe 3. Bei' ).
+    a( iv_f = '=' iv_t = 'Verweistiefe 2 fehlen die Domaenen.' ).
     a( iv_f = 'B1' iv_t = 'Nachrichtenklassen reisen mit allen Nachrichten und allen' ).
     a( iv_f = '=' iv_t = 'gepflegten Sprachen - anders als der uebrige Inhalt, der der' ).
     a( iv_f = '=' iv_t = 'Ausgabesprache folgt. Eine nur englisch gepflegte Klasse kaeme in' ).
@@ -378,6 +413,11 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'nachdem die Tabelle aktiv ist.' ).
     a( iv_f = 'B1' iv_t = 'Klassen reisen als quelltextbasierte Fassung - der Text, den SE24' ).
     a( iv_f = '=' iv_t = 'zeigt. Autor, Aenderungsdatum und UUID bleiben im Quellsystem.' ).
+    a( iv_f = 'B1' iv_t = 'Textelemente reisen in allen gepflegten Sprachen und werden je' ).
+    a( iv_f = '=' iv_t = 'Sprache zurueckgeschrieben - nicht in die Anmeldesprache dessen,' ).
+    a( iv_f = '=' iv_t = 'der importiert. Die Objektdokumentation von Programmen und' ).
+    a( iv_f = '=' iv_t = 'Datenelementen reist ebenso je Sprache mit, auch wenn sie im' ).
+    a( iv_f = '=' iv_t = 'lesbaren Dokument nicht angezeigt wird.' ).
     a( iv_f = 'B1' iv_t = 'Testlauf ist vorbelegt: der Report meldet, was er anlegen wuerde, und' ).
     a( iv_f = '=' iv_t = 'legt nichts an. Wer schreiben will, nimmt den Haken heraus.' ).
     a( iv_f = 'B1' iv_t = 'Ein Objekt, das es hier schon gibt, bleibt unangetastet, solange' ).
@@ -394,6 +434,11 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'angegebene verwendet. Das gilt je Objekt: wer ein lokales Paket' ).
     a( iv_f = '=' iv_t = 'auf ein transportfaehiges umlenkt, bekommt den Auftrag auch dann' ).
     a( iv_f = '=' iv_t = 'angehaengt, wenn das Zielpaket oben lokal war.' ).
+    a( iv_f = 'B1' iv_t = 'Ein Objekt landet nicht im Auftrag, sondern in einer Aufgabe' ).
+    a( iv_f = '=' iv_t = 'darunter. Fehlt eine offene Aufgabe, lehnt das Korrektursystem ohne' ).
+    a( iv_f = '=' iv_t = 'Dialog ab - mit einer Meldung, die nach fehlender Berechtigung' ).
+    a( iv_f = '=' iv_t = 'aussieht. Aufgabe anlegen, wenn noetig legt sie deshalb vor dem Lauf' ).
+    a( iv_f = '=' iv_t = 'unter dem angegebenen Auftrag an. Ohne Haken warnt der Report nur.' ).
     a( iv_f = 'B1' iv_t = 'Zielpaket gilt fuer alles. Wer die Paketstruktur des Quellsystems' ).
     a( iv_f = '=' iv_t = 'behalten oder umlenken will, nimmt die vier Regelzeilen darunter:' ).
     a( iv_f = '=' iv_t = 'links das Paket, in dem das Objekt drueben lag, rechts das Paket,' ).
@@ -410,6 +455,10 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'aktive Fassung, Programme mit einem Syntax-Check. Gemeldet wird nur,' ).
     a( iv_f = '=' iv_t = 'was auffaellt. Angelegt heisst nicht brauchbar - einer Struktur kann' ).
     a( iv_f = '=' iv_t = 'ein Datenelement fehlen, und dann aktiviert sie nicht.' ).
+    a( iv_f = 'B1' iv_t = 'Scheitert ein Schritt, stehen im Protokoll der Rueckgabecode und' ).
+    a( iv_f = '=' iv_t = 'die Meldung des SAP-Bausteins. Scheitert eine Aktivierung, nennt es' ).
+    a( iv_f = '=' iv_t = 'das Objekt, auf dem das gescheiterte steht und das es hier nicht' ).
+    a( iv_f = '=' iv_t = 'aktiv gibt - etwa die Domaene unter einem Datenelement.' ).
 
     a( iv_f = 'U1' iv_t = 'Hinweise' ).
     a( iv_f = 'AS' iv_t = 'Objektdokumentation und Verwendungsnachweis erzeugen je Objekt eigene' ).
@@ -419,6 +468,12 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'zurueckgegriffen. Objekte ohne Text in jeder Sprache bleiben leer.' ).
     a( iv_f = 'AS' iv_t = 'Pakete ohne Katalogeintrag werden mit einem Vermerk uebergangen; der' ).
     a( iv_f = '=' iv_t = 'Lauf bricht nicht ab.' ).
+    a( iv_f = 'AS' iv_t = 'Geloeschte Objekte, deren Loeschauftrag noch nicht freigegeben ist,' ).
+    a( iv_f = '=' iv_t = 'stehen weiter im Objektkatalog. Sie werden uebergangen.' ).
+    a( iv_f = 'AS' iv_t = 'Im Paketmodus endet das Dokument an der Paketgrenze. Was die' ).
+    a( iv_f = '=' iv_t = 'Objekte ausserhalb verwenden, steht in der Aufrufliste, wird aber' ).
+    a( iv_f = '=' iv_t = 'nicht als eigenes Kapitel dokumentiert. Wer die Nachbarschaft' ).
+    a( iv_f = '=' iv_t = 'braucht, startet vom tragenden Objekt mit Verweistiefe 2.' ).
 
   ENDMETHOD.
 

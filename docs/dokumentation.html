@@ -693,7 +693,7 @@
           <table>
             <thead><tr><th>Feld</th><th class="num">Vorbelegung</th><th>Wirkung</th></tr></thead>
             <tbody>
-              <tr><td>Typ / Name</td><td class="num">K</td><td>Startpunkt, beide Pflichtfelder</td></tr>
+              <tr><td>Typ / Name</td><td class="num">K</td><td>Startpunkt; beim Import inaktiv, deshalb erst beim Ausführen geprüft</td></tr>
               <tr><td>Unterpakete rekursiv</td><td class="num">an</td><td><code>GET_ALL_SUBPACKAGES</code>, nur im Paketmodus</td></tr>
               <tr><td>lokale Pakete einbeziehen</td><td class="num">aus</td><td>bezieht <code>$</code>-Pakete mit ein</td></tr>
               <tr><td>Objekttyp / Objektname</td><td class="num">leer</td><td>Select-Options als Filter</td></tr>
@@ -704,16 +704,33 @@
               <tr><td>Details</td><td class="num">an</td><td>Feldlisten, Komponenten, Textelemente, Festwerte, Feldbezeichner, Basistabellen</td></tr>
               <tr><td>Quelltext ausgeben</td><td class="num">aus</td><td>siehe unten</td></tr>
               <tr><td>Max. Zeilen je Objekt</td><td class="num">300</td><td>Kürzungshinweis steht im Quelltext selbst</td></tr>
-              <tr><td>Verwendungsnachweis</td><td class="num">aus</td><td>nur zum Startobjekt — siehe unten</td></tr>
+              <tr><td>Verwendungsnachweis</td><td class="num">aus</td><td>zum Startobjekt, auf Wunsch zu allen — siehe unten</td></tr>
               <tr><td>Ausgehende Aufrufe</td><td class="num">aus</td><td>Index plus Quelltext-Scan — siehe unten</td></tr>
               <tr><td>Verweistiefe</td><td class="num">1</td><td>0 = keine; 1 = die direkten Nachbarn dokumentieren</td></tr>
               <tr><td>SAP-Standard ausschliessen</td><td class="num">aus</td><td>siehe unten</td></tr>
               <tr><td>Max. Verwendungen je Objekt</td><td class="num">50</td><td>eigene Grenze, getrennt von der Objektgrenze</td></tr>
+              <tr><td>Verwendungstiefe</td><td class="num">0</td><td>die gefundenen Verwender selbst als Kapitel dokumentieren</td></tr>
+              <tr><td>auch für verwendete Objekte</td><td class="num">aus</td><td>Verwendungsnachweis zu jedem Objekt im Dokument</td></tr>
               <tr><td>Max. Fundstellen je Stelle</td><td class="num">40</td><td>begrenzt die Quelltextzeilen je Verwendung</td></tr>
               <tr><td>Fundstellen im ganzen Quelltext</td><td class="num">aus</td><td>ganzes Listing, Trefferzeilen fett</td></tr>
             </tbody>
           </table>
         </div>
+
+        <div class="note">
+          <p><b>Gelöschte Objekte bleiben draußen.</b> Wird ein Objekt gelöscht, steht sein
+          Katalogeintrag mit <code>DELFLAG = 'X'</code> weiter in <code>TADIR</code>, bis der
+          Auftrag mit der Löschung freigegeben ist — und <code>CL_PAK_PACKAGE_QUERIES</code>
+          liefert ihn mit. Im Dokument stand dann eine Klasse, die es nicht mehr gibt. Der
+          Paketlauf überspringt solche Einträge, die Namensauflösung fragt das Kennzeichen mit
+          ab.</p>
+        </div>
+        <p>
+          <b>Die Paketgrenze bleibt.</b> Im Paketmodus ist das Paket der Gegenstand. Was seine
+          Objekte außerhalb verwenden, steht mit <em>Ausgehende Aufrufe</em> in der Aufrufliste,
+          wird aber nicht als eigenes Kapitel dokumentiert. Wer eine RAP-Anwendung samt
+          Nachbarschaft braucht, startet vom Root-View (Typ <code>W</code>) mit Verweistiefe 2.
+        </p>
 
         <h3>Ausgehende Aufrufe</h3>
         <p>
@@ -796,11 +813,24 @@
 
         <h3>Verwendungsnachweis</h3>
         <p>
-          Nur für das Startobjekt. Die Frage „wer benutzt das" gilt dem Einstiegspunkt, nicht
+          Vorgabe: nur für das Startobjekt. Die Frage „wer benutzt das" gilt dem Einstiegspunkt, nicht
           seiner Nachbarschaft — ein Datenelement wie <code>CHAR255</code> wird in tausenden
           SAP-Programmen verwendet und würde das Dokument unter seiner eigenen
           Verwendungsliste begraben. Im Paketmodus bleibt es beim Nachweis je Objekt, dort ist
           jedes Objekt selbst Gegenstand des Dokuments.
+        </p>
+        <div class="note">
+          <p><b>Auf Wunsch auch für die verwendeten Objekte.</b> Bei einem IDoc-Basistyp kehrt
+          sich die Abwägung um: den Basistyp typisiert niemand, seine Segmente werden dauernd
+          gelesen — die Frage gilt gerade der Nachbarschaft. <em>auch für verwendete
+          Objekte</em> zieht den Nachweis zu jedem Objekt im Dokument. Die Vorgabe bleibt beim
+          Startobjekt, damit sich für bestehende Varianten nichts ändert.</p>
+        </div>
+        <p>
+          <b>Verweistiefe und Verwendungstiefe</b> sind zwei Richtungen. Die Verweistiefe folgt
+          dem, was ein Objekt verwendet, und dem, was das wiederum verwendet. Die
+          Verwendungstiefe geht in die Gegenrichtung: die gefundenen Verwender werden selbst als
+          Kapitel dokumentiert. 0 heißt jeweils: nicht verfolgen.
         </p>
         <p>Je Treffer steht:</p>
         <ul>
@@ -811,6 +841,12 @@
               Index weiß nur, <i>dass</i> die Tabelle vorkommt.</li>
           <li>die <b>Fundstellen</b> mit Zeilennummer und Anweisung, wie SE11 sie neben seiner
               Trefferliste zeigt.</li>
+          <li>bei einer Tabelle oder Struktur die <b>angefassten Felder</b>.
+              <code>WBCROSSGT</code> führt eine Feldverwendung unter
+              <code>&lt;Struktur&gt;\TY:&lt;Feld&gt;</code>; die Suche nach dem bloßen Namen
+              findet keine davon. Die Treffer werden in die Liste eingeschmolzen — je Fundstelle
+              eine Zeile, die Felder dahinter, etwa <em>Felder MAKTX, SPRAS</em> an
+              <code>E1MAKTM</code>.</li>
         </ul>
         <p>
           Zu einer Tabelle kommen die <b>Views und CDS Views</b> hinzu, die auf ihr aufsetzen.
@@ -834,6 +870,46 @@
           gefilterten Liste übrig bleibt.
         </p>
 
+        <h3>Details je Objekttyp</h3>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th>Typ</th><th>Inhalt</th></tr></thead>
+            <tbody>
+              <tr><td><code>PROG</code></td><td>Textelemente: Titel, Selektionstexte, Textsymbole, Überschriften</td></tr>
+              <tr><td><code>CLAS</code>, <code>INTF</code></td><td>Oberklasse und Schnittstellen, Komponenten, implementierte Schnittstellenmethoden, lokale Klassen mit Methoden</td></tr>
+              <tr><td><code>FUNC</code></td><td>Schnittstelle aus <code>FUPARAREF</code></td></tr>
+              <tr><td><code>TABL</code></td><td>Feldliste mit Datenelement und Schlüssel; bei einem IDoc-Segment aus <code>EDSAPPL</code></td></tr>
+              <tr><td><code>VIEW</code></td><td>Feldliste, Basistabellen mit Join</td></tr>
+              <tr><td><code>DDLS</code></td><td>Feldliste der Entität aus <code>DD03ND</code>, verwendete Objekte aus <code>DDLDEPENDENCY</code></td></tr>
+              <tr><td><code>IDOC</code></td><td>Segmenthierarchie (WE60), Nachrichtentypen (WE82), verarbeitende Bausteine (WE57)</td></tr>
+              <tr><td><code>DTEL</code>, <code>DOMA</code></td><td>Feldbezeichner bzw. Festwerte</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          <b>Klassen.</b> <code>SEOCOMPO</code> führt nur, was eine Klasse selbst deklariert. Ein
+          RAP-Query-Provider, der nichts tut als eine Schnittstelle zu implementieren, hat dort
+          keinen Satz, und der Detailblock fiel weg. Die Beziehungen kommen deshalb aus
+          <code>SEOMETAREL</code>, die implementierten Methoden aus <code>TMDIR</code>
+          (<code>SCHNITTSTELLE~METHODE</code>). Lokale Klassen kennt kein Katalog; sie werden aus
+          dem <code>…CCIMP</code>-Include gelesen. Ein Behavior-Pool ist nach außen leer — die
+          Handler, die die Logik tragen, stehen dort.
+        </p>
+        <p>
+          <b>IDoc-Basistyp.</b> Jede Sicht ist nach der Transaktion benannt, in der SAP dasselbe
+          zeigt. Die Hierarchie nennt je Segment Ebene, Vatersegment, Mussfeld und
+          Wiederholbereich wie WE60 (<code>1..9999</code>); WE82 nennt Nachrichtentyp,
+          Erweiterung und Release, WE57 Baustein, Richtung und Objekttyp — die Stelle, an der ein
+          IDoc auf Code trifft.
+        </p>
+        <p>
+          <b>IDoc-Segment und CDS-View</b> haben dieselbe Eigenheit: die Feldliste steht nicht
+          dort, wo man sie sucht. Das Segment ist in <code>DD03L</code> eine flache
+          Zeichenstruktur ohne Datenelemente; was WE31 zeigt, steht in <code>EDSAPPL</code>. Eine
+          CDS-View kennt in <code>DD03L</code> höchstens ihren SQL-View; die Elemente der Entität
+          stehen in <code>DD03ND</code>.
+        </p>
+
         <h3>Quelltext je Objekttyp</h3>
         <div class="tablewrap">
           <table>
@@ -843,6 +919,7 @@
               <tr><td><code>FUGR</code></td><td>Rahmenprogramm <code>SAPL&lt;Gruppe&gt;</code> plus alle Includes über <code>RS_GET_ALL_INCLUDES</code></td></tr>
               <tr><td><code>CLAS</code>, <code>INTF</code></td><td>Klassenpool (Name auf 30 Stellen mit <code>=</code> aufgefüllt, dann <code>CP</code>), Includes ebenso</td></tr>
               <tr><td><code>DDLS</code></td><td><code>DDDDLSRC-SOURCE</code></td></tr>
+              <tr><td><code>BDEF</code>, <code>SRVD</code>, <code>DDLX</code></td><td>Workbench-Objektoperator, Inhalt über <code>get_selected_data( )</code> — dieselbe Stelle wie die Definitionsdaten</td></tr>
             </tbody>
           </table>
         </div>
@@ -854,9 +931,14 @@
         <p>
           Typabhängig aus <code>TRDIRT</code>, <code>SEOCLASSTX</code>, <code>DD01T</code>,
           <code>DD02T</code>, <code>DD04T</code>, <code>TSTCT</code>, <code>TLIBT</code>,
-          <code>TDEVCT</code>. Fehlt der Text in der gewählten Sprache, fällt der Report auf
-          Englisch zurück. Objekte ohne Text in irgendeiner Sprache — etwa generierte
-          SICF-Knoten — bleiben leer; das ist der Zustand im System und wird nicht kaschiert.
+          <code>TDEVCT</code>; für die CDS- und RAP-Schicht aus <code>DDDDLSRCT</code>,
+          <code>SRVDSRCT</code>, <code>SRVB_HEAD_T</code> und den Gateway-Texttabellen unter
+          <code>/IWBEP/</code>, für Nachrichtenklassen aus <code>T100T</code>.
+          Verhaltensdefinition und Metadata Extension haben keine lesbare Texttabelle; ihre
+          Beschreibung liefert der Workbench-Operator. Fehlt der Text in der gewählten Sprache,
+          fällt der Report auf Englisch zurück. Objekte ohne Text in irgendeiner Sprache — etwa
+          generierte SICF-Knoten oder manches Gateway-Modell — bleiben leer; das ist der Zustand
+          im System und wird nicht kaschiert.
         </p>
       </section>
 
@@ -1047,7 +1129,7 @@
             <tbody>
               <tr><td>Domäne, Datenelement</td><td>ja, mit Festwerten und Texten</td></tr>
               <tr><td>Tabelle, Struktur</td><td>ja, samt technischen Einstellungen und Sekundärindizes</td></tr>
-              <tr><td>Report, Include</td><td>ja, mit Textelementen, GUI-Status und Dokumentation</td></tr>
+              <tr><td>Report, Include</td><td>ja, mit Textelementen und Dokumentation in allen gepflegten Sprachen, dazu GUI-Status</td></tr>
               <tr><td>Interface, Klasse</td><td>ja, als quelltextbasierte Fassung</td></tr>
               <tr><td>Funktionsgruppe</td><td>ja, mit Includes, Bausteinen und deren Schnittstelle</td></tr>
               <tr><td>View</td><td>ja, mit Basistabellen, Feldern und Join-Bedingungen</td></tr>
@@ -1135,6 +1217,29 @@
           Eingabe: ein lokales Paket kennt keinen Auftrag, ein transportfähiges braucht einen.
           Wer <code>$TMP</code> nach <code>ZBLE_WM</code> umlenkt, bekommt den Auftrag also auch
           dann angehängt, wenn das Zielpaket lokal war.</p>
+        </div>
+
+        <h3>Auftrag und Aufgabe</h3>
+        <p>
+          Ein Objekt landet nicht im Auftrag, sondern in einer <b>Aufgabe</b> darunter — und eine
+          freigegebene nimmt nichts mehr auf. Fehlt eine offene Aufgabe für den Anmeldebenutzer,
+          fragt das Korrektursystem im Dialog nach. Ein Import hat keinen Dialog; das
+          Korrektursystem lehnt ab, bei Klassen mit <code>NO_ACCESS</code>, was nach fehlender
+          Berechtigung aussieht. Gemeint ist <em>No matching task exists under request … for
+          user …</em>.
+        </p>
+        <p>
+          <em>Aufgabe anlegen, wenn nötig</em> (vorbelegt) prüft deshalb vor dem Lauf, ob unter
+          dem Auftrag vom Bild eine änderbare Aufgabe des Benutzers steht, und legt sie sonst
+          über <code>TR40_TASK_ADD</code> an — dialogfrei, nur unter diesem Auftrag, nie im
+          Testlauf. Ohne Haken gibt es vorab eine Warnung statt eines Abbruchs mittendrin. Wer
+          gleich eine Aufgabe einträgt, wird erkannt und in Ruhe gelassen.
+        </p>
+        <div class="note">
+          <p><b>Ohne <code>COMMIT WORK</code> kein Auftragseintrag.</b> Das Korrektursystem
+          schreibt über die Verbuchung. Der Lauf meldete eine neu angelegte Aufgabe, und im
+          Transport Organizer stand keine. Committet wird jetzt am Ende des Laufs, vor der
+          Prüfung, und nur außerhalb des Testlaufs.</p>
         </div>
 
         <h3>Der Pflegeapparat</h3>
@@ -1252,6 +1357,29 @@
           Importlaufs.</p>
         </div>
 
+        <p>
+          <b>Was ein Basistyp drüben braucht.</b> Das Dokument muss alles tragen, worauf er
+          steht: die Segmente, deren Datenelemente und die Domänen dahinter, soweit es eigene
+          sind. Die Datenelemente eines Segments stehen nicht in <code>DD03L</code>, sondern in
+          <code>EDSAPPL</code>; solange die Verweissammlung nur <code>DD03L</code> las, kam kein
+          einziges davon mit. Gemessen an einem Basistyp mit Definitionsdaten:
+        </p>
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th class="num">Verweistiefe</th><th>im Dokument</th></tr></thead>
+            <tbody>
+              <tr><td class="num">1</td><td>Basistyp, 7 Segmente</td></tr>
+              <tr><td class="num">2</td><td>dazu 32 Datenelemente</td></tr>
+              <tr><td class="num">3</td><td>dazu 23 Domänen</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Für die Übertragung ist also <b>Verweistiefe 3</b> richtig. Mit 2 fehlen die Domänen:
+          das eigene Datenelement aktiviert nicht, das Segment scheitert daran, der Basistyp am
+          Segment.
+        </p>
+
         <h3>Nachrichtenklassen</h3>
         <p>
           Fehlt die Nachrichtenklasse im Zielsystem, zeigt der Report statt des Textes den
@@ -1272,6 +1400,44 @@
           Normalfall. Beim Import werden fehlende Nummern und fehlende Sprachen ergänzt;
           vorhandene Texte bleiben, sie können hier übersetzt oder korrigiert worden sein.</p>
         </div>
+
+        <h3>Textelemente und Dokumentation</h3>
+        <p>
+          Selektionstexte und Dokumentation kamen anfangs nicht richtig an. Der Textpool wurde
+          nur in der Ausgabesprache gelesen und in die <b>Anmeldesprache dessen geschrieben, der
+          importiert</b>: ein englisch gepflegter Report hatte danach deutsche Selektionstexte
+          mit englischem Inhalt und englische gar keine. Die Dokumentation reiste nur mit, wenn
+          beim Export <em>Objektdokumentation</em> angehakt war, und dann in einer Sprache.
+        </p>
+        <p>
+          Jetzt stehen die Textelemente <b>aller gepflegten Sprachen</b> im Dokument, jede Zeile
+          mit ihrer Sprache, und werden je Sprache zurückgeschrieben. Die Dokumentation von
+          Programmen und Datenelementen reist als eigene Zeile je Sprache mit den
+          Definitionsdaten — unabhängig davon, ob sie im lesbaren Dokument steht. Ein Dokument
+          aus einer älteren Fassung trägt die Sprache nicht; dann bleibt es beim bisherigen
+          Verhalten.
+        </p>
+<pre><code>PROG ZZ_TPOOL_TEST  angelegt               560 Zeilen
+TEXT ZZ_TPOOL_TEST  Textelemente gesetzt   D:5 E:8
+DOKU ZZ_TPOOL_TEST  Dokumentation gesetzt  Sprachen D</code></pre>
+
+        <h3>Das Protokoll</h3>
+        <p>
+          Zu einer Fehlerzeile gehören der <b>echte Rückgabecode</b> und die <b>Meldung des
+          SAP-Bausteins</b>. Beides war nicht selbstverständlich. ABAP wertet die Parameter eines
+          Methodenaufrufs in der Reihenfolge der Schnittstelle aus; im Protokollaufruf lief die
+          Übersetzung des Aktionstexts vor dem String-Template und setzte <code>sy-subrc</code>
+          zurück — gemeldet wurde durchgehend 0. Und die Bausteine setzen vor ihrem
+          <code>RAISE</code> eine Meldung ab, die bis dahin niemand las. Beides wird jetzt
+          unmittelbar nach dem Aufruf gemerkt.
+        </p>
+        <p>
+          Scheitert eine <b>Aktivierung</b>, nennt das Protokoll außerdem, woran: das Objekt, auf
+          dem das gescheiterte steht und das es nicht aktiv gibt — die Domäne unter einem
+          Datenelement, die Datenelemente unter Tabelle und View, höchstens drei.
+        </p>
+<pre><code>DTEL ZBLE_BALACTION  angelegt, inaktiv
+     DDIF_DTEL_ACTIVATE rc 8 fehlt oder inaktiv: Domaene ZBLE_BALACTION_D</code></pre>
 
         <h3>Prüfung nach dem Lauf</h3>
         <p>
@@ -1409,6 +1575,50 @@
           <table>
             <thead><tr><th>Symptom</th><th>Ursache</th></tr></thead>
             <tbody>
+              <tr>
+                <td>Im Importprotokoll steht bei jedem Fehler <code>subrc 0</code></td>
+                <td>ABAP wertet die Parameter eines Methodenaufrufs in der Reihenfolge der <b>Schnittstelle</b> aus, nicht der des Quelltexts. In <code>log( )</code> steht <code>iv_action</code> vor <code>iv_text</code>; <code>lcl_t=&gt;ui( )</code> läuft zuerst und setzt <code>sy-subrc</code> zurück, bevor das String-Template ihn liest. Die Reihenfolge im Aufruf zu tauschen hilft nicht — der Wert gehört vorher in eine Variable.</td>
+              </tr>
+              <tr>
+                <td>Import meldet eine neue Aufgabe, der Transport Organizer zeigt keine</td>
+                <td>Kein <code>COMMIT WORK</code>. Der Korrektursystem-Teil läuft über die Verbuchung.</td>
+              </tr>
+              <tr>
+                <td><code>SEO_*_CREATE_COMPLETE</code> scheitert mit <code>NO_ACCESS</code>, obwohl die Berechtigung da ist</td>
+                <td>Unter dem Auftrag gibt es keine offene Aufgabe für den Benutzer. Ohne Dialog kann das Korrektursystem nicht nachfragen und lehnt ab. Die Meldung vor dem <code>RAISE</code> sagt es im Klartext; seitdem wird sie mitprotokolliert und die Aufgabe vorab angelegt.</td>
+              </tr>
+              <tr>
+                <td>Kurzdump <code>CALL_FUNCTION_PARM_UNKNOWN</code> in <code>SEGMENT_CREATE</code>: <code>DEVCLASS</code> unbekannt</td>
+                <td><code>DEVCLASS</code> und <code>ORDER</code> sind dort <code>CHANGING</code>, nicht <code>EXPORTING</code>. <code>CALL FUNCTION</code> mit einem Literal wird erst zur Laufzeit aufgelöst — der Report aktivierte fehlerfrei mit einem Aufruf, der nie laufen konnte. Danach alle 13 schreibenden Bausteine gegen <code>FUPARAREF</code> abgeglichen: 48 Parameter, keine weitere Abweichung.</td>
+              </tr>
+              <tr>
+                <td>Kurzdump <code>BCD_OVERFLOW</code> beim Dokumentieren eines IDoc-Basistyps</td>
+                <td><code>OCCMAX</code> ist <code>NUMC(10)</code>, und <code>9999999999</code> — unbegrenzte Wiederholung — passt in kein <code>TYPE I</code>. Führende Nullen werden textuell entfernt, nicht gerechnet. Der erste Test mit <code>MATMAS01</code> traf die Grenze nicht; <code>MATMAS02</code> tut es.</td>
+              </tr>
+              <tr>
+                <td>Feldliste eines IDoc-Segments ohne Datenelemente; im Export fehlen sie ganz</td>
+                <td><code>DD03L</code> führt ein Segment als flache Zeichenstruktur, <code>ROLLNAME</code> ist leer. Die Datenelemente stehen in <code>EDSAPPL</code>. Dieselbe Weiche war an zwei Stellen nötig: in der Feldliste und in der Verweissammlung.</td>
+              </tr>
+              <tr>
+                <td>Verwendungsnachweis zu einer Struktur kennt keine Feldverwendung</td>
+                <td><code>WBCROSSGT</code> führt sie unter <code>&lt;Struktur&gt;\TY:&lt;Feld&gt;</code>. Gesucht wird mit <code>LIKE … ESCAPE</code> — der Unterstrich im Namen ist sonst ein Platzhalter.</td>
+              </tr>
+              <tr>
+                <td>Paketdokument nennt eine gelöschte Klasse</td>
+                <td><code>TADIR</code> behält den Eintrag mit <code>DELFLAG = 'X'</code>, bis der Löschauftrag freigegeben ist, und <code>CL_PAK_PACKAGE_QUERIES</code> liefert ihn mit.</td>
+              </tr>
+              <tr>
+                <td>Importierter Report hat unter Deutsch englische Selektionstexte, unter Englisch keine</td>
+                <td>Der Textpool wurde nur in der Ausgabesprache gelesen und in die Anmeldesprache des Importierenden geschrieben. Jetzt je Sprache hin und zurück.</td>
+              </tr>
+              <tr>
+                <td>Klasse ohne Detailblock, obwohl sie Methoden hat</td>
+                <td><code>SEOCOMPO</code> führt nur Eigenes; implementierte Schnittstellenmethoden stehen in <code>TMDIR</code>, lokale Klassen nur im <code>CCIMP</code>-Include. Bei leerer Komponentenliste brach der Block ab.</td>
+              </tr>
+              <tr>
+                <td><code>DDIF_DTEL_ACTIVATE rc 8</code>, danach scheitert alles, was darauf steht</td>
+                <td>Die Domäne fehlte im Dokument, weil mit Verweistiefe 2 exportiert wurde. Der Code allein sagt das nicht; das Protokoll nennt jetzt das fehlende oder inaktive Objekt.</td>
+              </tr>
               <tr>
                 <td>ATC-Dokument mit der Überschrift „IMG-Dokumentation"</td>
                 <td>Der HTML-Renderer ist in allen drei Reports wortgleich, die Überschrift war fest verdrahtet — beim Kopieren wanderte sie mit. Sie kommt jetzt aus <code>doc_type</code> im Dokument; eine abgeleitete Überschrift kann das nicht.</td>
@@ -1550,6 +1760,9 @@
               <tr><td>Anzeigen ohne Anlegen</td><td>offen; eine XML-Datei nur einlesen und nach HTML rendern, ohne Systemzugriff — Parser und Renderer sind da, es fehlt der Schalter</td></tr>
               <tr><td>Bausteine im Verwendungsnachweis</td><td>für die Richtung „welcher Baustein wird von wem gerufen" gibt es keinen Index; ein Scan über alle Programme wäre zu teuer</td></tr>
               <tr><td>Mandantenabhängiges Customizing</td><td>der Export bezieht sich auf den Anmeldemandanten; mandantenübergreifendes Customizing ist nicht gesondert gekennzeichnet</td></tr>
+              <tr><td>Objektdokumentation weiterer Typen</td><td>offen; gelesen wird sie für Report, Transaktion, Datenelement, Baustein und Nachrichtenklasse, übertragen nur für Report und Datenelement</td></tr>
+              <tr><td><code>STOB</code> als eigenes Kapitel</td><td>offen; im Paketmodus steht das Strukturobjekt einer CDS-View als eigenes Kapitel neben seiner DDL-Quelle, mit demselben Text — es entsteht beim Aktivieren von selbst</td></tr>
+              <tr><td>Lokale Klassen zeilenweise erkannt</td><td>offen; eine über zwei Zeilen umbrochene Definition wird nicht gefunden, und bei <code>METHODS: a, b.</code> nur die erste Methode der Zeile</td></tr>
               <tr><td>Tabs Mitarbeiter und Stichwörter</td><td>liegen in Nachbartabellen von <code>CUSSTAT</code>, mit demselben Muster anbindbar</td></tr>
             </tbody>
           </table>

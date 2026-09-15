@@ -452,6 +452,7 @@ Typen: `K` Paket, `P` Programm, `C` Klasse/Interface,
 | `P_NOSAP` | | SAP-Standard ausschließen |
 | `P_MAXUSE` | 50 | Maximale **Verwendungen** je Objekt — greift nicht auf den Aufbau, siehe 4.5 |
 | `P_UDEP` | 0 | Verwendungstiefe — dokumentiert die gefundenen Verwender selbst mit |
+| `P_USEALL` | | Verwendungsnachweis auch für die verwendeten Objekte, nicht nur fürs Startobjekt (siehe 4.6) |
 | `P_MAXHIT` | 40 | Maximale Fundstellen je Stelle |
 | `P_FSRC` | | Fundstellen im ganzen Quelltext |
 | `P_DEF` | X | Definitionsdaten für den Reimport (siehe 5.5) |
@@ -469,16 +470,24 @@ Geprüft wird stattdessen in `AT SELECTION-SCREEN`, und nur wenn der Lauf wirkli
 inaktiv, solange dokumentiert wird. `P_IFILE` hat eine Wertehilfe mit Dateidialog — außer bei
 `P_ISRV`, denn ein Pfad auf dem Applikationsserver lässt sich vom Frontend nicht durchsuchen.
 
+**Zwei Appserver-Kennzeichen, zwei Dateien.** `P_ASRV` im Block Startpunkt gehört zur
+Fehlliste, `P_ISRV` im Importblock zur XML-Datei. Beide hießen anfangs fast gleich („File is on
+the app server"), und prompt kam die Frage, warum der Import-Schalter im falschen Block steht.
+Er stand nie dort. Die Beschriftungen nennen jetzt ihre Datei — *Fehlliste liegt auf
+Appl.-Server* und *XML-Datei liegt auf Appl.-Server*. Verschoben wird nichts: die Fehlliste ist
+ein Startpunkt, das Quellsystem liest sie und exportiert, was darin steht (siehe 3.9).
+
 | Parameter | Vorbelegung | Bedeutung |
 |---|---|---|
 | `P_IMP` | | Importieren statt dokumentieren |
 | `P_IFILE` | | XML-Datei |
-| `P_ISRV` | | Datei liegt auf dem Applikationsserver |
+| `P_ISRV` | | XML-Datei liegt auf dem Applikationsserver |
 | `P_ITEST` | **X** | Testlauf — es wird nichts angelegt |
 | `P_IOVER` | | Bestehende Objekte überschreiben |
 | `P_IACT` | X | Nach dem Anlegen aktivieren |
 | `P_IPACK` | `$TMP` | Zielpaket |
 | `P_ITR` | | Auftrag (bei nicht-lokalem Paket) |
+| `P_ITASK` | X | Aufgabe unter dem Auftrag anlegen, wenn keine offene da ist (siehe 5.6) |
 | `P_IKEEP` | | Quellpaket beibehalten |
 | `P_IOLD1..4` / `P_INEW1..4` | | Paketregeln alt → neu (siehe 5.7) |
 
@@ -493,6 +502,18 @@ jede davon zum Kurzdump — `TRY...CATCH` greift dort nicht. Pakete ohne `TDEVC`
 `TADIR`-Satz sind im Bestand durchaus vorhanden; sie erscheinen mit Vermerk im Dokument, statt
 den Lauf abzubrechen.
 
+**Gelöschte Objekte.** Wird ein Objekt gelöscht, bleibt sein `TADIR`-Satz mit `DELFLAG = 'X'`
+stehen, bis der Auftrag mit der Löschung freigegeben ist — und `GET_DEV_OBJECT_TADIR_KEYS`
+liefert ihn mit. Im Dokument stand dann eine Klasse, die es nicht mehr gibt, mit leerem
+Kurztext und ohne Details (gefunden an `ZCONS_GRC_PROBE_SRCH` in `ZCONS_GRC_MAILER`). Die
+Paketschleife liest die gelöschten Einträge des Pakets einmal vorab und überspringt sie; die
+Namensauflösungen gegen `TADIR` fragen `DELFLAG` an elf Stellen mit ab.
+
+**Die Paketgrenze bleibt.** Im Paketmodus ist der Gegenstand das Paket. Was dessen Objekte
+außerhalb verwenden, steht mit „Ausgehende Aufrufe" in der Aufrufliste, wird aber nicht als
+eigenes Kapitel dokumentiert. Wer eine Anwendung samt ihrer Nachbarschaft braucht, startet
+vom tragenden Objekt — bei einer RAP-Anwendung der Root-View (`W`) — mit Verweistiefe 2.
+
 **Einzelobjektmodus** (alle anderen Typen): Kapitel 1 ist das gewählte Objekt. Ist
 „Ausgehende Aufrufe" angehakt und die Verweistiefe > 0, folgt in Kapitel 2 alles, was es
 verwendet — nach Objekttyp gruppiert und mit denselben Details.
@@ -502,14 +523,64 @@ verwendet — nach Objekttyp gruppiert und mit denselben Details.
 | Typ | Inhalt |
 |---|---|
 | `PROG` | Titel, **Textelemente** (Titel, Selektionstexte, Textsymbole, Überschriften), Objektdoku, optional Quelltext |
-| `CLAS` / `INTF` | Komponenten mit Art (Attribut, Methode, Ereignis, Typ) |
+| `CLAS` / `INTF` | Oberklasse und Schnittstellen, Komponenten mit Art (Attribut, Methode, Ereignis, Typ), implementierte Schnittstellenmethoden, lokale Klassen mit ihren Methoden |
 | `FUGR` | Bausteinliste mit Kurztexten |
 | `FUNC` | Schnittstelle aus `FUPARAREF` (Import, Export, Changing, Tabellen, Ausnahmen) |
-| `TABL` | Feldliste mit Datenelement und Schlüsselkennzeichen |
+| `TABL` | Feldliste mit Datenelement und Schlüsselkennzeichen; bei einem IDoc-Segment aus `EDSAPPL` |
 | `VIEW` | Feldliste **und Basistabellen mit Join** (`DD26S`: Reihenfolge, Fremdschlüssel) |
-| `DDLS` | Verwendete Objekte aus `DDLDEPENDENCY` |
+| `DDLS` | **Feldliste** der Entität aus `DD03ND`, verwendete Objekte aus `DDLDEPENDENCY`, optional Quelltext |
+| `BDEF` / `SRVD` / `DDLX` | optional Quelltext über den Workbench-Operator |
+| `IDOC` | Segmenthierarchie (WE60), Nachrichtentypen (WE82), verarbeitende Bausteine (WE57) |
 | `DTEL` | Feldbezeichner kurz/mittel/lang/Überschrift aus `DD04T` |
 | `DOMA` | Festwerte aus `DD07T` |
+
+**Klassen.** `SEOCOMPO` führt nur, was die Klasse selbst deklariert. Eine Klasse, die nichts tut
+als eine Schnittstelle zu implementieren — ein RAP-Query-Provider etwa —, hat dort keinen
+einzigen Satz, und der Detailblock brach ab. Dazu kommen jetzt drei Quellen:
+
+| Was | Woher |
+|---|---|
+| Oberklasse, Schnittstellen | `SEOMETAREL`, `RELTYPE` 2 bzw. 1 |
+| implementierte Schnittstellenmethoden | `TMDIR`, Methodenname `SCHNITTSTELLE~METHODE` |
+| lokale Klassen und deren Methoden | Quelltext des `…CCIMP`-Includes |
+
+Die lokalen Klassen kennt kein Katalog. Ein Behavior-Pool ist nach außen leer; die Handler, die
+die Logik tragen (`lhc_<entität>`), stehen dort. Gelesen wird der Include mit `READ REPORT` und
+nach `CLASS … DEFINITION` und `METHODS` durchsucht — `DEFERRED` und `LOAD` sind keine
+Definition.
+
+**IDoc-Basistyp.** Jede der drei Sichten ist nach der Transaktion benannt, in der SAP dasselbe
+zeigt. Die Hierarchie kommt aus `IDOCTYPE_READ`, derselben Schnittstelle wie die
+Definitionsdaten; Ebene und Wiederholbereich werden ohne führende Nullen ausgegeben, wie WE60
+es tut (`1..9999`). Die Nullen fallen **textuell** weg: `OCCMAX` ist `NUMC(10)`, und
+`9999999999`, die Marke für unbegrenzte Wiederholung, passt in kein `TYPE I` — der erste Versuch
+endete in `BCD_OVERFLOW`. WE82 kommt aus `EDIMSG` (Nachrichtentyp, Erweiterung, Release), WE57
+aus `EDIFCT` (Baustein, Richtung, Nachrichtentyp, Objekttyp). WE57 ist die Stelle, an der ein
+IDoc auf Code trifft.
+
+**IDoc-Segment.** Die erzeugte DDIC-Struktur ist eine flache Zeichenstruktur: `DD03L` führt jedes
+Feld als `CHAR` **ohne** `ROLLNAME`. Das Datenelement, das WE31 zeigt, steht allein in
+`EDSAPPL` unter dem Segmenttyp. Feldliste und Verweissammlung nehmen deshalb für Segmente
+`EDSAPPL`, sonst `DD03L`.
+
+**CDS-View.** `DD03L` kennt höchstens den SQL-View, eine View Entity oder Custom Entity hat gar
+keinen. Die Elemente stehen in `DD03ND` unter dem Entitätsnamen, den `DDLDEPENDENCY` als
+`STOB` nennt. Ein Feld ohne Datenelement zeigt Datentyp und Länge.
+
+**Kurztexte.** Für die CDS- und RAP-Schicht fehlten sie anfangs ganz:
+
+| Typ | Texttabelle |
+|---|---|
+| `DDLS`, `STOB` | `DDDDLSRCT` (bei `STOB` über die zugehörige DDL-Quelle) |
+| `MSAG` | `T100T` |
+| `SRVD` | `SRVDSRCT` |
+| `SRVB` | `SRVB_HEAD_T` |
+| `IWSV`, `IWMO`, `IWVB` | `/IWBEP/I_MGW_SRT`, `_OHT`, `_VOT` — Name und Version stehen im Katalog in einem Feld |
+| `BDEF`, `DDLX` | keine lesbare Tabelle; `GET_DESCRIPTION( )` am Workbench-Operator |
+
+Die Tabellen für `SRVD`, `SRVB` und die Gateway-Objekte gibt es nicht auf jedem Stand; sie werden
+dynamisch gelesen und abgefangen. Ein fehlender Text beendet den Lauf nicht. Bei `IWMO` und
+`IWVB` ist der Text oft schlicht nicht gepflegt — das ist der Zustand im System.
 
 ### 4.5 Ausgehende Aufrufe
 
@@ -580,12 +651,34 @@ ohne `ORDER BY` keine verlässliche Reihenfolge hat, entschied die Datenbank, we
 stand die Struktur vollständig, nur eines ihrer Datenelemente fehlte. Beim Import ließ sie sich
 dann nicht aktivieren.
 
+Bei einem **IDoc-Segment** stehen die Datenelemente nicht in `DD03L`, sondern in `EDSAPPL`
+(siehe 4.4). Solange die Verweissammlung nur `DD03L` las, enthielt ein Export die Segmente, aber
+kein einziges ihrer Datenelemente, und im Zielsystem scheiterte `SEGMENT_CREATE`. Gemessen an
+`ZSRA001` mit Definitionsdaten:
+
+| Verweistiefe | im Dokument |
+|---|---|
+| 1 | Basistyp, 7 Segmente |
+| 2 | dazu 32 Datenelemente |
+| 3 | dazu 23 Domänen |
+
 ### 4.6 Verwendungsnachweis
 
 Nur für das **Startobjekt**. Die Frage „wer benutzt das" gilt dem Einstiegspunkt, nicht seiner
 Nachbarschaft — ein Datenelement wie `CHAR255` wird in tausenden SAP-Programmen verwendet und
 würde das Dokument unter seiner eigenen Verwendungsliste begraben. Im Paketmodus bleibt es beim
 Nachweis je Objekt, dort ist jedes Objekt selbst Gegenstand des Dokuments.
+
+**Auf Wunsch auch für die verwendeten Objekte** (`P_USEALL`). Bei einem IDoc-Basistyp kehrt sich
+die Abwägung um: den Basistyp typisiert niemand, seine Segmente werden dauernd gelesen — die
+Frage gilt gerade der Nachbarschaft. Mit dem Kennzeichen wird der Nachweis zu jedem Objekt
+gezogen, das ins Dokument kommt. Vorbelegt ist es aus, damit sich für bestehende Varianten
+nichts ändert; `P_MAXUSE` gilt weiter je Objekt.
+
+**Drei Schalter, zwei Richtungen.** `P_RDEP` folgt dem, was ein Objekt verwendet, und dem, was
+das wiederum verwendet. `P_UDEP` geht in die Gegenrichtung und dokumentiert die gefundenen
+Verwender selbst als Kapitel. `P_USEALL` ist keine Tiefe, sondern entscheidet, zu welchen
+Objekten der Nachweis überhaupt gezogen wird.
 
 Je Treffer steht:
 
@@ -598,6 +691,13 @@ Je Treffer steht:
   `SAPL<gruppe>` nur die Includeliste enthält.
 - die **Fundstellen** mit Zeilennummer und Anweisung, wie SE11 sie neben seiner Trefferliste
   zeigt. Mit `P_FSRC` stattdessen der komplette Quelltext, die Trefferzeilen darin fett.
+- bei einer Tabelle oder Struktur die **angefassten Felder**. `WBCROSSGT` führt eine
+  Feldverwendung unter `<Struktur>\TY:<Feld>`; die Suche nach dem bloßen Strukturnamen findet
+  davon keine einzige. Gesucht wird mit `LIKE … ESCAPE '#'` — der Unterstrich im Strukturnamen
+  wäre sonst ein Platzhalter. Die Treffer werden in die vorhandene Liste eingeschmolzen, in
+  einem Durchlauf über die sortierte Liste: je Fundstelle eine Zeile, die Felder dahinter
+  (an `E1MAKTM` etwa „Felder MAKTX, SPRAS"). Das ist die Liste, die SE11 unter
+  *Verwendungsnachweis Strukturfeld* zeigt.
 
 Ein Include kann zu **mehreren** Rahmenprogrammen gehören. Nur ein eindeutiges Rahmenprogramm
 wird genannt; sonst steht das Include für sich. Eine Vermutung als Tatsache darzustellen wäre
@@ -857,6 +957,19 @@ Parser dreht sie beim Zuweisen wieder zurück. Ein Zeichen, für das es keine Ma
 dazu, dass das **Feld weggelassen** wird — lieber ein fehlendes Feld als ein unlesbares
 Dokument.
 
+**Textelemente und Objektdokumentation in allen Sprachen.** Wie Nachrichten (siehe 5.6) sind sie
+Definitionsdaten, keine Beschreibung. Der Textpool wurde anfangs nur in der Ausgabesprache
+gelesen und beim Import in die Anmeldesprache des Importierenden geschrieben: ein englisch
+gepflegter Report, von einem deutsch angemeldeten Benutzer importiert, hatte danach deutsche
+Selektionstexte mit englischem Inhalt und englische gar keine. Jetzt kommen die Textelemente
+aller Sprachen aus `REPOTEXT` ins Dokument, jede `TPOOL`-Zeile mit dem Attribut `_SPRSL`.
+
+Die Objektdokumentation von Programmen (`RE`) und Datenelementen (`DE`) reist als eigene
+`DOCU`-Zeile je Sprache aus `DOKHL`, mit dem Attribut `LANGU` — unabhängig von `P_DOKU`. Das
+Kapitel zeigt die Dokumentation dem Leser nur mit angehaktem Kennzeichen und nur in einer
+Sprache; die Definitionsdaten tragen sie immer. Inhalt ist das ITF aus `DOCU_GET`, je Zeile
+Format und Text durch einen Tabulator getrennt.
+
 Geschrieben wird das Ganze nur mit `P_DEF` (Vorbelegung an).
 
 ### 5.6 Reimport
@@ -872,7 +985,7 @@ Applikationsserver —, über denselben Parser ins Modell, dann die Objekte anle
 | Sekundärindex | `DDIF_INDX_PUT` + `DDIF_INDX_ACTIVATE` | umgesetzt |
 | View | `DDIF_VIEW_PUT` + `DDIF_VIEW_ACTIVATE` | umgesetzt |
 | CDS-Quelle | `IF_DD_DDL_HANDLER` (`save`, `write_tadir`, `activate`) | umgesetzt |
-| Report, Include | `INSERT REPORT … DIRECTORY ENTRY`, `INSERT TEXTPOOL` | umgesetzt |
+| Report, Include | `INSERT REPORT … DIRECTORY ENTRY`, `INSERT TEXTPOOL` je Sprache | umgesetzt |
 | GUI-Status eines Programms | `RS_CUA_INTERNAL_FETCH` / `_WRITE` | umgesetzt |
 | Nachrichtenklasse | `T100A` / `T100` direkt, Katalogeintrag über `TR_TADIR_INTERFACE` | umgesetzt |
 | Verhaltensdefinition, Service-Definition, Metadata Extension | `CL_WB_OBJECT_OPERATOR_FACTORY` + `IF_WB_OBJECT_DATA_MODEL` | umgesetzt |
@@ -886,7 +999,7 @@ Applikationsserver —, über denselben Parser ins Modell, dann die Objekte anle
 | Pflegeeintrag (TVDIR, TVIMF, TDDAT) | direkt geschrieben, siehe unten | umgesetzt |
 | Transaktion | `RPY_TRANSACTION_READ` / `_INSERT` | umgesetzt |
 | View-Cluster | `VIEWCLUSTER_GET_DEFINITION` / `_SAVE_DEFINITION` | umgesetzt |
-| Objektdokumentation | `DOCU_UPDATE` | umgesetzt für Report und Datenelement |
+| Objektdokumentation | `DOCU_UPDATE` je Sprache | umgesetzt für Report und Datenelement |
 
 **Views** laufen wie Tabellen: `DDIF_VIEW_GET` liefert `DD25V`, `DD09V`, `DD26V`, `DD27P`,
 `DD28J`, `DD28V`, `DD35V` und `DD36M`, `DDIF_VIEW_PUT` nimmt dieselben Strukturen wieder an.
@@ -1084,6 +1197,19 @@ Ein **bestehendes Segment wird nicht angefasst**, auch nicht mit „Bestehende �
 `SEGMENT_MODIFY` hängt eine neue Segmentdefinition an, und welche Version gilt, ist eine
 Entscheidung des Entwicklers, nicht eines Importlaufs.
 
+`SEGMENT_CREATE` hat `DEVCLASS` und `ORDER` als **`CHANGING`**-Parameter, nicht als `EXPORTING` —
+der Baustein gibt beide auch wieder heraus. Im falschen Block übergeben endet der Aufruf in
+`CALL_FUNCTION_PARM_UNKNOWN`. Dass das lange nicht auffiel, liegt an der Sprache: `CALL FUNCTION`
+mit einem Literal wird zur **Laufzeit** aufgelöst, der Report aktiviert also fehlerfrei mit
+einem Aufruf, der nie laufen kann. Nach dem Fund wurden alle 13 schreibenden Bausteine des
+Importers gegen `FUPARAREF` abgeglichen — 48 Parameter, keine weitere Abweichung.
+
+**Damit ein Basistyp im Zielsystem entsteht**, muss das Dokument alles tragen, worauf er steht:
+die Segmente, deren Datenelemente und die Domänen dahinter, soweit es eigene sind. Das heißt
+Export mit Definitionsdaten und **Verweistiefe 3** (siehe 4.5). Mit Verweistiefe 2 fehlen die
+Domänen; das eigene Datenelement aktiviert nicht, das Segment scheitert daran und der Basistyp
+am Segment.
+
 **IDoc-Basistypen** haben mit `IDOCTYPE_READ` / `IDOCTYPE_CREATE` / `IDOCTYPE_UPDATE` ein
 sauberes Tripel. Kopfdaten sind `EDI_IAPI05`, die Segmenthierarchie — der Baum, den WE30 zeigt —
 kommt als `EDI_IAPI02`-Zeilen mit Vatersegment, Ebene, Muss-Kennzeichen und Wiederholbereich.
@@ -1132,6 +1258,18 @@ sauber, 4 heißt „aktiviert mit Warnung", ab 8 hat es nicht geklappt. Nur ab 8
 inaktiv. Die 4 als Fehler zu behandeln hieße, den Lauf an einer Tabelle abzubrechen, die
 einwandfrei benutzbar ist — und die Folgeschritte, etwa die Indizes, auszulassen.
 
+Ab 8 nennt `act_reason( )` den wahrscheinlichen Grund, statt nur den Code zu melden: das Objekt,
+auf dem das gescheiterte steht und das es nicht im **aktiven** Stand gibt — die Domäne unter
+einem Datenelement, die Datenelemente unter Tabelle und View, höchstens drei. Ein inaktiv
+angelegter Vorgänger trägt die Aktivierung nicht, deshalb wird gezielt nach `AS4LOCAL = 'A'`
+gefragt. Ohne diese Angabe standen vier Fehlerzeilen im Protokoll — Datenelemente, Segment,
+Basistyp — und die Ursache in keiner davon:
+
+```
+DTEL ZBLE_BALACTION   angelegt, inaktiv
+     DDIF_DTEL_ACTIVATE rc 8 fehlt oder inaktiv: Domaene ZBLE_BALACTION_D
+```
+
 **CDS-Quellen** haben keinen `DDIF_*`-Baustein. Der einzige Weg führt über
 `CL_DD_DDL_HANDLER_FACTORY=>CREATE( )` und läuft in drei Schritten: Quelle sichern, Objekt in
 den Katalog hängen, aktivieren. Beim Sichern ist `PUT_STATE = 'N'` zu setzen — die neue, noch
@@ -1172,6 +1310,31 @@ würde fremde halbfertige Stände scharf schalten.
 Der Objektkatalogeintrag entsteht über `TR_TADIR_INTERFACE`; bei einem lokalen Paket (`$*`)
 ohne Auftrag, sonst mit dem angegebenen.
 
+**Textelemente und Dokumentation** werden je Sprache geschrieben: ein `INSERT TEXTPOOL …
+LANGUAGE` je Sprache, ein `DOCU_UPDATE` je `DOCU`-Zeile. Das Protokoll nennt beides mit Sprache
+und Anzahl — `TEXT … Textelemente gesetzt D:5 E:8`, `DOKU … Dokumentation gesetzt Sprachen D`.
+Ein Dokument aus einer älteren Fassung trägt weder `_SPRSL` noch `DOCU`-Zeilen; dann bleibt es
+beim bisherigen Verhalten — Textpool in die Anmeldesprache, Dokumentationstext des Kapitels in
+dessen Sprache. Nachgemessen mit einem Kundenreport als umbenannte Kopie in `$TMP`:
+`REPOTEXT` D und E aktiv, `DOKHL` D aktiv.
+
+**Auftrag und Aufgabe.** Ein Objekt landet nicht im Auftrag, sondern in einer Aufgabe darunter,
+und eine freigegebene nimmt nichts mehr auf. Fehlt eine offene Aufgabe für den Anmeldebenutzer,
+fragt das Korrektursystem im Dialog nach. Ohne Dialog lehnt es ab — bei
+`SEO_*_CREATE_COMPLETE` mit `NO_ACCESS` (5), was nach Berechtigung aussieht. Die eigentliche
+Meldung lautet *No matching task exists under request … for user …*.
+
+`FORM ensure_task` prüft deshalb vor dem Lauf, ob unter `P_ITR` eine Aufgabe des Benutzers im
+Status `D` oder `L` steht, und legt sie sonst über `TR40_TASK_ADD` an. Der Baustein ist
+dialogfrei. Angelegt wird nur unter dem Auftrag vom Bild und nie im Testlauf. Wer `P_ITASK`
+abwählt, bekommt vor dem Lauf eine Warnung statt eines Abbruchs mittendrin; wer gleich eine
+Aufgabe einträgt, wird erkannt und in Ruhe gelassen.
+
+**`COMMIT WORK AND WAIT`.** Der Korrektursystem-Teil läuft über die Verbuchung; Auftragseintrag
+und Aufgabe entstehen erst mit dem Commit. Ohne ihn meldete der Lauf eine angelegte Aufgabe, und
+im Transport Organizer stand keine. Committet wird am Ende des Laufs, vor der Prüfung nach dem
+Lauf, und nur außerhalb des Testlaufs.
+
 **Die Reihenfolge ist festgelegt** — Domänen, dann Datenelemente, dann Tabellen, dann
 Programme. Eine Tabelle, deren Datenelemente noch nicht existieren, lässt sich nicht
 aktivieren; die Arbeit vorher zu sortieren ist billiger, als sie zu wiederholen.
@@ -1185,6 +1348,21 @@ aktivieren; die Arbeit vorher zu sortieren ist billiger, als sie zu wiederholen.
 
 Das Protokoll nennt je Objekt Typ, Name, was geschehen ist (angelegt, geändert, übersprungen,
 Fehler, nicht möglich) und den Grund.
+
+Zu einem Fehler gehören **der echte Rückgabecode und die SAP-Meldung**. Beides war nicht
+selbstverständlich:
+
+- ABAP wertet die Parameter eines Methodenaufrufs in der Reihenfolge der **Schnittstelle** aus,
+  nicht der des Quelltexts. In `log( )` steht `iv_action` vor `iv_text`; `lcl_t=>ui( )` läuft
+  also zuerst und setzt `sy-subrc` zurück, bevor das String-Template ihn liest. Gemeldet wurde
+  durchgehend `subrc 0` — in einem Zweig, den man nur mit einem Wert ungleich 0 erreicht. Auf
+  S4H nachgestellt: 4 vor dem Aufruf, 0 im Text. Der Code wird jetzt unmittelbar nach dem
+  Aufruf in eine Variable gemerkt, an 19 Stellen. Die Reihenfolge im Aufruf zu tauschen hilft
+  nicht.
+- Die gerufenen Bausteine setzen vor ihrem `RAISE` eine Meldung ab (`MESSAGE … RAISING`). Sie
+  steht in `SY-MSGID`, `SY-MSGNO` und `SY-MSGV1..4`, wird aus demselben Grund sofort gelesen
+  (`last_message( )`) und an die Fehlerzeile gehängt. Eine `5` sagt nicht, ob Berechtigung,
+  Sperre oder Korrektursystem; die Meldung schon.
 
 **Prüfung nach dem Lauf.** Angelegt heißt nicht brauchbar. Eine Struktur, der ein Datenelement
 fehlt, wird geschrieben und aktiviert dann nicht; ein Programm, das früh geschrieben wurde, kann
@@ -1331,6 +1509,10 @@ Zwei Stellen kosten spürbar und sind entsprechend gedeckelt:
 
 Namensauflösungen gegen `TADIR` laufen gebündelt, nicht mit einem `SELECT SINGLE` je Verweis.
 
+Hinzugekommen sind zwei Zugriffe je Objekt: die Feldverwendungen sind ein zweiter `LIKE`-Scan
+über `WBCROSSGT` je Tabelle oder Struktur, gedeckelt durch `P_MAXUSE`; und je Klasse wird der
+`CCIMP`-Include gelesen, um die lokalen Klassen zu finden.
+
 ---
 
 ## 8. Umsetzungsstand
@@ -1363,6 +1545,12 @@ Namensauflösungen gegen `TADIR` laufen gebündelt, nicht mit einem `SELECT SING
 | 7k | Basistyp zieht seine Segmenttypen nach | erledigt |
 | 7l | Paket beim Import umlenkbar (`P_IKEEP`, Regeln) | erledigt |
 | 7m | `ZDOCUMIZER_ATC`: Prüfkonfiguration dokumentieren | erledigt |
+| 7n | Importprotokoll: echter Rückgabecode, SAP-Meldung, Grund der gescheiterten Aktivierung | erledigt |
+| 7o | Import: Aufgabe unter dem Auftrag anlegen, `COMMIT WORK AND WAIT` | erledigt |
+| 7p | IDoc-Basistyp: WE60, WE82, WE57; Datenelemente der Segmente aus `EDSAPPL` | erledigt |
+| 7q | Verwendungsnachweis: Feldverwendungen, `P_USEALL` | erledigt |
+| 7r | CDS-/RAP-Schicht: Kurztexte, Quelltext, Feldlisten; Klassenbeziehungen, lokale Klassen | erledigt |
+| 7s | Textelemente und Objektdokumentation je Sprache übertragen; gelöschte Katalogeinträge übergehen | erledigt |
 | 8 | Markdown-Renderer | offen |
 | 9 | Anzeigen ohne Anlegen | offen |
 | 10 | BAL-Protokoll, `S_DEVELOP` | offen |
@@ -1394,3 +1582,12 @@ Namensauflösungen gegen `TADIR` laufen gebündelt, nicht mit einem `SELECT SING
     Erweiterungen brauchen ein eigenes Paar Bausteine und einen eigenen Startpunkt-Typ.
 11. **Fehlende Pakete beim Import anlegen** — eine Paketregel auf ein Paket, das es im
     Zielsystem nicht gibt, greift nicht. Das Anlegen wäre ein eigenes Kennzeichen wert.
+12. **Objektdokumentation weiterer Typen übertragen** — gelesen wird sie für Report,
+    Transaktion, Datenelement, Baustein und Nachrichtenklasse, übertragen nur für Report und
+    Datenelement.
+13. **`STOB` als eigenes Kapitel** — im Paketmodus steht das Strukturobjekt einer CDS-View als
+    eigenes Kapitel neben seiner DDL-Quelle, mit demselben Text. Es entsteht beim Aktivieren von
+    selbst und bräuchte keins.
+14. **Lokale Klassen zeilenweise erkannt** — eine über zwei Zeilen umbrochene
+    `CLASS … DEFINITION` wird nicht gefunden, und bei `METHODS: a, b.` nur die erste Methode der
+    Zeile.

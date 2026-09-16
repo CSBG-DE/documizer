@@ -1000,6 +1000,12 @@ Applikationsserver —, über denselben Parser ins Modell, dann die Objekte anle
 | Transaktion | `RPY_TRANSACTION_READ` / `_INSERT` | umgesetzt |
 | View-Cluster | `VIEWCLUSTER_GET_DEFINITION` / `_SAVE_DEFINITION` | umgesetzt |
 | Objektdokumentation | `DOCU_UPDATE` je Sprache | umgesetzt für Report und Datenelement |
+| ICF-Knoten, MIME-Objekte, Gateway-Registrierung, Berechtigungsvorschlagswerte | — | **nicht umgesetzt**, siehe 9 |
+
+**Nicht angelegt** werden `SICF`, `SMIM`, `SUSH` sowie `IWSV`/`IWMO`/`IWVB`. Sie erscheinen im
+Dokument als Objekt mit Namen — ein Paketlauf einer Fiori-Anwendung führt sie auf —, aber der
+Importer kennt für sie keinen Weg. Das Protokoll sagt es je Objekt, damit niemand sie im
+Zielsystem sucht.
 
 **Views** laufen wie Tabellen: `DDIF_VIEW_GET` liefert `DD25V`, `DD09V`, `DD26V`, `DD27P`,
 `DD28J`, `DD28V`, `DD35V` und `DD36M`, `DDIF_VIEW_PUT` nimmt dieselben Strukturen wieder an.
@@ -1591,3 +1597,11 @@ Hinzugekommen sind zwei Zugriffe je Objekt: die Feldverwendungen sind ein zweite
 14. **Lokale Klassen zeilenweise erkannt** — eine über zwei Zeilen umbrochene
     `CLASS … DEFINITION` wird nicht gefunden, und bei `METHODS: a, b.` nur die erste Methode der
     Zeile.
+15. **Die Umgebung einer Fiori-Anwendung** — die UI5-Anwendung selbst reist mit, das Drumherum
+    nicht: der **ICF-Knoten** (`SICF`), die **MIME-Objekte** (`SMIM`) und die
+    **Gateway-Registrierung** des OData-Service (`IWSV`, `IWMO`, `IWVB`). Sie stehen mit Namen im
+    Dokument, angelegt werden sie nicht; im Zielsystem bleiben SICF und
+    `/IWFND/MAINT_SERVICE` Handarbeit. Aufgefallen an einem Paketlauf mit vier `SICF`-Knoten,
+    zwei `SMIM`-Objekten und drei Gateway-Einträgen.
+16. **Berechtigungsvorschlagswerte (`SUSH`)** — stehen als Objekt im Dokument, aber ohne Inhalt
+    und ohne Weg ins Zielsystem. Gepflegt werden sie in SU22/SU24.

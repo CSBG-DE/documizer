@@ -358,6 +358,10 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'an, das lesbare Dokument bleibt lesbar. Base64 blaeht um rund' ).
     a( iv_f = '=' iv_t = 'ein Drittel auf; bei grossen Anwendungen wird das Dokument' ).
     a( iv_f = '=' iv_t = 'entsprechend gross. Startpunkt-Typ: U5.' ).
+    a( iv_f = 'B1' iv_t = 'Was um eine UI5-Anwendung herum liegt, reist nicht mit: der' ).
+    a( iv_f = '=' iv_t = 'ICF-Knoten, die MIME-Objekte, die Berechtigungsvorschlagswerte' ).
+    a( iv_f = '=' iv_t = 'und die Gateway-Registrierung des OData-Service. Sie stehen im' ).
+    a( iv_f = '=' iv_t = 'Dokument, angelegt werden sie nicht - das bleibt Handarbeit.' ).
     a( iv_f = 'B1' iv_t = 'IDoc-Segmenttypen und -Basistypen reisen mit. Ein Segmenttyp' ).
     a( iv_f = '=' iv_t = 'traegt im Katalog TABL, weil SAP dazu eine gleichnamige' ).
     a( iv_f = '=' iv_t = 'Struktur erzeugt; als Struktur importiert entstuende etwas mit' ).

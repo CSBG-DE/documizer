@@ -1146,6 +1146,9 @@
               <tr><td>Pflegeeintrag (SM30)</td><td>ja — <code>TVDIR</code>, <code>TVIMF</code>, <code>TDDAT</code>, lokal geschrieben</td></tr>
               <tr><td>Transaktion</td><td>ja, auch als Parametertransaktion mit Vorbelegung</td></tr>
               <tr><td>View-Cluster</td><td>ja, aber nur wenn jeder Knoten vorhanden ist</td></tr>
+              <tr><td>ICF-Knoten (<code>SICF</code>), MIME-Objekte (<code>SMIM</code>)</td><td><b>nein</b> — stehen im Dokument, bleiben im Zielsystem Handarbeit</td></tr>
+              <tr><td>Gateway-Registrierung (<code>IWSV</code>, <code>IWMO</code>, <code>IWVB</code>)</td><td><b>nein</b> — der Service wird in <code>/IWFND/MAINT_SERVICE</code> registriert</td></tr>
+              <tr><td>Berechtigungsvorschlagswerte (<code>SUSH</code>)</td><td><b>nein</b> — gepflegt in SU22/SU24</td></tr>
             </tbody>
           </table>
         </div>
@@ -1760,6 +1763,8 @@ DOKU ZZ_TPOOL_TEST  Dokumentation gesetzt  Sprachen D</code></pre>
               <tr><td>Anzeigen ohne Anlegen</td><td>offen; eine XML-Datei nur einlesen und nach HTML rendern, ohne Systemzugriff — Parser und Renderer sind da, es fehlt der Schalter</td></tr>
               <tr><td>Bausteine im Verwendungsnachweis</td><td>für die Richtung „welcher Baustein wird von wem gerufen" gibt es keinen Index; ein Scan über alle Programme wäre zu teuer</td></tr>
               <tr><td>Mandantenabhängiges Customizing</td><td>der Export bezieht sich auf den Anmeldemandanten; mandantenübergreifendes Customizing ist nicht gesondert gekennzeichnet</td></tr>
+              <tr><td>Die Umgebung einer Fiori-Anwendung</td><td>offen; die UI5-Anwendung reist mit, ICF-Knoten, MIME-Objekte und die Gateway-Registrierung des OData-Service nicht. Sie stehen mit Namen im Dokument — gemessen an einem Paketlauf mit vier <code>SICF</code>-Knoten, zwei <code>SMIM</code>-Objekten und drei Gateway-Einträgen</td></tr>
+              <tr><td>Berechtigungsvorschlagswerte (<code>SUSH</code>)</td><td>offen; stehen als Objekt im Dokument, ohne Inhalt und ohne Weg ins Zielsystem</td></tr>
               <tr><td>Objektdokumentation weiterer Typen</td><td>offen; gelesen wird sie für Report, Transaktion, Datenelement, Baustein und Nachrichtenklasse, übertragen nur für Report und Datenelement</td></tr>
               <tr><td><code>STOB</code> als eigenes Kapitel</td><td>offen; im Paketmodus steht das Strukturobjekt einer CDS-View als eigenes Kapitel neben seiner DDL-Quelle, mit demselben Text — es entsteht beim Aktivieren von selbst</td></tr>
               <tr><td>Lokale Klassen zeilenweise erkannt</td><td>offen; eine über zwei Zeilen umbrochene Definition wird nicht gefunden, und bei <code>METHODS: a, b.</code> nur die erste Methode der Zeile</td></tr>

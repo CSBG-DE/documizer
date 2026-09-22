@@ -1250,6 +1250,7 @@ CLASS lcl_cust DEFINITION.
              position  TYPE dd03l-position,
              inttype   TYPE dd03l-inttype,
              intlen    TYPE dd03l-intlen,
+             leng      TYPE dd03l-leng,
            END OF ty_fld.
     TYPES ty_flds TYPE STANDARD TABLE OF ty_fld WITH EMPTY KEY.
 
@@ -1334,7 +1335,7 @@ CLASS lcl_cust IMPLEMENTATION.
   METHOD read_ddic.
     DATA lv_tab TYPE dd03l-tabname.
     lv_tab = iv_tab.
-    SELECT fieldname, rollname, keyflag, position, inttype, intlen
+    SELECT fieldname, rollname, keyflag, position, inttype, intlen, leng
       FROM dd03l
       WHERE tabname = @lv_tab AND as4local = 'A' AND fieldname NOT LIKE '.%'
       ORDER BY position
@@ -1362,13 +1363,32 @@ CLASS lcl_cust IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    " Determine the position of the first business key field in TABKEY
+*   Position des ersten fachlichen Schluesselfelds in TABKEY - dasselbe
+*   Feld, das fill_data filtert, also ohne Mandant und Sprache.
+*
+*   TABKEY ist zeichenartig; Versatz und Laenge zaehlen in Zeichen. Das
+*   liefert DD03L-LENG. INTLEN sind Bytes und in einem Unicode-System
+*   bei einem CHAR-Feld doppelt so viel: aus einem CHAR-1-Feld wurden so
+*   zwei Zeichen ausgeschnitten, das Feld und der Anfang des naechsten.
+*   Auf S4H fiel das nicht auf; ein aelteres Release bricht beim
+*   Vergleich mit SAPSQL_DATA_LOSS ab.
+*
+*   Steht davor ein Schluesselfeld, das nicht zeichenartig ist, laesst
+*   sich die Position nicht bestimmen - dann ohne Transportschluessel.
     LOOP AT it_flds INTO DATA(ls_f) WHERE keyflag = 'X'.
-      IF ls_f-fieldname = 'MANDT' OR ls_f-fieldname = 'MANDANT'.
-        lv_off = ls_f-intlen.
+      IF ls_f-inttype <> 'C' AND ls_f-inttype <> 'N'
+         AND ls_f-inttype <> 'D' AND ls_f-inttype <> 'T'.
+        CLEAR lv_len.
+        EXIT.
+      ENDIF.
+      IF ls_f-fieldname = 'MANDT' OR ls_f-fieldname = 'MANDANT'
+        OR ls_f-fieldname = 'SPRAS' OR ls_f-fieldname = 'LANGU'.
+        lv_off = lv_off + ls_f-leng.
         CONTINUE.
       ENDIF.
-      lv_len = ls_f-intlen.
+      IF ls_f-inttype = 'C' OR ls_f-inttype = 'N'.
+        lv_len = ls_f-leng.
+      ENDIF.
       EXIT.
     ENDLOOP.
 
@@ -1410,6 +1430,7 @@ CLASS lcl_cust IMPLEMENTATION.
     DATA lv_cnt     TYPE i.
     DATA lv_max     TYPE i.
     DATA lv_kf      TYPE string.
+    DATA lv_kflen   TYPE i.
     DATA lv_in      TYPE string.
     DATA lv_tabname TYPE tabname.
     FIELD-SYMBOLS <lt_data> TYPE STANDARD TABLE.
@@ -1436,7 +1457,8 @@ CLASS lcl_cust IMPLEMENTATION.
           CONTINUE.
         ENDIF.
         IF ls_k-inttype = 'C' OR ls_k-inttype = 'N'.
-          lv_kf = ls_k-fieldname.
+          lv_kf    = ls_k-fieldname.
+          lv_kflen = ls_k-leng.
         ENDIF.
         EXIT.
       ENDLOOP.
@@ -1453,6 +1475,12 @@ CLASS lcl_cust IMPLEMENTATION.
           LOOP AT it_keys INTO DATA(lv_key).
             IF sy-tabix > 300.
               EXIT.
+            ENDIF.
+*           Ein Wert, der laenger ist als das Feld, kann nicht passen - und
+*           bringt aeltere Releases zum Abbruch (SAPSQL_DATA_LOSS), statt
+*           nur nichts zu finden.
+            IF strlen( lv_key ) > lv_kflen.
+              CONTINUE.
             ENDIF.
             REPLACE ALL OCCURRENCES OF |'| IN lv_key WITH |''|.
             IF lv_in IS INITIAL.

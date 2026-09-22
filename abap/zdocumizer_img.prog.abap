@@ -2172,39 +2172,39 @@ CLASS lcl_collector_img IMPLEMENTATION.
         SPLIT lv_up AT '"' INTO lv_up DATA(lv_rest).
       ENDIF.
 
-      FIND FIRST OCCURRENCE OF PCRE `CALL\s+FUNCTION\s+'([A-Z0-9_/][^']*)'`
-        IN lv_up SUBMATCHES lv_hit.
+      FIND FIRST OCCURRENCE OF REGEX `CALL\s+FUNCTION\s+'([A-Z0-9_/][^']*)'`
+        IN lv_up SUBMATCHES lv_hit ##REGEX_POSIX.
       IF sy-subrc = 0.
         APPEND lv_hit TO ct_fun.
       ENDIF.
 
-      FIND ALL OCCURRENCES OF PCRE
+      FIND ALL OCCURRENCES OF REGEX
         `\b(?:FROM|JOIN|UPDATE)\s+([A-Z][A-Z0-9_/]{2,29})\b`
-        IN lv_up RESULTS DATA(lt_r1).
+        IN lv_up RESULTS DATA(lt_r1) ##REGEX_POSIX.
       LOOP AT lt_r1 INTO DATA(ls_r1).
         DATA(ls_s1) = ls_r1-submatches[ 1 ].
         APPEND lv_up+ls_s1-offset(ls_s1-length) TO ct_tab.
       ENDLOOP.
 
-      FIND ALL OCCURRENCES OF PCRE
+      FIND ALL OCCURRENCES OF REGEX
         `^(?:INSERT|MODIFY|DELETE)\s+([A-Z][A-Z0-9_/]{2,29})\s+FROM\b`
-        IN lv_up RESULTS DATA(lt_r2).
+        IN lv_up RESULTS DATA(lt_r2) ##REGEX_POSIX.
       LOOP AT lt_r2 INTO DATA(ls_r2).
         DATA(ls_s2) = ls_r2-submatches[ 1 ].
         APPEND lv_up+ls_s2-offset(ls_s2-length) TO ct_tab.
       ENDLOOP.
 
-      FIND ALL OCCURRENCES OF PCRE
+      FIND ALL OCCURRENCES OF REGEX
         `\b([A-Z/][A-Z0-9_/]{2,29})\s*=>`
-        IN lv_up RESULTS DATA(lt_r3).
+        IN lv_up RESULTS DATA(lt_r3) ##REGEX_POSIX.
       LOOP AT lt_r3 INTO DATA(ls_r3).
         DATA(ls_s3) = ls_r3-submatches[ 1 ].
         APPEND lv_up+ls_s3-offset(ls_s3-length) TO ct_cls.
       ENDLOOP.
 
-      FIND ALL OCCURRENCES OF PCRE
+      FIND ALL OCCURRENCES OF REGEX
         `\b(?:REF\s+TO|NEW)\s+([A-Z/][A-Z0-9_/]{2,29})\b`
-        IN lv_up RESULTS DATA(lt_r4).
+        IN lv_up RESULTS DATA(lt_r4) ##REGEX_POSIX.
       LOOP AT lt_r4 INTO DATA(ls_r4).
         DATA(ls_s4) = ls_r4-submatches[ 1 ].
         APPEND lv_up+ls_s4-offset(ls_s4-length) TO ct_cls.
@@ -2669,7 +2669,7 @@ CLASS lcl_renderer_html IMPLEMENTATION.
       " operator ignores trailing blanks in the search operand, which is
       " why "line CS space" is always true.
       lv_len = strlen( lv_line ).
-      FIND PCRE '^&[A-Z0-9_]+&$' IN lv_line.
+      FIND REGEX '^&[A-Z0-9_]+&$' IN lv_line ##REGEX_POSIX.
       IF sy-subrc = 0.
         rv_html = |{ rv_html }<p class="sec">{ esc(
                     itf_section( substring( val = lv_line off = 1 len = lv_len - 2 ) ) ) }</p>|.
@@ -2683,9 +2683,9 @@ CLASS lcl_renderer_html IMPLEMENTATION.
       " two- to three-character markers are handled generically; cross
       " references <DS:...> are added. All of them are rendered in bold,
       " the closing marker </> applies to every one of them.
-      REPLACE ALL OCCURRENCES OF PCRE '&lt;DS:[^&]+&gt;' IN lv_line WITH '<b>'.
+      REPLACE ALL OCCURRENCES OF REGEX '&lt;DS:[^&]+&gt;' IN lv_line WITH '<b>' ##REGEX_POSIX.
       REPLACE ALL OCCURRENCES OF '&lt;/&gt;' IN lv_line WITH '</b>'.
-      REPLACE ALL OCCURRENCES OF PCRE '&lt;[A-Z0-9]{2,3}&gt;' IN lv_line WITH '<b>'.
+      REPLACE ALL OCCURRENCES OF REGEX '&lt;[A-Z0-9]{2,3}&gt;' IN lv_line WITH '<b>' ##REGEX_POSIX.
 
       " Balance the markup per line. In ITF markers also run across line
       " boundaries; without balancing an open marker would style the rest
@@ -3119,37 +3119,37 @@ CLASS lcl_bcset IMPLEMENTATION.
 
       WHEN 'TABL'.
         lv_tab = iv_name.
-        SELECT SINGLE @abap_true FROM dd02l
+        SELECT SINGLE tabname FROM dd02l
           WHERE tabname = @lv_tab AND as4local = 'A'
           INTO @DATA(lv_e1).
-        IF lv_e1 = abap_true.
+        IF sy-subrc = 0.
           RETURN.
         ENDIF.
 
       WHEN 'VIEW'.
         lv_view = iv_name.
-        SELECT SINGLE @abap_true FROM dd25l
+        SELECT SINGLE viewname FROM dd25l
           WHERE viewname = @lv_view AND as4local = 'A'
           INTO @DATA(lv_e2).
-        IF lv_e2 = abap_true.
+        IF sy-subrc = 0.
           RETURN.
         ENDIF.
 
       WHEN 'VCLS'.
         lv_vcl = iv_name.
-        SELECT SINGLE @abap_true FROM vcldir
+        SELECT SINGLE vclname FROM vcldir
           WHERE vclname = @lv_vcl
           INTO @DATA(lv_e3).
-        IF lv_e3 = abap_true.
+        IF sy-subrc = 0.
           RETURN.
         ENDIF.
 
       WHEN 'TRAN'.
         lv_tcod = iv_name.
-        SELECT SINGLE @abap_true FROM tstc
+        SELECT SINGLE tcode FROM tstc
           WHERE tcode = @lv_tcod
           INTO @DATA(lv_e4).
-        IF lv_e4 = abap_true.
+        IF sy-subrc = 0.
           RETURN.
         ENDIF.
 

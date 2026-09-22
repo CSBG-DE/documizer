@@ -248,6 +248,13 @@ CONSTANTS gc_version TYPE string VALUE '1.1'.
 * dorthin stehen hier, weil sie der Sammler und der Importer brauchen -
 * und der Importer steht weiter oben.
 *----------------------------------------------------------------------*
+*
+* Alles hier wird dynamisch gerufen. Der Objektoperator, sein
+* Datenmodell und die Datenklassen der Fiori-Schichten gibt es erst ab
+* SAP_BASIS 7.5x; ein statischer Verweis darauf liesse den Report auf
+* einem R/3-System mit 7.40 gar nicht erst uebersetzen. Fehlt eine Klasse
+* zur Laufzeit, liefern die Methoden nichts - der Aufrufer sieht dann
+* "nicht vorhanden" statt eines Abbruchs.
 CLASS lcl_wb DEFINITION.
   PUBLIC SECTION.
     CLASS-METHODS data_class
@@ -259,9 +266,268 @@ CLASS lcl_wb DEFINITION.
     CLASS-METHODS is_source
       IMPORTING iv_type         TYPE clike
       RETURNING VALUE(rv_flag)  TYPE abap_bool.
+    CLASS-METHODS operator
+      IMPORTING iv_type      TYPE trobjtype
+                iv_name      TYPE clike
+                iv_corr      TYPE trkorr OPTIONAL
+      RETURNING VALUE(ro_op) TYPE REF TO object
+      RAISING   cx_static_check.
+    CLASS-METHODS exists
+      IMPORTING iv_type        TYPE trobjtype
+                iv_name        TYPE clike
+      RETURNING VALUE(rv_flag) TYPE abap_bool.
+    CLASS-METHODS read
+      IMPORTING iv_type        TYPE trobjtype
+                iv_name        TYPE clike
+      RETURNING VALUE(ro_data) TYPE REF TO object.
+    CLASS-METHODS description
+      IMPORTING io_data        TYPE REF TO object
+      RETURNING VALUE(rv_text) TYPE string.
+    CLASS-METHODS content
+      IMPORTING io_data       TYPE REF TO object
+      RETURNING VALUE(rv_src) TYPE string.
+    CLASS-METHODS all_data
+      IMPORTING io_data TYPE REF TO object
+      CHANGING  cs_data TYPE any.
+    CLASS-METHODS new_data
+      IMPORTING iv_class       TYPE clike
+                iv_name        TYPE clike
+                iv_desc        TYPE string
+      RETURNING VALUE(ro_data) TYPE REF TO object
+      RAISING   cx_static_check.
+    CLASS-METHODS set_source
+      IMPORTING io_data   TYPE REF TO object
+                iv_source TYPE string
+      RAISING   cx_static_check.
+    CLASS-METHODS set_content
+      IMPORTING io_data    TYPE REF TO object
+                is_content TYPE any
+      RAISING   cx_static_check.
+    CLASS-METHODS save
+      IMPORTING io_op      TYPE REF TO object
+                io_data    TYPE REF TO object
+                iv_update  TYPE abap_bool
+                iv_package TYPE devclass
+      RAISING   cx_static_check.
+    CLASS-METHODS activate
+      IMPORTING io_op TYPE REF TO object
+      RAISING   cx_static_check.
+    CLASS-METHODS srvb_data
+      IMPORTING iv_type        TYPE string
+      RETURNING VALUE(rr_data) TYPE REF TO data.
+    CLASS-METHODS comp
+      IMPORTING is_data         TYPE any
+                iv_path         TYPE string
+      RETURNING VALUE(rv_value) TYPE string.
+    CLASS-METHODS set_comp
+      IMPORTING iv_path  TYPE string
+                iv_value TYPE any
+      CHANGING  cs_data  TYPE any.
+  PRIVATE SECTION.
+    CLASS-METHODS selection
+      IMPORTING iv_const   TYPE string
+      RETURNING VALUE(rr)  TYPE REF TO data.
 ENDCLASS.
 
 CLASS lcl_wb IMPLEMENTATION.
+
+  METHOD selection.
+*   Die Auswahlkonstanten liegen in einem Interface, das es auf alten
+*   Staenden nicht gibt - also dynamisch gelesen, in ihrem eigenen Typ.
+    FIELD-SYMBOLS <lv_c> TYPE any.
+    FIELD-SYMBOLS <lv_v> TYPE any.
+    DATA lv_name TYPE string.
+    lv_name = |IF_WB_OBJECT_DATA_SELECTION_CO=>{ iv_const }|.
+    ASSIGN (lv_name) TO <lv_c>.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+    CREATE DATA rr LIKE <lv_c>.
+    ASSIGN rr->* TO <lv_v>.
+    <lv_v> = <lv_c>.
+  ENDMETHOD.
+
+  METHOD operator.
+    DATA lv_key TYPE seu_objkey.
+    DATA(ls_type) = obj_type( iv_type ).
+    IF ls_type-objtype_tr IS INITIAL.
+      RETURN.
+    ENDIF.
+    lv_key = iv_name.
+    CALL METHOD ('CL_WB_OBJECT_OPERATOR_FACTORY')=>('CREATE_OBJECT_OPERATOR')
+      EXPORTING object_type       = ls_type
+                object_key        = lv_key
+                transport_request = iv_corr
+      RECEIVING result            = ro_op.
+  ENDMETHOD.
+
+  METHOD exists.
+*   Aktiv heisst: der Operator laedt es. Ein Katalogeintrag allein sagt
+*   bei diesen Arten nichts.
+    TRY.
+        DATA(lo_op) = operator( iv_type = iv_type iv_name = iv_name ).
+        IF lo_op IS BOUND.
+          CALL METHOD lo_op->('IF_WB_OBJECT_OPERATOR~CHECK_EXISTENCE')
+            RECEIVING r_result = rv_flag.
+        ENDIF.
+      CATCH cx_root.
+        CLEAR rv_flag.
+    ENDTRY.
+  ENDMETHOD.
+
+  METHOD read.
+*   eo_object_data ist ein Ausgabeparameter mit Interface-Typ. Dort
+*   verlangt der dynamische Aufruf genau diesen Typ - eine REF TO object
+*   lehnt er mit "Falscher Typ fuer Parameter" ab. Deshalb erst in eine
+*   zur Laufzeit typisierte Referenz, dann umkopieren.
+    FIELD-SYMBOLS <lv_sel> TYPE any.
+    FIELD-SYMBOLS <lo_dm>  TYPE any.
+    DATA lr_dm TYPE REF TO data.
+    TRY.
+        DATA(lo_op) = operator( iv_type = iv_type iv_name = iv_name ).
+        DATA(lr_sel) = selection( `C_ALL_DATA` ).
+        IF lo_op IS NOT BOUND OR lr_sel IS NOT BOUND.
+          RETURN.
+        ENDIF.
+        ASSIGN lr_sel->* TO <lv_sel>.
+        CREATE DATA lr_dm TYPE REF TO ('IF_WB_OBJECT_DATA_MODEL').
+        ASSIGN lr_dm->* TO <lo_dm>.
+        CALL METHOD lo_op->('IF_WB_OBJECT_OPERATOR~READ')
+          EXPORTING version        = 'A'
+                    data_selection = <lv_sel>
+          IMPORTING eo_object_data = <lo_dm>.
+        ro_data = <lo_dm>.
+      CATCH cx_root.
+        CLEAR ro_data.
+    ENDTRY.
+  ENDMETHOD.
+
+  METHOD description.
+    TRY.
+        CALL METHOD io_data->('IF_WB_OBJECT_DATA_MODEL~GET_DESCRIPTION')
+          RECEIVING p_description = rv_text.
+      CATCH cx_root.
+        CLEAR rv_text.
+    ENDTRY.
+  ENDMETHOD.
+
+  METHOD content.
+    FIELD-SYMBOLS <lv_sel> TYPE any.
+    TRY.
+        DATA(lr_sel) = selection( `C_DATA_CONTENT` ).
+        IF lr_sel IS NOT BOUND.
+          RETURN.
+        ENDIF.
+        ASSIGN lr_sel->* TO <lv_sel>.
+        CALL METHOD io_data->('IF_WB_OBJECT_DATA_MODEL~GET_SELECTED_DATA')
+          EXPORTING p_data_selection = <lv_sel>
+          IMPORTING p_data           = rv_src.
+      CATCH cx_root.
+        CLEAR rv_src.
+    ENDTRY.
+  ENDMETHOD.
+
+  METHOD all_data.
+    FIELD-SYMBOLS <lv_sel> TYPE any.
+    TRY.
+        DATA(lr_sel) = selection( `C_ALL_DATA` ).
+        IF lr_sel IS NOT BOUND.
+          RETURN.
+        ENDIF.
+        ASSIGN lr_sel->* TO <lv_sel>.
+        CALL METHOD io_data->('IF_WB_OBJECT_DATA_MODEL~GET_SELECTED_DATA')
+          EXPORTING p_data_selection = <lv_sel>
+          IMPORTING p_data           = cs_data.
+      CATCH cx_root.
+        CLEAR cs_data.
+    ENDTRY.
+  ENDMETHOD.
+
+  METHOD new_data.
+    DATA lv_key TYPE seu_objkey.
+    lv_key = iv_name.
+    CREATE OBJECT ro_data TYPE (iv_class).
+    CALL METHOD ro_data->('IF_WB_OBJECT_DATA_MODEL~SET_OBJECT_NAME')
+      EXPORTING p_object_name = lv_key.
+    CALL METHOD ro_data->('IF_WB_OBJECT_DATA_MODEL~SET_DESCRIPTION')
+      EXPORTING p_description = iv_desc.
+  ENDMETHOD.
+
+  METHOD set_source.
+    FIELD-SYMBOLS <lv_sel> TYPE any.
+    DATA(lr_sel) = selection( `C_DATA_CONTENT` ).
+    ASSIGN lr_sel->* TO <lv_sel>.
+    CALL METHOD io_data->('IF_WB_OBJECT_DATA_MODEL~SET_SELECTED_DATA')
+      EXPORTING p_data_selection = <lv_sel>
+                p_data           = iv_source.
+  ENDMETHOD.
+
+  METHOD set_content.
+    CALL METHOD io_data->('IF_WB_OBJECT_DATA_MODEL~SET_CONTENT')
+      EXPORTING p_data = is_content.
+  ENDMETHOD.
+
+  METHOD save.
+*   io_object_data ist als Interface-Referenz typisiert. Eine REF TO
+*   object laesst sich dort auch dynamisch nicht uebergeben, deshalb
+*   eine Referenz, deren Typ erst zur Laufzeit feststeht.
+    DATA lr_dm TYPE REF TO data.
+    FIELD-SYMBOLS <lo_dm> TYPE any.
+    CREATE DATA lr_dm TYPE REF TO ('IF_WB_OBJECT_DATA_MODEL').
+    ASSIGN lr_dm->* TO <lo_dm>.
+    <lo_dm> ?= io_data.
+    IF iv_update = abap_true.
+      CALL METHOD io_op->('IF_WB_OBJECT_OPERATOR~UPDATE')
+        EXPORTING io_object_data = <lo_dm>.
+    ELSE.
+      CALL METHOD io_op->('IF_WB_OBJECT_OPERATOR~CREATE')
+        EXPORTING io_object_data = <lo_dm>
+                  package        = iv_package.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD activate.
+    CALL METHOD io_op->('IF_WB_OBJECT_OPERATOR~ACTIVATE').
+  ENDMETHOD.
+
+  METHOD srvb_data.
+*   Die Typen des Service-Bindings stehen in der Datenklasse. Ueber den
+*   absoluten Typnamen entstehen sie zur Laufzeit.
+    DATA lv_tname TYPE string.
+    lv_tname = |\\CLASS=CL_SRVB_OBJECT_DATA\\TYPE={ iv_type }|.
+    TRY.
+        CREATE DATA rr_data TYPE (lv_tname).
+      CATCH cx_root.
+        CLEAR rr_data.
+    ENDTRY.
+  ENDMETHOD.
+
+  METHOD comp.
+*   Pfad wie CONTENT-BIND_TYPE, Stufe fuer Stufe ueber die Komponenten.
+    FIELD-SYMBOLS <lv_c> TYPE any.
+    ASSIGN is_data TO <lv_c>.
+    SPLIT iv_path AT '-' INTO TABLE DATA(lt_step).
+    LOOP AT lt_step INTO DATA(lv_step).
+      ASSIGN COMPONENT lv_step OF STRUCTURE <lv_c> TO <lv_c>.
+      IF sy-subrc <> 0.
+        RETURN.
+      ENDIF.
+    ENDLOOP.
+    rv_value = <lv_c>.
+  ENDMETHOD.
+
+  METHOD set_comp.
+    FIELD-SYMBOLS <lv_c> TYPE any.
+    ASSIGN cs_data TO <lv_c>.
+    SPLIT iv_path AT '-' INTO TABLE DATA(lt_step).
+    LOOP AT lt_step INTO DATA(lv_step).
+      ASSIGN COMPONENT lv_step OF STRUCTURE <lv_c> TO <lv_c>.
+      IF sy-subrc <> 0.
+        RETURN.
+      ENDIF.
+    ENDLOOP.
+    <lv_c> = iv_value.
+  ENDMETHOD.
 
   METHOD data_class.
 *   Das Datenmodell je Objektart. Nur diese drei sind reine
@@ -275,14 +541,18 @@ CLASS lcl_wb IMPLEMENTATION.
   ENDMETHOD.
 
   METHOD obj_type.
-    cl_wb_object_type=>get_global_from_transport_type(
-      EXPORTING  p_transport_type  = iv_type
-      IMPORTING  p_global_type     = rs_type
-      EXCEPTIONS no_unique_mapping = 1
-                 OTHERS            = 2 ).
-    IF sy-subrc <> 0.
-      CLEAR rs_type.
-    ENDIF.
+    TRY.
+        CALL METHOD ('CL_WB_OBJECT_TYPE')=>('GET_GLOBAL_FROM_TRANSPORT_TYPE')
+          EXPORTING  p_transport_type  = iv_type
+          IMPORTING  p_global_type     = rs_type
+          EXCEPTIONS no_unique_mapping = 1
+                     OTHERS            = 2.
+        IF sy-subrc <> 0.
+          CLEAR rs_type.
+        ENDIF.
+      CATCH cx_root.
+        CLEAR rs_type.
+    ENDTRY.
   ENDMETHOD.
 
   METHOD is_source.
@@ -1389,8 +1659,8 @@ CLASS lcl_importer IMPLEMENTATION.
 *   Entscheidung, die dem Entwickler gehoert. Stattdessen bleibt es beim
 *   Zielpaket vom Bild, und das Protokoll sagt warum.
     IF lv_new NP '$*'.
-      SELECT SINGLE @abap_true FROM tdevc
-        WHERE devclass = @lv_new INTO @DATA(lv_ex).
+      SELECT COUNT(*) FROM tdevc WHERE devclass = @lv_new.
+      DATA(lv_ex) = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
       IF lv_ex <> abap_true.
         DATA(lv_key) = |!{ lv_new }|.
         READ TABLE mt_said TRANSPORTING NO FIELDS WITH KEY table_line = lv_key.
@@ -1463,9 +1733,8 @@ CLASS lcl_importer IMPLEMENTATION.
             INTO @lv_dom.
         ENDIF.
         IF lv_dom IS NOT INITIAL.
-          SELECT SINGLE @abap_true FROM dd01l
-            WHERE domname = @lv_dom AND as4local = 'A'
-            INTO @DATA(lv_dok).
+          SELECT COUNT(*) FROM dd01l WHERE domname = @lv_dom AND as4local = 'A'.
+          DATA(lv_dok) = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
           IF lv_dok <> abap_true.
             APPEND |{ lcl_t=>ui( d = `Domaene` e = `domain` ) } { lv_dom }| TO lt_mis.
           ENDIF.
@@ -1478,9 +1747,8 @@ CLASS lcl_importer IMPLEMENTATION.
           WHERE tabname = @lv_obj AND rollname <> ''
           INTO TABLE @DATA(lt_rl).
         LOOP AT lt_rl INTO DATA(ls_rl).
-          SELECT SINGLE @abap_true FROM dd04l
-            WHERE rollname = @ls_rl-rollname AND as4local = 'A'
-            INTO @DATA(lv_dtok).
+          SELECT COUNT(*) FROM dd04l WHERE rollname = @ls_rl-rollname AND as4local = 'A'.
+          DATA(lv_dtok) = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
           IF lv_dtok <> abap_true.
             APPEND |{ lcl_t=>ui( d = `Datenelement` e = `data element` ) }| &&
                    | { ls_rl-rollname }| TO lt_mis.
@@ -1643,38 +1911,29 @@ CLASS lcl_importer IMPLEMENTATION.
     CASE is_work-kind.
 
       WHEN 'DOMA'.
-        SELECT SINGLE @abap_true FROM dd01l
-          WHERE domname = @lv_obj AND as4local = 'A' INTO @lv_act.
+        SELECT COUNT(*) FROM dd01l WHERE domname = @lv_obj AND as4local = 'A'.
+        lv_act = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
       WHEN 'DTEL'.
-        SELECT SINGLE @abap_true FROM dd04l
-          WHERE rollname = @lv_obj AND as4local = 'A' INTO @lv_act.
+        SELECT COUNT(*) FROM dd04l WHERE rollname = @lv_obj AND as4local = 'A'.
+        lv_act = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
       WHEN 'TABL'.
-        SELECT SINGLE @abap_true FROM dd02l
-          WHERE tabname = @lv_obj AND as4local = 'A' INTO @lv_act.
+        SELECT COUNT(*) FROM dd02l WHERE tabname = @lv_obj AND as4local = 'A'.
+        lv_act = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
       WHEN 'VIEW'.
-        SELECT SINGLE @abap_true FROM dd25l
-          WHERE viewname = @lv_obj AND as4local = 'A' INTO @lv_act.
+        SELECT COUNT(*) FROM dd25l WHERE viewname = @lv_obj AND as4local = 'A'.
+        lv_act = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
 
       WHEN 'BDEF' OR 'SRVD' OR 'DDLX' OR 'SRVB'.
 *       Aktiv heisst hier: der Operator laedt es. Ein Katalogeintrag
 *       allein sagt bei diesen Arten nichts.
-        TRY.
-            DATA(ls_wbt) = lcl_wb=>obj_type( CONV trobjtype( is_work-kind ) ).
-            IF ls_wbt-objtype_tr IS NOT INITIAL.
-              lv_act = cl_wb_object_operator_factory=>create_object_operator(
-                         object_type = ls_wbt
-                         object_key  = CONV seu_objkey( is_work-name )
-                       )->check_existence( ).
-            ENDIF.
-          CATCH cx_root.
-            CLEAR lv_act.
-        ENDTRY.
+        lv_act = lcl_wb=>exists( iv_type = CONV trobjtype( is_work-kind )
+                                 iv_name = is_work-name ).
 
       WHEN 'TRAN'.
         DATA lv_vtc TYPE tstc-tcode.
         lv_vtc = is_work-name.
-        SELECT SINGLE @abap_true FROM tstc
-          WHERE tcode = @lv_vtc INTO @lv_act.
+        SELECT COUNT(*) FROM tstc WHERE tcode = @lv_vtc.
+        lv_act = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
 
       WHEN 'VCLS'.
 *       Ein Cluster ohne Knoten ist kein Cluster. Der Kopfeintrag
@@ -1692,8 +1951,8 @@ CLASS lcl_importer IMPLEMENTATION.
       WHEN 'SEGM'.
         DATA lv_vsg TYPE edisegment-segtyp.
         lv_vsg = is_work-name.
-        SELECT SINGLE @abap_true FROM edisegment
-          WHERE segtyp = @lv_vsg INTO @lv_act.
+        SELECT COUNT(*) FROM edisegment WHERE segtyp = @lv_vsg.
+        lv_act = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
 
       WHEN 'IDOC'.
 *       Ein Basistyp ohne Segmenthierarchie ist kein Basistyp. Gefragt
@@ -1725,14 +1984,14 @@ CLASS lcl_importer IMPLEMENTATION.
       WHEN 'DDLS'.
         DATA lv_ddl TYPE ddldependency-ddlname.
         lv_ddl = is_work-name.
-        SELECT SINGLE @abap_true FROM ddldependency
-          WHERE ddlname = @lv_ddl AND state = 'A' INTO @lv_act.
+        SELECT COUNT(*) FROM ddldependency WHERE ddlname = @lv_ddl AND state = 'A'.
+        lv_act = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
 
       WHEN 'CLAS' OR 'INTF'.
         DATA lv_cls TYPE seoclassdf-clsname.
         lv_cls = is_work-name.
-        SELECT SINGLE @abap_true FROM seoclassdf
-          WHERE clsname = @lv_cls AND version = '1' INTO @lv_act.
+        SELECT COUNT(*) FROM seoclassdf WHERE clsname = @lv_cls AND version = '1'.
+        lv_act = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
 
       WHEN 'FUGR'.
 *       A function group is active when nothing of it is left inactive.
@@ -1874,65 +2133,65 @@ CLASS lcl_importer IMPLEMENTATION.
     lv_obj = iv_name.
     CASE iv_kind.
       WHEN 'DOMA'.
-        SELECT SINGLE @abap_true FROM dd01l
-          WHERE domname = @lv_obj AND as4local = 'A' INTO @rv_flag.
+        SELECT COUNT(*) FROM dd01l WHERE domname = @lv_obj AND as4local = 'A'.
+        rv_flag = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
       WHEN 'DTEL'.
-        SELECT SINGLE @abap_true FROM dd04l
-          WHERE rollname = @lv_obj AND as4local = 'A' INTO @rv_flag.
+        SELECT COUNT(*) FROM dd04l WHERE rollname = @lv_obj AND as4local = 'A'.
+        rv_flag = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
       WHEN 'TABL'.
-        SELECT SINGLE @abap_true FROM dd02l
-          WHERE tabname = @lv_obj AND as4local = 'A' INTO @rv_flag.
+        SELECT COUNT(*) FROM dd02l WHERE tabname = @lv_obj AND as4local = 'A'.
+        rv_flag = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
       WHEN 'PROG'.
         lv_prg = iv_name.
-        SELECT SINGLE @abap_true FROM trdir
-          WHERE name = @lv_prg INTO @rv_flag.
+        SELECT COUNT(*) FROM trdir WHERE name = @lv_prg.
+        rv_flag = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
       WHEN 'VIEW'.
-        SELECT SINGLE @abap_true FROM dd25l
-          WHERE viewname = @lv_obj AND as4local = 'A' INTO @rv_flag.
+        SELECT COUNT(*) FROM dd25l WHERE viewname = @lv_obj AND as4local = 'A'.
+        rv_flag = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
       WHEN 'DDLS'.
         DATA lv_ddl TYPE ddlname.
         lv_ddl = iv_name.
-        SELECT SINGLE @abap_true FROM ddddlsrc
-          WHERE ddlname = @lv_ddl AND as4local = 'A' INTO @rv_flag.
+        SELECT COUNT(*) FROM ddddlsrc WHERE ddlname = @lv_ddl AND as4local = 'A'.
+        rv_flag = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
       WHEN 'CLAS' OR 'INTF'.
         DATA lv_cls TYPE seoclsname.
         lv_cls = iv_name.
-        SELECT SINGLE @abap_true FROM seoclass
-          WHERE clsname = @lv_cls INTO @rv_flag.
+        SELECT COUNT(*) FROM seoclass WHERE clsname = @lv_cls.
+        rv_flag = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
       WHEN 'FUGR'.
         DATA lv_are TYPE rs38l-area.
         lv_are = iv_name.
-        SELECT SINGLE @abap_true FROM tlibg
-          WHERE area = @lv_are INTO @rv_flag.
+        SELECT COUNT(*) FROM tlibg WHERE area = @lv_are.
+        rv_flag = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
       WHEN 'MSAG'.
         DATA lv_arb TYPE t100a-arbgb.
         lv_arb = iv_name.
-        SELECT SINGLE @abap_true FROM t100a
-          WHERE arbgb = @lv_arb INTO @rv_flag.
+        SELECT COUNT(*) FROM t100a WHERE arbgb = @lv_arb.
+        rv_flag = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
 
       WHEN 'SEGM'.
         DATA lv_sgt TYPE edisegment-segtyp.
         lv_sgt = iv_name.
-        SELECT SINGLE @abap_true FROM edisegment
-          WHERE segtyp = @lv_sgt INTO @rv_flag.
+        SELECT COUNT(*) FROM edisegment WHERE segtyp = @lv_sgt.
+        rv_flag = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
 
       WHEN 'IDOC'.
         DATA lv_idt TYPE edbas-idoctyp.
         lv_idt = iv_name.
-        SELECT SINGLE @abap_true FROM edbas
-          WHERE idoctyp = @lv_idt INTO @rv_flag.
+        SELECT COUNT(*) FROM edbas WHERE idoctyp = @lv_idt.
+        rv_flag = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
 
       WHEN 'TRAN'.
         DATA lv_tcd TYPE tstc-tcode.
         lv_tcd = iv_name.
-        SELECT SINGLE @abap_true FROM tstc
-          WHERE tcode = @lv_tcd INTO @rv_flag.
+        SELECT COUNT(*) FROM tstc WHERE tcode = @lv_tcd.
+        rv_flag = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
 
       WHEN 'VCLS'.
         DATA lv_vcn TYPE vcldir-vclname.
         lv_vcn = iv_name.
-        SELECT SINGLE @abap_true FROM vcldir
-          WHERE vclname = @lv_vcn INTO @rv_flag.
+        SELECT COUNT(*) FROM vcldir WHERE vclname = @lv_vcn.
+        rv_flag = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
 
       WHEN 'WAPA'.
 *       Nicht der Katalog, sondern die API - auf S4H stehen
@@ -1945,17 +2204,8 @@ CLASS lcl_importer IMPLEMENTATION.
 *       Der Katalog taugt hier nicht als Nachweis - auf S4H stehen
 *       reihenweise Eintraege ohne Objekt dahinter. Gefragt wird den
 *       Operator, der das Objekt tatsaechlich laden muesste.
-        TRY.
-            DATA(ls_wbt) = lcl_wb=>obj_type( CONV trobjtype( iv_kind ) ).
-            IF ls_wbt-objtype_tr IS NOT INITIAL.
-              rv_flag = cl_wb_object_operator_factory=>create_object_operator(
-                          object_type = ls_wbt
-                          object_key  = CONV seu_objkey( iv_name )
-                        )->check_existence( ).
-            ENDIF.
-          CATCH cx_root.
-            CLEAR rv_flag.
-        ENDTRY.
+        rv_flag = lcl_wb=>exists( iv_type = CONV trobjtype( iv_kind )
+                                  iv_name = iv_name ).
     ENDCASE.
 
   ENDMETHOD.
@@ -2669,7 +2919,7 @@ CLASS lcl_importer IMPLEMENTATION.
 *   danach: Pfadzuordnung, MIME-Ordner, ICF-Knoten und Katalogeintrag
 *   entstehen erst hier. CREATE_REPOSITORY und PUT_FILE arbeiten ohne
 *   Dialog, wenn IV_DIALOG_MODE leer bleibt.
-    DATA lo_ui5   TYPE REF TO /ui5/if_ui5_rep_dt.
+    DATA lo_ui5   TYPE REF TO object.
     DATA lv_appl  TYPE o2applname.
     DATA lv_corr  TYPE trkorr.
     DATA lv_dev   TYPE devclass.
@@ -2720,13 +2970,15 @@ CLASS lcl_importer IMPLEMENTATION.
 
     IF lv_ex = abap_false.
       TRY.
-          lo_ui5 = /ui5/cl_ui5_rep_dt=>/ui5/if_ui5_rep_dt~create_repository(
-                     iv_name              = CONV string( lv_appl )
-                     iv_description       = lv_text
-                     iv_transport_request = lv_corr
-                     iv_devclass          = lv_dev
-                     iv_dialog_mode       = space ).
-        CATCH /ui5/cx_ui5_rep_dt INTO DATA(lx_new).
+          DATA(lv_unew) = CONV string( lv_appl ).
+          CALL METHOD ('/UI5/CL_UI5_REP_DT')=>('/UI5/IF_UI5_REP_DT~CREATE_REPOSITORY')
+            EXPORTING iv_name              = lv_unew
+                      iv_description       = lv_text
+                      iv_transport_request = lv_corr
+                      iv_devclass          = lv_dev
+                      iv_dialog_mode       = space
+            RECEIVING ro_instance          = lo_ui5.
+        CATCH cx_root INTO DATA(lx_new).
           log( iv_kind = 'WAPA' iv_name = iv_name
                iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
                iv_text   = lx_new->get_text( ) ).
@@ -2734,10 +2986,12 @@ CLASS lcl_importer IMPLEMENTATION.
       ENDTRY.
     ELSE.
       TRY.
-          lo_ui5 = /ui5/cl_ui5_rep_dt=>/ui5/if_ui5_rep_dt~get_api(
-                     iv_name        = CONV string( lv_appl )
-                     iv_dialog_mode = space ).
-        CATCH /ui5/cx_ui5_rep_dt INTO DATA(lx_get).
+          DATA(lv_uget) = CONV string( lv_appl ).
+          CALL METHOD ('/UI5/CL_UI5_REP_DT')=>('/UI5/IF_UI5_REP_DT~GET_API')
+            EXPORTING iv_name        = lv_uget
+                      iv_dialog_mode = space
+            RECEIVING ro_instance    = lo_ui5.
+        CATCH cx_root INTO DATA(lx_get).
           log( iv_kind = 'WAPA' iv_name = iv_name
                iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
                iv_text   = lx_get->get_text( ) ).
@@ -2752,8 +3006,8 @@ CLASS lcl_importer IMPLEMENTATION.
 *   Die Sperre haelt fuer den ganzen Lauf. Ohne sie fasst jede
 *   Einzelschreibung die Zuordnungsdatei neu an.
     TRY.
-        lo_ui5->lock( ).
-      CATCH /ui5/cx_ui5_rep_dt.
+        CALL METHOD lo_ui5->('/UI5/IF_UI5_REP_DT~LOCK').
+      CATCH cx_root.
     ENDTRY.
 
 *   Ordner vor Dateien - der Export liefert sie in dieser Reihenfolge,
@@ -2768,9 +3022,10 @@ CLASS lcl_importer IMPLEMENTATION.
 
       IF ls_row-tag = 'WAPA_DIR'.
         TRY.
-            lo_ui5->create_folder( iv_path              = lv_path
-                                   iv_transport_request = lv_corr ).
-          CATCH /ui5/cx_ui5_rep_dt.
+            CALL METHOD lo_ui5->('/UI5/IF_UI5_REP_DT~CREATE_FOLDER')
+              EXPORTING iv_path              = lv_path
+                        iv_transport_request = lv_corr.
+          CATCH cx_root.
 *           Ein vorhandener Ordner ist kein Fehler.
         ENDTRY.
         CONTINUE.
@@ -2786,26 +3041,27 @@ CLASS lcl_importer IMPLEMENTATION.
       ENDTRY.
 
       TRY.
-          lo_ui5->put_file(
-            iv_path              = lv_path
-            iv_transport_request = lv_corr
-            iv_file_content      = lv_cont
-            iv_mime_type         = lcl_attr=>value( it_attrs = ls_row-attrs
-                                                    iv_name  = 'MIMETYPE' ) ).
+          DATA(lv_umime) = lcl_attr=>value( it_attrs = ls_row-attrs
+                                            iv_name  = 'MIMETYPE' ).
+          CALL METHOD lo_ui5->('/UI5/IF_UI5_REP_DT~PUT_FILE')
+            EXPORTING iv_path              = lv_path
+                      iv_transport_request = lv_corr
+                      iv_file_content      = lv_cont
+                      iv_mime_type         = lv_umime.
           lv_ok  = lv_ok + 1.
           lv_sum = lv_sum + xstrlen( lv_cont ).
-        CATCH /ui5/cx_ui5_rep_dt.
+        CATCH cx_root.
           lv_bad = lv_bad + 1.
       ENDTRY.
     ENDLOOP.
 
     TRY.
-        lo_ui5->update_finished( ).
+        CALL METHOD lo_ui5->('/UI5/IF_UI5_REP_DT~UPDATE_FINISHED').
       CATCH cx_root.
     ENDTRY.
     TRY.
-        lo_ui5->unlock( ).
-      CATCH /ui5/cx_ui5_rep_dt.
+        CALL METHOD lo_ui5->('/UI5/IF_UI5_REP_DT~UNLOCK').
+      CATCH cx_root.
     ENDTRY.
 
 *   Den Katalogeintrag schreibt die API mit, wenn ein Paket mitkommt.
@@ -3037,11 +3293,16 @@ CLASS lcl_importer IMPLEMENTATION.
 *   Das Gegenstueck zu def_srvb. Aus dem Kopf und den beiden Zeilenarten
 *   entsteht die verschachtelte Struktur wieder: Services aus SRVB_SRV,
 *   ihre Versionen aus SRVB_VER, zugeordnet ueber den Servicenamen.
-    DATA ls_content TYPE cl_srvb_object_data=>ty_content.
-    DATA ls_srv     TYPE cl_srvb_object_data=>ty_service.
-    DATA ls_ver     TYPE cl_srvb_object_data=>ty_service_content.
-    DATA lo_data    TYPE REF TO if_wb_object_data_model.
-    DATA lv_corr    TYPE trkorr.
+*   Die Typen gehoeren CL_SRVB_OBJECT_DATA und entstehen zur Laufzeit.
+    FIELD-SYMBOLS <ls_content> TYPE any.
+    FIELD-SYMBOLS <lt_srv>     TYPE ANY TABLE.
+    FIELD-SYMBOLS <ls_srv>     TYPE any.
+    FIELD-SYMBOLS <lt_ver>     TYPE ANY TABLE.
+    FIELD-SYMBOLS <ls_ver>     TYPE any.
+    DATA lo_data TYPE REF TO object.
+    DATA lo_op   TYPE REF TO object.
+    DATA lv_corr TYPE trkorr.
+    DATA lv_nsrv TYPE i.
 
     DATA(lv_ex) = exists( iv_kind = 'SRVB' iv_name = iv_name ).
     IF lv_ex = abap_true AND mv_over = abap_false.
@@ -3051,44 +3312,74 @@ CLASS lcl_importer IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    DATA(lt_head) = io_chapter->get_defhead( ).
-    ls_content-bind_type          = lcl_attr=>value( it_attrs = lt_head iv_name = 'BIND_TYPE' ).
-    ls_content-bind_type_category = lcl_attr=>value( it_attrs = lt_head iv_name = 'BIND_TYPE_CATEGORY' ).
-    ls_content-bind_type_version  = lcl_attr=>value( it_attrs = lt_head iv_name = 'BIND_TYPE_VERSION' ).
-    IF ls_content-bind_type IS INITIAL.
+    DATA(lr_content) = lcl_wb=>srvb_data( `TY_CONTENT` ).
+    IF lr_content IS NOT BOUND.
+      log( iv_kind = 'SRVB' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `nicht moeglich` e = `not possible` )
+           iv_text   = lcl_t=>ui( d = `Service-Bindings gibt es in diesem System nicht`
+                                  e = `service bindings do not exist in this system` ) ).
+      RETURN.
+    ENDIF.
+    ASSIGN lr_content->* TO <ls_content>.
+
+    DATA(lt_head)  = io_chapter->get_defhead( ).
+    DATA(lv_btype) = lcl_attr=>value( it_attrs = lt_head iv_name = 'BIND_TYPE' ).
+    DATA(lv_bcat)  = lcl_attr=>value( it_attrs = lt_head iv_name = 'BIND_TYPE_CATEGORY' ).
+    DATA(lv_bver)  = lcl_attr=>value( it_attrs = lt_head iv_name = 'BIND_TYPE_VERSION' ).
+    IF lv_btype IS INITIAL.
       log( iv_kind = 'SRVB' iv_name = iv_name
            iv_action = lcl_t=>ui( d = `nicht moeglich` e = `not possible` )
            iv_text   = lcl_t=>ui( d = `keine Bindungsart im Dokument`
                                   e = `no binding type in the document` ) ).
       RETURN.
     ENDIF.
+    lcl_wb=>set_comp( EXPORTING iv_path = `BIND_TYPE` iv_value = lv_btype
+                      CHANGING  cs_data = <ls_content> ).
+    lcl_wb=>set_comp( EXPORTING iv_path = `BIND_TYPE_CATEGORY` iv_value = lv_bcat
+                      CHANGING  cs_data = <ls_content> ).
+    lcl_wb=>set_comp( EXPORTING iv_path = `BIND_TYPE_VERSION` iv_value = lv_bver
+                      CHANGING  cs_data = <ls_content> ).
 *   Die Referenz auf die Bindungsart-Implementierung traegt den
 *   Bindingnamen. Im Quellsystem stand hier derselbe Wert.
-    ls_content-bind_type_impl-name = iv_name.
+    lcl_wb=>set_comp( EXPORTING iv_path = `BIND_TYPE_IMPL-NAME` iv_value = iv_name
+                      CHANGING  cs_data = <ls_content> ).
+
+    ASSIGN COMPONENT 'SERVICES' OF STRUCTURE <ls_content> TO <lt_srv>.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
 
     DATA(lt_rows) = io_chapter->get_defrows( ).
     LOOP AT lt_rows INTO DATA(ls_row) WHERE tag = 'SRVB_SRV'.
-      CLEAR ls_srv.
-      ls_srv-service_name = lcl_attr=>value( it_attrs = ls_row-attrs
-                                             iv_name  = 'SERVICE_NAME' ).
+      DATA(lv_sname) = lcl_attr=>value( it_attrs = ls_row-attrs
+                                        iv_name  = 'SERVICE_NAME' ).
+      INSERT INITIAL LINE INTO TABLE <lt_srv> ASSIGNING <ls_srv>.
+      lcl_wb=>set_comp( EXPORTING iv_path = `SERVICE_NAME` iv_value = lv_sname
+                        CHANGING  cs_data = <ls_srv> ).
+      lv_nsrv = lv_nsrv + 1.
+      ASSIGN COMPONENT 'SERVICE_CONTENT' OF STRUCTURE <ls_srv> TO <lt_ver>.
+      IF sy-subrc <> 0.
+        CONTINUE.
+      ENDIF.
       LOOP AT lt_rows INTO DATA(ls_vrow) WHERE tag = 'SRVB_VER'.
         IF lcl_attr=>value( it_attrs = ls_vrow-attrs iv_name = 'SERVICE_NAME' )
-           <> ls_srv-service_name.
+           <> lv_sname.
           CONTINUE.
         ENDIF.
-        CLEAR ls_ver.
-        ls_ver-service_version = lcl_attr=>value( it_attrs = ls_vrow-attrs
-                                                  iv_name  = 'SERVICE_VERSION' ).
-        ls_ver-release_state   = lcl_attr=>value( it_attrs = ls_vrow-attrs
-                                                  iv_name  = 'RELEASE_STATE' ).
-        ls_ver-srvd_ref-name   = lcl_attr=>value( it_attrs = ls_vrow-attrs
-                                                  iv_name  = 'SRVD_NAME' ).
-        APPEND ls_ver TO ls_srv-service_content.
+        DATA(lv_vver) = lcl_attr=>value( it_attrs = ls_vrow-attrs iv_name = 'SERVICE_VERSION' ).
+        DATA(lv_vrel) = lcl_attr=>value( it_attrs = ls_vrow-attrs iv_name = 'RELEASE_STATE' ).
+        DATA(lv_vsrd) = lcl_attr=>value( it_attrs = ls_vrow-attrs iv_name = 'SRVD_NAME' ).
+        INSERT INITIAL LINE INTO TABLE <lt_ver> ASSIGNING <ls_ver>.
+        lcl_wb=>set_comp( EXPORTING iv_path = `SERVICE_VERSION` iv_value = lv_vver
+                          CHANGING  cs_data = <ls_ver> ).
+        lcl_wb=>set_comp( EXPORTING iv_path = `RELEASE_STATE` iv_value = lv_vrel
+                          CHANGING  cs_data = <ls_ver> ).
+        lcl_wb=>set_comp( EXPORTING iv_path = `SRVD_REF-NAME` iv_value = lv_vsrd
+                          CHANGING  cs_data = <ls_ver> ).
       ENDLOOP.
-      APPEND ls_srv TO ls_content-services.
     ENDLOOP.
 
-    IF ls_content-services IS INITIAL.
+    IF lv_nsrv = 0.
       log( iv_kind = 'SRVB' iv_name = iv_name
            iv_action = lcl_t=>ui( d = `nicht moeglich` e = `not possible` )
            iv_text   = lcl_t=>ui( d = `kein Service im Dokument`
@@ -3105,8 +3396,8 @@ CLASS lcl_importer IMPLEMENTATION.
            iv_action = COND #( WHEN lv_ex = abap_true
                                THEN lcl_t=>ui( d = `wuerde geaendert` e = `would change` )
                                ELSE lcl_t=>ui( d = `wuerde angelegt` e = `would create` ) )
-           iv_text   = |{ ls_content-bind_type } { ls_content-bind_type_version }, | &&
-                       |{ lines( ls_content-services ) } | &&
+           iv_text   = |{ lv_btype } { lv_bver }, | &&
+                       |{ lv_nsrv } | &&
                        |{ lcl_t=>ui( d = `Services` e = `services` ) }, | &&
                        |{ lv_nver } { lcl_t=>ui( d = `Versionen` e = `versions` ) }| ).
       RETURN.
@@ -3121,30 +3412,21 @@ CLASS lcl_importer IMPLEMENTATION.
       lv_corr = mv_tr.
     ENDIF.
 
-    DATA(ls_type) = lcl_wb=>obj_type( 'SRVB' ).
-    IF ls_type-objtype_tr IS INITIAL.
-      RETURN.
-    ENDIF.
-
     TRY.
-        CREATE OBJECT lo_data TYPE ('CL_SRVB_OBJECT_DATA').
-        lo_data->set_object_name( CONV seu_objkey( iv_name ) ).
-        lo_data->set_description( lv_desc ).
+        lo_data = lcl_wb=>new_data( iv_class = 'CL_SRVB_OBJECT_DATA'
+                                    iv_name  = iv_name
+                                    iv_desc  = lv_desc ).
 *       Nur der Inhalt wird gesetzt. Das Veroeffentlichungskennzeichen
 *       bleibt aus: ein Binding anzulegen ist eine Entwicklungsaufgabe,
 *       einen Dienst nach aussen bereitzustellen eine andere.
-        lo_data->set_content( ls_content ).
-
-        DATA(lo_op) = cl_wb_object_operator_factory=>create_object_operator(
-                        object_type       = ls_type
-                        object_key        = CONV seu_objkey( iv_name )
-                        transport_request = lv_corr ).
-        IF lv_ex = abap_true.
-          lo_op->update( io_object_data = lo_data ).
-        ELSE.
-          lo_op->create( io_object_data = lo_data
-                         package        = mv_pack ).
-        ENDIF.
+        lcl_wb=>set_content( io_data = lo_data is_content = <ls_content> ).
+        lo_op = lcl_wb=>operator( iv_type = 'SRVB'
+                                  iv_name = iv_name
+                                  iv_corr = lv_corr ).
+        lcl_wb=>save( io_op      = lo_op
+                      io_data    = lo_data
+                      iv_update  = lv_ex
+                      iv_package = mv_pack ).
       CATCH cx_root INTO DATA(lx_put).
         log( iv_kind = 'SRVB' iv_name = iv_name
              iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
@@ -3154,7 +3436,7 @@ CLASS lcl_importer IMPLEMENTATION.
 
     IF mv_act = abap_true.
       TRY.
-          lo_op->activate( ).
+          lcl_wb=>activate( lo_op ).
         CATCH cx_root INTO DATA(lx_act).
           log( iv_kind = 'SRVB' iv_name = iv_name
                iv_action = lcl_t=>ui( d = `angelegt, inaktiv` e = `created, inactive` )
@@ -3167,8 +3449,8 @@ CLASS lcl_importer IMPLEMENTATION.
          iv_action = COND #( WHEN lv_ex = abap_true
                              THEN lcl_t=>ui( d = `geaendert` e = `changed` )
                              ELSE lcl_t=>ui( d = `angelegt` e = `created` ) )
-         iv_text   = |{ ls_content-bind_type } { ls_content-bind_type_version }, | &&
-                     |{ lines( ls_content-services ) } | &&
+         iv_text   = |{ lv_btype } { lv_bver }, | &&
+                     |{ lv_nsrv } | &&
                      |{ lcl_t=>ui( d = `Services, nicht veroeffentlicht`
                                    e = `services, not published` ) }| ).
 
@@ -3180,7 +3462,8 @@ CLASS lcl_importer IMPLEMENTATION.
 *   Klassennamen erzeugt, mit Name, Beschreibung und Quelltext gefuellt
 *   und dem Operator uebergeben. Die Beschreibung muss gesetzt sein -
 *   ohne sie lehnt create( ) ab.
-    DATA lo_data TYPE REF TO if_wb_object_data_model.
+    DATA lo_data TYPE REF TO object.
+    DATA lo_op   TYPE REF TO object.
     DATA lv_corr TYPE trkorr.
 
     DATA(lv_ex) = exists( iv_kind = iv_kind iv_name = iv_name ).
@@ -3223,8 +3506,8 @@ CLASS lcl_importer IMPLEMENTATION.
 *   Beschreibung - sie steht als Annotation im Quelltext selbst. Ohne
 *   Beschreibung lehnt create( ) ab, also wird sie von dort geholt.
     IF lv_desc IS INITIAL.
-      FIND FIRST OCCURRENCE OF PCRE `@EndUserText\.label\s*:\s*'([^']*)'`
-        IN lv_source RESULTS DATA(ls_lbl).
+      FIND FIRST OCCURRENCE OF REGEX `@EndUserText\.label\s*:\s*'([^']*)'`
+        IN lv_source RESULTS DATA(ls_lbl) ##REGEX_POSIX.
       IF sy-subrc = 0.
         READ TABLE ls_lbl-submatches INTO DATA(ls_sub) INDEX 1.
         IF sy-subrc = 0.
@@ -3243,23 +3526,17 @@ CLASS lcl_importer IMPLEMENTATION.
     ENDIF.
 
     TRY.
-        CREATE OBJECT lo_data TYPE (lv_cls).
-        lo_data->set_object_name( CONV seu_objkey( iv_name ) ).
-        lo_data->set_description( lv_desc ).
-        lo_data->set_selected_data(
-          p_data_selection = if_wb_object_data_selection_co=>c_data_content
-          p_data           = lv_source ).
-
-        DATA(lo_op) = cl_wb_object_operator_factory=>create_object_operator(
-                        object_type       = ls_type
-                        object_key        = CONV seu_objkey( iv_name )
-                        transport_request = lv_corr ).
-        IF lv_ex = abap_true.
-          lo_op->update( io_object_data = lo_data ).
-        ELSE.
-          lo_op->create( io_object_data = lo_data
-                         package        = mv_pack ).
-        ENDIF.
+        lo_data = lcl_wb=>new_data( iv_class = lv_cls
+                                    iv_name  = iv_name
+                                    iv_desc  = lv_desc ).
+        lcl_wb=>set_source( io_data = lo_data iv_source = lv_source ).
+        lo_op = lcl_wb=>operator( iv_type = CONV trobjtype( iv_kind )
+                                  iv_name = iv_name
+                                  iv_corr = lv_corr ).
+        lcl_wb=>save( io_op      = lo_op
+                      io_data    = lo_data
+                      iv_update  = lv_ex
+                      iv_package = mv_pack ).
       CATCH cx_root INTO DATA(lx_put).
         log( iv_kind = iv_kind iv_name = iv_name
              iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
@@ -3269,7 +3546,7 @@ CLASS lcl_importer IMPLEMENTATION.
 
     IF mv_act = abap_true.
       TRY.
-          lo_op->activate( ).
+          lcl_wb=>activate( lo_op ).
         CATCH cx_root INTO DATA(lx_act).
           log( iv_kind = iv_kind iv_name = iv_name
                iv_action = lcl_t=>ui( d = `angelegt, inaktiv` e = `created, inactive` )
@@ -3347,10 +3624,8 @@ CLASS lcl_importer IMPLEMENTATION.
 *   overwriting that; missing numbers and missing languages are added.
     DATA lv_add TYPE i.
     LOOP AT lt_t100 INTO ls_t100.
-      SELECT SINGLE @abap_true FROM t100
-        WHERE sprsl = @ls_t100-sprsl AND arbgb = @ls_t100-arbgb
-          AND msgnr = @ls_t100-msgnr
-        INTO @DATA(lv_there).
+      SELECT COUNT(*) FROM t100 WHERE sprsl = @ls_t100-sprsl AND arbgb = @ls_t100-arbgb AND msgnr = @ls_t100-msgnr.
+      DATA(lv_there) = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
       IF lv_there = abap_true.
         CONTINUE.
       ENDIF.
@@ -3554,8 +3829,8 @@ CLASS lcl_importer IMPLEMENTATION.
 
 *   Die Funktionsgruppe muss stehen, sonst zeigt der Eintrag ins Leere
 *   und SM30 laeuft in einen Kurzdump statt in eine Meldung.
-    SELECT SINGLE @abap_true FROM tlibg
-      WHERE area = @ls_tvdir-area INTO @DATA(lv_fugr).
+    SELECT COUNT(*) FROM tlibg WHERE area = @ls_tvdir-area.
+    DATA(lv_fugr) = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
     IF lv_fugr <> abap_true.
       log( iv_kind = 'TVDIR' iv_name = iv_name
            iv_action = lcl_t=>ui( d = `nicht geschrieben` e = `not written` )
@@ -4125,12 +4400,16 @@ CLASS lcl_importer IMPLEMENTATION.
 *   and it works in three steps: save the source, hang the object into
 *   the catalogue, activate. Its exceptions are class based.
     TRY.
-        DATA(lo_ddl) = cl_dd_ddl_handler_factory=>create( ).
+*       Dynamisch, damit der Report auch ohne CDS-Handler uebersetzt.
+        DATA lo_ddl TYPE REF TO object.
+        CALL METHOD ('CL_DD_DDL_HANDLER_FACTORY')=>('CREATE')
+          RECEIVING handler = lo_ddl.
 *       'N' is the new, still inactive version. 'M' is a read state and
 *       the handler refuses it here.
-        lo_ddl->save( name         = lv_ddl
-                      put_state    = 'N'
-                      ddddlsrcv_wa = ls_src ).
+        CALL METHOD lo_ddl->('IF_DD_DDL_HANDLER~SAVE')
+          EXPORTING name         = lv_ddl
+                    put_state    = 'N'
+                    ddddlsrcv_wa = ls_src.
       CATCH cx_root INTO DATA(lx_save).
         log( iv_kind = 'DDLS' iv_name = iv_name
              iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
@@ -4139,24 +4418,30 @@ CLASS lcl_importer IMPLEMENTATION.
     ENDTRY.
 
     TRY.
-        cl_dd_ddl_handler=>if_dd_ddl_handler~write_tadir(
-          objectname = lv_ddl
-          devclass   = mv_pack
-          username   = sy-uname
-          prid       = 0 ).
+        CALL METHOD ('CL_DD_DDL_HANDLER')=>('IF_DD_DDL_HANDLER~WRITE_TADIR')
+          EXPORTING objectname = lv_ddl
+                    devclass   = mv_pack
+                    username   = sy-uname
+                    prid       = 0.
       CATCH cx_root.
 *       The catalogue entry may already be there from an earlier run.
     ENDTRY.
 
     IF mv_pack NP '$*' AND mv_tr IS NOT INITIAL.
-      lo_ddl->write_trkorr( EXPORTING trkorr     = mv_tr
-                                      objectname = lv_ddl
-                                      prid       = 0 ).
+      TRY.
+          CALL METHOD lo_ddl->('IF_DD_DDL_HANDLER~WRITE_TRKORR')
+            EXPORTING trkorr     = mv_tr
+                      objectname = lv_ddl
+                      prid       = 0.
+        CATCH cx_root.
+      ENDTRY.
     ENDIF.
 
     IF mv_act = abap_true.
       TRY.
-          lo_ddl->activate( name = lv_ddl prid = 0 ).
+          CALL METHOD lo_ddl->('IF_DD_DDL_HANDLER~ACTIVATE')
+            EXPORTING name = lv_ddl
+                      prid = 0.
         CATCH cx_root INTO DATA(lx_act).
           log( iv_kind = 'DDLS' iv_name = iv_name
                iv_action = lcl_t=>ui( d = `angelegt, inaktiv` e = `created, inactive` )
@@ -4272,12 +4557,21 @@ CLASS lcl_importer IMPLEMENTATION.
 
 *   Step two: the source-based form, the same text the export read.
     TRY.
-        DATA(lo_src) = cl_oo_factory=>create_instance( )->create_clif_source(
-          clif_name = CONV seoclsname( iv_name ) ).
-        lo_src->lock( authority_check = abap_true ).
-        lo_src->set_source( lt_src ).
-        lo_src->save( ).
-        lo_src->unlock( ).
+        DATA lo_fac  TYPE REF TO object.
+        DATA lo_src  TYPE REF TO object.
+        DATA lv_clif TYPE seoclsname.
+        lv_clif = iv_name.
+        CALL METHOD ('CL_OO_FACTORY')=>('CREATE_INSTANCE')
+          RECEIVING result = lo_fac.
+        CALL METHOD lo_fac->('IF_OO_CLIF_SOURCE_FACTORY~CREATE_CLIF_SOURCE')
+          EXPORTING clif_name = lv_clif
+          RECEIVING result    = lo_src.
+        CALL METHOD lo_src->('IF_OO_CLIF_SOURCE~LOCK')
+          EXPORTING authority_check = abap_true.
+        CALL METHOD lo_src->('IF_OO_CLIF_SOURCE~SET_SOURCE')
+          EXPORTING source = lt_src.
+        CALL METHOD lo_src->('IF_OO_CLIF_SOURCE~SAVE').
+        CALL METHOD lo_src->('IF_OO_CLIF_SOURCE~UNLOCK').
       CATCH cx_root INTO DATA(lx).
         log( iv_kind = iv_kind iv_name = iv_name
              iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
@@ -4447,8 +4741,8 @@ CLASS lcl_importer IMPLEMENTATION.
       RETURN.
     ENDIF.
 
-    SELECT SINGLE @abap_true FROM tfdir
-      WHERE funcname = @lv_func INTO @DATA(lv_ex).
+    SELECT COUNT(*) FROM tfdir WHERE funcname = @lv_func.
+    DATA(lv_ex) = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
     IF lv_ex = abap_true.
       log( iv_kind = 'FUNC' iv_name = lv_func
            iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
@@ -5326,7 +5620,7 @@ CLASS lcl_renderer_html IMPLEMENTATION.
 
 *     A marker may sit alone on its line or lead the text that follows.
       lv_len = strlen( lv_line ).
-      FIND PCRE '^&[A-Z0-9_]+&$' IN lv_line.
+      FIND REGEX '^&[A-Z0-9_]+&$' IN lv_line ##REGEX_POSIX.
       IF sy-subrc = 0.
         rv_html = |{ rv_html }<p class="sec">{ esc(
                     itf_section( substring( val = lv_line off = 1 len = lv_len - 2 ) ) ) }</p>|.
@@ -5334,10 +5628,10 @@ CLASS lcl_renderer_html IMPLEMENTATION.
       ENDIF.
 
       DATA lv_mark TYPE string.
-      FIND FIRST OCCURRENCE OF PCRE '^&([A-Z0-9_]+)&\s*' IN lv_line
-           SUBMATCHES lv_mark.
+      FIND FIRST OCCURRENCE OF REGEX '^&([A-Z0-9_]+)&\s*' IN lv_line
+           SUBMATCHES lv_mark ##REGEX_POSIX.
       IF sy-subrc = 0.
-        REPLACE FIRST OCCURRENCE OF PCRE '^&[A-Z0-9_]+&\s*' IN lv_line WITH ''.
+        REPLACE FIRST OCCURRENCE OF REGEX '^&[A-Z0-9_]+&\s*' IN lv_line WITH '' ##REGEX_POSIX.
         rv_html = |{ rv_html }<p class="sec">{ esc( itf_section( lv_mark ) ) }</p>|.
         IF lv_line IS INITIAL.
           CONTINUE.
@@ -5349,9 +5643,9 @@ CLASS lcl_renderer_html IMPLEMENTATION.
 *     ITF markup. All two- to three-character markers are handled
 *     generically, cross references <DS:...> come along; the closing
 *     marker </> applies to every one of them.
-      REPLACE ALL OCCURRENCES OF PCRE '&lt;DS:[^&]+&gt;' IN lv_line WITH '<b>'.
+      REPLACE ALL OCCURRENCES OF REGEX '&lt;DS:[^&]+&gt;' IN lv_line WITH '<b>' ##REGEX_POSIX.
       REPLACE ALL OCCURRENCES OF '&lt;/&gt;' IN lv_line WITH '</b>'.
-      REPLACE ALL OCCURRENCES OF PCRE '&lt;[A-Z0-9]{2,3}&gt;' IN lv_line WITH '<b>'.
+      REPLACE ALL OCCURRENCES OF REGEX '&lt;[A-Z0-9]{2,3}&gt;' IN lv_line WITH '<b>' ##REGEX_POSIX.
 
 *     Balance per line, otherwise an open marker styles the rest of the
 *     document.
@@ -5854,8 +6148,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     IF lv_kind = 'TABL'.
       DATA lv_seg TYPE edisegment-segtyp.
       lv_seg = iv_name.
-      SELECT SINGLE @abap_true FROM edisegment
-        WHERE segtyp = @lv_seg INTO @DATA(lv_is_seg).
+      SELECT COUNT(*) FROM edisegment WHERE segtyp = @lv_seg.
+      DATA(lv_is_seg) = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
       IF lv_is_seg = abap_true.
         lv_kind = 'SEGM'.
       ENDIF.
@@ -6112,39 +6406,16 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *   Alle drei sind Quelltext und werden ueber denselben Operator
 *   gelesen: c_data_content liefert einen String, genau wie bei einer
 *   CDS-Quelle. Der Unterschied zwischen ihnen ist nur der Objekttyp.
-    DATA lo_data TYPE REF TO if_wb_object_data_model.
-    DATA lv_src  TYPE string.
-
-    DATA(ls_type) = lcl_wb=>obj_type( iv_type ).
-    IF ls_type-objtype_tr IS INITIAL.
-      RETURN.
-    ENDIF.
-
 *   Ein Katalogeintrag ist bei diesen Arten kein Beweis, dass es das
 *   Objekt gibt: auf S4H stehen reihenweise BDEF- und DDLX-Eintraege in
 *   TADIR, deren Inhalt sich nicht laden laesst. Der Lauf darf daran
-*   nicht scheitern, deshalb faengt hier alles ab.
-    TRY.
-        DATA(lo_op) = cl_wb_object_operator_factory=>create_object_operator(
-                        object_type = ls_type
-                        object_key  = CONV seu_objkey( iv_name ) ).
-        lo_op->read( EXPORTING version        = 'A'
-                               data_selection = if_wb_object_data_selection_co=>c_all_data
-                     IMPORTING eo_object_data = lo_data ).
-      CATCH cx_root.
-        RETURN.
-    ENDTRY.
+*   nicht scheitern; lcl_wb faengt alles ab.
+    DATA(lo_data) = lcl_wb=>read( iv_type = iv_type iv_name = iv_name ).
     IF lo_data IS NOT BOUND.
       RETURN.
     ENDIF.
 
-    TRY.
-        lo_data->get_selected_data(
-          EXPORTING p_data_selection = if_wb_object_data_selection_co=>c_data_content
-          IMPORTING p_data           = lv_src ).
-      CATCH cx_root.
-        RETURN.
-    ENDTRY.
+    DATA(lv_src) = lcl_wb=>content( lo_data ).
     IF lv_src IS INITIAL.
       RETURN.
     ENDIF.
@@ -6154,7 +6425,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *   systemspezifisch und hat im Dokument nichts verloren.
     DATA lt_head TYPE ty_attrs.
     APPEND VALUE ty_attr( name = 'NAME' value = iv_name ) TO lt_head.
-    DATA(lv_desc) = lo_data->get_description( ).
+    DATA(lv_desc) = lcl_wb=>description( lo_data ).
     IF lv_desc IS NOT INITIAL.
       APPEND VALUE ty_attr( name = 'DESCRIPTION' value = lv_desc ) TO lt_head.
     ENDIF.
@@ -6186,7 +6457,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *   gleichermassen, ohne Raten ueber Kodierungen. Im HTML taucht er nie
 *   auf: der HTML-Renderer fasst Definitionsdaten grundsaetzlich nicht an.
     DATA lo_app   TYPE REF TO cl_o2_api_application.
-    DATA lo_ui5   TYPE REF TO /ui5/if_ui5_rep_dt.
+    DATA lo_ui5   TYPE REF TO object.
     DATA ls_attr  TYPE o2applattr.
     DATA lv_appl  TYPE o2applname.
 
@@ -6220,10 +6491,12 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     io_chapter->set_definition( iv_kind = 'WAPA' it_head = lt_head ).
 
     TRY.
-        lo_ui5 = /ui5/cl_ui5_rep_dt=>/ui5/if_ui5_rep_dt~get_api(
-                   iv_name        = CONV string( lv_appl )
-                   iv_dialog_mode = space ).
-      CATCH /ui5/cx_ui5_rep_dt.
+        DATA(lv_uget) = CONV string( lv_appl ).
+        CALL METHOD ('/UI5/CL_UI5_REP_DT')=>('/UI5/IF_UI5_REP_DT~GET_API')
+          EXPORTING iv_name        = lv_uget
+                    iv_dialog_mode = space
+          RECEIVING ro_instance    = lo_ui5.
+      CATCH cx_root.
         RETURN.
     ENDTRY.
 
@@ -6244,8 +6517,10 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       DATA lt_kids TYPE string_table.
       CLEAR lt_kids.
       TRY.
-          lt_kids = lo_ui5->get_folder_children( iv_path = lv_dir ).
-        CATCH /ui5/cx_ui5_rep_dt.
+          CALL METHOD lo_ui5->('/UI5/IF_UI5_REP_DT~GET_FOLDER_CHILDREN')
+            EXPORTING iv_path     = lv_dir
+            RECEIVING rt_children = lt_kids.
+        CATCH cx_root.
           CONTINUE.
       ENDTRY.
       SORT lt_kids.
@@ -6254,8 +6529,10 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         DATA lv_fold TYPE abap_bool.
         CLEAR lv_fold.
         TRY.
-            lv_fold = lo_ui5->check_is_folder( iv_path = lv_path ).
-          CATCH /ui5/cx_ui5_rep_dt.
+            CALL METHOD lo_ui5->('/UI5/IF_UI5_REP_DT~CHECK_IS_FOLDER')
+              EXPORTING iv_path   = lv_path
+              RECEIVING rv_result = lv_fold.
+          CATCH cx_root.
             CONTINUE.
         ENDTRY.
 
@@ -6271,10 +6548,11 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         DATA lv_mime TYPE string.
         CLEAR: lv_cont, lv_mime.
         TRY.
-            lo_ui5->get_file( EXPORTING iv_path         = lv_path
-                              IMPORTING ev_file_content = lv_cont
-                                        ev_mime_type    = lv_mime ).
-          CATCH /ui5/cx_ui5_rep_dt.
+            CALL METHOD lo_ui5->('/UI5/IF_UI5_REP_DT~GET_FILE')
+              EXPORTING iv_path         = lv_path
+              IMPORTING ev_file_content = lv_cont
+                        ev_mime_type    = lv_mime.
+          CATCH cx_root.
             CONTINUE.
         ENDTRY.
 
@@ -6397,36 +6675,28 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *   unter jedem Service seine Versionen. Der Kopf traegt die Bindungsart
 *   (ODATA V2, V4, ...), die beiden Ebenen werden Zeilen - dieselbe Form
 *   wie die Feldliste einer Tabelle.
-    DATA lo_data TYPE REF TO if_wb_object_data_model.
-    DATA ls_all  TYPE cl_srvb_object_data=>ty_object_data.
+*
+*   Die Struktur gehoert der Datenklasse CL_SRVB_OBJECT_DATA, die es erst
+*   ab 7.5x gibt. Sie entsteht deshalb zur Laufzeit, und gelesen wird
+*   ueber Komponentennamen.
+    FIELD-SYMBOLS <ls_all> TYPE any.
+    FIELD-SYMBOLS <ls_cnt> TYPE any.
+    FIELD-SYMBOLS <lt_srv> TYPE ANY TABLE.
+    FIELD-SYMBOLS <lt_ver> TYPE ANY TABLE.
 
-    DATA(ls_type) = lcl_wb=>obj_type( 'SRVB' ).
-    IF ls_type-objtype_tr IS INITIAL.
+    DATA(lr_all) = lcl_wb=>srvb_data( `TY_OBJECT_DATA` ).
+    IF lr_all IS NOT BOUND.
       RETURN.
     ENDIF.
+    ASSIGN lr_all->* TO <ls_all>.
 
-    TRY.
-        cl_wb_object_operator_factory=>create_object_operator(
-          object_type = ls_type
-          object_key  = CONV seu_objkey( iv_name )
-        )->read( EXPORTING version        = 'A'
-                           data_selection = if_wb_object_data_selection_co=>c_all_data
-                 IMPORTING eo_object_data = lo_data ).
-      CATCH cx_root.
-        RETURN.
-    ENDTRY.
+    DATA(lo_data) = lcl_wb=>read( iv_type = 'SRVB' iv_name = iv_name ).
     IF lo_data IS NOT BOUND.
       RETURN.
     ENDIF.
-
-    TRY.
-        lo_data->get_selected_data(
-          EXPORTING p_data_selection = if_wb_object_data_selection_co=>c_all_data
-          IMPORTING p_data           = ls_all ).
-      CATCH cx_root.
-        RETURN.
-    ENDTRY.
-    IF ls_all-content-bind_type IS INITIAL.
+    lcl_wb=>all_data( EXPORTING io_data = lo_data
+                      CHANGING  cs_data = <ls_all> ).
+    IF lcl_wb=>comp( is_data = <ls_all> iv_path = `CONTENT-BIND_TYPE` ) IS INITIAL.
       RETURN.
     ENDIF.
 
@@ -6437,54 +6707,75 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *   aktiven Fassung auch nicht. ADT zeigt sie, holt sie also woanders
 *   her. Beim Import tritt dann der Objektname an ihre Stelle - das
 *   Binding ist damit vollstaendig, nur seine Bezeichnung nicht.
-    DATA(lv_desc) = lo_data->get_description( ).
+    DATA(lv_desc) = lcl_wb=>description( lo_data ).
     IF lv_desc IS INITIAL.
-      lv_desc = ls_all-metadata-description.
+      lv_desc = lcl_wb=>comp( is_data = <ls_all> iv_path = `METADATA-DESCRIPTION` ).
     ENDIF.
     IF lv_desc IS NOT INITIAL.
       APPEND VALUE ty_attr( name = 'DESCRIPTION' value = lv_desc ) TO lt_head.
     ENDIF.
     APPEND VALUE ty_attr( name  = 'BIND_TYPE'
-                          value = ls_all-content-bind_type ) TO lt_head.
+                          value = lcl_wb=>comp( is_data = <ls_all>
+                                                iv_path = `CONTENT-BIND_TYPE` ) ) TO lt_head.
     APPEND VALUE ty_attr( name  = 'BIND_TYPE_CATEGORY'
-                          value = ls_all-content-bind_type_category ) TO lt_head.
+                          value = lcl_wb=>comp( is_data = <ls_all>
+                                                iv_path = `CONTENT-BIND_TYPE_CATEGORY` ) ) TO lt_head.
     APPEND VALUE ty_attr( name  = 'BIND_TYPE_VERSION'
-                          value = ls_all-content-bind_type_version ) TO lt_head.
+                          value = lcl_wb=>comp( is_data = <ls_all>
+                                                iv_path = `CONTENT-BIND_TYPE_VERSION` ) ) TO lt_head.
 *   Ob das Binding veroeffentlicht ist, steht als Information im
 *   Dokument. Angelegt wird es beim Import trotzdem unveroeffentlicht -
 *   Veroeffentlichen stellt einen Dienst nach aussen bereit, und das ist
 *   eine Entscheidung, die niemand nebenbei treffen sollte.
     APPEND VALUE ty_attr( name  = 'PUBLISHED'
-                          value = COND #( WHEN ls_all-published = abap_true
+                          value = COND #( WHEN lcl_wb=>comp( is_data = <ls_all>
+                                                             iv_path = `PUBLISHED` ) = abap_true
                                           THEN `true` ELSE `false` ) ) TO lt_head.
 
     io_chapter->set_definition( iv_kind = 'SRVB' it_head = lt_head ).
 
-    LOOP AT ls_all-content-services INTO DATA(ls_srv).
+    ASSIGN COMPONENT 'CONTENT' OF STRUCTURE <ls_all> TO <ls_cnt>.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+    ASSIGN COMPONENT 'SERVICES' OF STRUCTURE <ls_cnt> TO <lt_srv>.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    LOOP AT <lt_srv> ASSIGNING FIELD-SYMBOL(<ls_srv>).
+      DATA(lv_sname) = lcl_wb=>comp( is_data = <ls_srv> iv_path = `SERVICE_NAME` ).
       io_chapter->add_defrow( VALUE ty_defrow(
         tag   = 'SRVB_SRV'
         attrs = VALUE ty_attrs(
-          ( name = 'SERVICE_NAME' value = ls_srv-service_name ) ) ) ).
+          ( name = 'SERVICE_NAME' value = lv_sname ) ) ) ).
 
-      LOOP AT ls_srv-service_content INTO DATA(ls_ver).
+      ASSIGN COMPONENT 'SERVICE_CONTENT' OF STRUCTURE <ls_srv> TO <lt_ver>.
+      IF sy-subrc <> 0.
+        CONTINUE.
+      ENDIF.
+      LOOP AT <lt_ver> ASSIGNING FIELD-SYMBOL(<ls_ver>).
         DATA lt_va TYPE ty_attrs.
         CLEAR lt_va.
 *       Der Servicename steht in jeder Versionszeile mit. Zeilen sind im
 *       Dokument eine flache Liste; ohne den Rueckverweis liesse sich
 *       beim Import nicht sagen, zu welchem Service eine Version gehoert.
         APPEND VALUE ty_attr( name  = 'SERVICE_NAME'
-                              value = ls_srv-service_name ) TO lt_va.
+                              value = lv_sname ) TO lt_va.
         APPEND VALUE ty_attr( name  = 'SERVICE_VERSION'
-                              value = ls_ver-service_version ) TO lt_va.
-        IF ls_ver-release_state IS NOT INITIAL.
+                              value = lcl_wb=>comp( is_data = <ls_ver>
+                                                    iv_path = `SERVICE_VERSION` ) ) TO lt_va.
+        DATA(lv_rstate) = lcl_wb=>comp( is_data = <ls_ver> iv_path = `RELEASE_STATE` ).
+        IF lv_rstate IS NOT INITIAL.
           APPEND VALUE ty_attr( name  = 'RELEASE_STATE'
-                                value = ls_ver-release_state ) TO lt_va.
+                                value = lv_rstate ) TO lt_va.
         ENDIF.
 *       Von der Objektreferenz nur der Name. URI und Paket sind
 *       systemspezifisch und im Zielsystem ohnehin andere.
-        IF ls_ver-srvd_ref-name IS NOT INITIAL.
+        DATA(lv_srvd) = lcl_wb=>comp( is_data = <ls_ver> iv_path = `SRVD_REF-NAME` ).
+        IF lv_srvd IS NOT INITIAL.
           APPEND VALUE ty_attr( name  = 'SRVD_NAME'
-                                value = ls_ver-srvd_ref-name ) TO lt_va.
+                                value = lv_srvd ) TO lt_va.
         ENDIF.
         io_chapter->add_defrow( VALUE ty_defrow(
           tag = 'SRVB_VER' attrs = lt_va ) ).
@@ -6739,12 +7030,15 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
     lv_ddl = iv_name.
     TRY.
-        cl_dd_ddl_handler_factory=>create( )->read(
+        DATA lo_ddr TYPE REF TO object.
+        CALL METHOD ('CL_DD_DDL_HANDLER_FACTORY')=>('CREATE')
+          RECEIVING handler = lo_ddr.
+        CALL METHOD lo_ddr->('IF_DD_DDL_HANDLER~READ')
           EXPORTING name         = lv_ddl
                     get_state    = 'A'
                     withtext     = abap_true
                     langu        = mv_langu
-          IMPORTING ddddlsrcv_wa = ls_src ).
+          IMPORTING ddddlsrcv_wa = ls_src.
       CATCH cx_root.
         RETURN.
     ENDTRY.
@@ -6773,10 +7067,19 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     DATA lt_src TYPE rswsourcet.
 
     TRY.
-        DATA(lo_src) = cl_oo_factory=>create_instance( )->create_clif_source(
-          clif_name = CONV seoclsname( iv_name )
-          version   = 'A' ).
-        lo_src->get_source( IMPORTING source = lt_src ).
+*       Dynamisch: CL_OO_FACTORY gibt es nicht auf jedem Stand.
+        DATA lo_fac  TYPE REF TO object.
+        DATA lo_src  TYPE REF TO object.
+        DATA lv_clif TYPE seoclsname.
+        lv_clif = iv_name.
+        CALL METHOD ('CL_OO_FACTORY')=>('CREATE_INSTANCE')
+          RECEIVING result = lo_fac.
+        CALL METHOD lo_fac->('IF_OO_CLIF_SOURCE_FACTORY~CREATE_CLIF_SOURCE')
+          EXPORTING clif_name = lv_clif
+                    version   = 'A'
+          RECEIVING result    = lo_src.
+        CALL METHOD lo_src->('IF_OO_CLIF_SOURCE~GET_SOURCE')
+          IMPORTING source = lt_src.
       CATCH cx_root.
         RETURN.
     ENDTRY.
@@ -7414,22 +7717,9 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *       Verhaltensdefinition und Metadata Extension haben keine
 *       Texttabelle, die sich lesen liesse. Die Beschreibung haelt der
 *       Workbench-Operator - derselbe, ueber den der Quelltext kommt.
-        DATA(ls_twbt) = lcl_wb=>obj_type( iv_type ).
-        IF ls_twbt-objtype_tr IS NOT INITIAL.
-          TRY.
-              DATA lo_tdm TYPE REF TO if_wb_object_data_model.
-              DATA(lo_top) = cl_wb_object_operator_factory=>create_object_operator(
-                               object_type = ls_twbt
-                               object_key  = CONV seu_objkey( iv_name ) ).
-              lo_top->read( EXPORTING version        = 'A'
-                                      data_selection = if_wb_object_data_selection_co=>c_all_data
-                            IMPORTING eo_object_data = lo_tdm ).
-              IF lo_tdm IS BOUND.
-                rv_text = lo_tdm->get_description( ).
-              ENDIF.
-            CATCH cx_root.
-              CLEAR rv_text.
-          ENDTRY.
+        DATA(lo_tdm) = lcl_wb=>read( iv_type = iv_type iv_name = iv_name ).
+        IF lo_tdm IS BOUND.
+          rv_text = lcl_wb=>description( lo_tdm ).
         ENDIF.
 
       WHEN 'WAPA'.
@@ -7605,31 +7895,16 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *       sind Quelltext wie eine CDS-View, stehen aber in keiner Tabelle,
 *       die sich direkt lesen liesse. Sie kommen ueber den
 *       Workbench-Operator - denselben, den die Definitionsdaten nutzen.
-        DATA(ls_swbt) = lcl_wb=>obj_type( iv_type ).
-        IF ls_swbt-objtype_tr IS NOT INITIAL.
-          DATA lv_wsrc TYPE string.
-          CLEAR lv_wsrc.
-          TRY.
-              DATA lo_sdm TYPE REF TO if_wb_object_data_model.
-              DATA(lo_sop) = cl_wb_object_operator_factory=>create_object_operator(
-                               object_type = ls_swbt
-                               object_key  = CONV seu_objkey( iv_name ) ).
-              lo_sop->read( EXPORTING version        = 'A'
-                                      data_selection = if_wb_object_data_selection_co=>c_all_data
-                            IMPORTING eo_object_data = lo_sdm ).
-              IF lo_sdm IS BOUND.
-                lo_sdm->get_selected_data(
-                  EXPORTING p_data_selection = if_wb_object_data_selection_co=>c_data_content
-                  IMPORTING p_data           = lv_wsrc ).
-              ENDIF.
-            CATCH cx_root.
-              CLEAR lv_wsrc.
-          ENDTRY.
-          IF lv_wsrc IS NOT INITIAL.
-            REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf
-                    IN lv_wsrc WITH cl_abap_char_utilities=>newline.
-            SPLIT lv_wsrc AT cl_abap_char_utilities=>newline INTO TABLE lt_src.
-          ENDIF.
+        DATA lv_wsrc TYPE string.
+        CLEAR lv_wsrc.
+        DATA(lo_sdm) = lcl_wb=>read( iv_type = iv_type iv_name = iv_name ).
+        IF lo_sdm IS BOUND.
+          lv_wsrc = lcl_wb=>content( lo_sdm ).
+        ENDIF.
+        IF lv_wsrc IS NOT INITIAL.
+          REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf
+                  IN lv_wsrc WITH cl_abap_char_utilities=>newline.
+          SPLIT lv_wsrc AT cl_abap_char_utilities=>newline INTO TABLE lt_src.
         ENDIF.
 
       WHEN 'DDLS'.
@@ -8652,7 +8927,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         ENDIF.
 *       Whole word only. Without the boundary ZSCANTEST would also match
 *       ZSCANTEST_OLD.
-        FIND FIRST OCCURRENCE OF PCRE |\\b{ lv_tab }\\b| IN lv_code.
+        FIND FIRST OCCURRENCE OF REGEX |\\b{ lv_tab }\\b| IN lv_code ##REGEX_POSIX.
         IF sy-subrc = 0.
           lv_ishit = abap_true.
         ENDIF.
@@ -8678,17 +8953,17 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
 *     The write forms are checked first - DELETE FROM would otherwise be
 *     counted as a read.
-      FIND FIRST OCCURRENCE OF PCRE
+      FIND FIRST OCCURRENCE OF REGEX
         |^(?:INSERT\\s+(?:INTO\\s+)?\| \|UPDATE\\s+\| \|MODIFY\\s+\| \|DELETE\\s+(?:FROM\\s+)?)| &&
         |{ lv_tab }\\b|
-        IN lv_up.
+        IN lv_up ##REGEX_POSIX.
       IF sy-subrc = 0.
         lv_write = abap_true.
         CONTINUE.
       ENDIF.
 
-      FIND FIRST OCCURRENCE OF PCRE |\\b(?:FROM\|JOIN)\\s+{ lv_tab }\\b|
-        IN lv_up.
+      FIND FIRST OCCURRENCE OF REGEX |\\b(?:FROM\|JOIN)\\s+{ lv_tab }\\b|
+        IN lv_up ##REGEX_POSIX.
       IF sy-subrc = 0.
         lv_read = abap_true.
       ENDIF.
@@ -8724,8 +8999,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
         CLEAR lt_f.
         lv_seg = iv_name.
-        SELECT SINGLE @abap_true FROM edisegment
-          WHERE segtyp = @lv_seg INTO @DATA(lv_is_seg).
+        SELECT COUNT(*) FROM edisegment WHERE segtyp = @lv_seg.
+        DATA(lv_is_seg) = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
 
         IF lv_is_seg = abap_true.
           SELECT fieldname, rollname FROM edsappl
@@ -9239,10 +9514,28 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         IF lv_ent IS INITIAL.
           lv_ent = iv_name.
         ENDIF.
-        SELECT fieldname, keyflag, rollname, datatype, leng FROM dd03nd
-          WHERE strucobjn = @lv_ent AND as4local = 'A'
-          ORDER BY position
-          INTO TABLE @DATA(lt_ef).
+*       DD03ND gibt es erst ab 7.5x. Dynamisch gelesen bleibt die
+*       Feldliste auf aelteren Staenden leer, statt dass der Report nicht
+*       uebersetzt.
+        TYPES: BEGIN OF ty_ef,
+                 fieldname TYPE fieldname,
+                 keyflag   TYPE keyflag,
+                 rollname  TYPE rollname,
+                 datatype  TYPE datatype_d,
+                 leng      TYPE ddleng,
+               END OF ty_ef.
+        DATA lt_ef    TYPE STANDARD TABLE OF ty_ef WITH EMPTY KEY.
+        DATA lv_eftab TYPE tabname.
+        CLEAR lt_ef.
+        lv_eftab = 'DD03ND'.
+        TRY.
+            SELECT fieldname, keyflag, rollname, datatype, leng FROM (lv_eftab)
+              WHERE strucobjn = @lv_ent AND as4local = 'A'
+              ORDER BY position
+              INTO CORRESPONDING FIELDS OF TABLE @lt_ef.
+          CATCH cx_root.
+            CLEAR lt_ef.
+        ENDTRY.
         IF lt_ef IS NOT INITIAL.
           DATA(lo_oef) = NEW lcl_object( iv_type = CONV string( iv_type )
                                          iv_name = CONV string( iv_name ) ).
@@ -9301,28 +9594,22 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *       ob das Binding veroeffentlicht ist. Das gehoert zu den Details
 *       (nicht an die Definitionsdaten gebunden), damit es auch dann
 *       erscheint, wenn nur die Details gezogen werden.
-        DATA lo_sbd TYPE REF TO if_wb_object_data_model.
-        DATA ls_sba TYPE cl_srvb_object_data=>ty_object_data.
-        DATA(ls_sbt) = lcl_wb=>obj_type( 'SRVB' ).
-        IF ls_sbt-objtype_tr IS INITIAL.
+        FIELD-SYMBOLS <ls_sba> TYPE any.
+        FIELD-SYMBOLS <ls_sbc> TYPE any.
+        FIELD-SYMBOLS <lt_sbs> TYPE ANY TABLE.
+        FIELD-SYMBOLS <lt_sbv> TYPE ANY TABLE.
+        DATA(lr_sba) = lcl_wb=>srvb_data( `TY_OBJECT_DATA` ).
+        IF lr_sba IS NOT BOUND.
           RETURN.
         ENDIF.
-        TRY.
-            cl_wb_object_operator_factory=>create_object_operator(
-              object_type = ls_sbt
-              object_key  = CONV seu_objkey( iv_name )
-            )->read( EXPORTING version        = 'A'
-                               data_selection = if_wb_object_data_selection_co=>c_all_data
-                     IMPORTING eo_object_data = lo_sbd ).
-            IF lo_sbd IS BOUND.
-              lo_sbd->get_selected_data(
-                EXPORTING p_data_selection = if_wb_object_data_selection_co=>c_all_data
-                IMPORTING p_data           = ls_sba ).
-            ENDIF.
-          CATCH cx_root.
-            RETURN.
-        ENDTRY.
-        IF ls_sba-content-bind_type IS INITIAL.
+        ASSIGN lr_sba->* TO <ls_sba>.
+        DATA(lo_sbd) = lcl_wb=>read( iv_type = 'SRVB' iv_name = iv_name ).
+        IF lo_sbd IS NOT BOUND.
+          RETURN.
+        ENDIF.
+        lcl_wb=>all_data( EXPORTING io_data = lo_sbd
+                          CHANGING  cs_data = <ls_sba> ).
+        IF lcl_wb=>comp( is_data = <ls_sba> iv_path = `CONTENT-BIND_TYPE` ) IS INITIAL.
           RETURN.
         ENDIF.
 
@@ -9333,10 +9620,12 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *       Bindungsart aus Kategorie und Version, z.B. "ODATA V2"; faellt
 *       einer der beiden aus, bleibt der technische Bindungstyp.
         DATA lv_bkind TYPE string.
-        lv_bkind = condense( |{ ls_sba-content-bind_type_category } | &&
-                             |{ ls_sba-content-bind_type_version }| ).
+        lv_bkind = condense( |{ lcl_wb=>comp( is_data = <ls_sba>
+                                              iv_path = `CONTENT-BIND_TYPE_CATEGORY` ) } | &&
+                             |{ lcl_wb=>comp( is_data = <ls_sba>
+                                              iv_path = `CONTENT-BIND_TYPE_VERSION` ) }| ).
         IF lv_bkind IS INITIAL.
-          lv_bkind = ls_sba-content-bind_type.
+          lv_bkind = lcl_wb=>comp( is_data = <ls_sba> iv_path = `CONTENT-BIND_TYPE` ).
         ENDIF.
         lo_sbo->add_field( VALUE ty_field(
           name     = lcl_t=>t( d = 'Bindungsart' e = 'Binding type' )
@@ -9347,18 +9636,29 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *       dieselbe. Jede genannte wird einmal aufgefuehrt.
         DATA lt_srvd TYPE STANDARD TABLE OF string WITH EMPTY KEY.
         CLEAR lt_srvd.
-        LOOP AT ls_sba-content-services INTO DATA(ls_sbsrv).
-          LOOP AT ls_sbsrv-service_content INTO DATA(ls_sbver).
-            IF ls_sbver-srvd_ref-name IS INITIAL.
-              CONTINUE.
-            ENDIF.
-            READ TABLE lt_srvd TRANSPORTING NO FIELDS
-                 WITH KEY table_line = ls_sbver-srvd_ref-name.
-            IF sy-subrc <> 0.
-              APPEND ls_sbver-srvd_ref-name TO lt_srvd.
-            ENDIF.
-          ENDLOOP.
-        ENDLOOP.
+        ASSIGN COMPONENT 'CONTENT' OF STRUCTURE <ls_sba> TO <ls_sbc>.
+        IF sy-subrc = 0.
+          ASSIGN COMPONENT 'SERVICES' OF STRUCTURE <ls_sbc> TO <lt_sbs>.
+          IF sy-subrc = 0.
+            LOOP AT <lt_sbs> ASSIGNING FIELD-SYMBOL(<ls_sbsrv>).
+              ASSIGN COMPONENT 'SERVICE_CONTENT' OF STRUCTURE <ls_sbsrv> TO <lt_sbv>.
+              IF sy-subrc <> 0.
+                CONTINUE.
+              ENDIF.
+              LOOP AT <lt_sbv> ASSIGNING FIELD-SYMBOL(<ls_sbver>).
+                DATA(lv_sbsd) = lcl_wb=>comp( is_data = <ls_sbver> iv_path = `SRVD_REF-NAME` ).
+                IF lv_sbsd IS INITIAL.
+                  CONTINUE.
+                ENDIF.
+                READ TABLE lt_srvd TRANSPORTING NO FIELDS
+                     WITH KEY table_line = lv_sbsd.
+                IF sy-subrc <> 0.
+                  APPEND lv_sbsd TO lt_srvd.
+                ENDIF.
+              ENDLOOP.
+            ENDLOOP.
+          ENDIF.
+        ENDIF.
         LOOP AT lt_srvd INTO DATA(lv_srvd).
           lo_sbo->add_field( VALUE ty_field(
             name     = lcl_t=>t( d = 'Service-Definition' e = 'Service definition' )
@@ -9367,7 +9667,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
         lo_sbo->add_field( VALUE ty_field(
           name     = lcl_t=>t( d = 'Veröffentlicht' e = 'Published' )
-          rollname = COND #( WHEN ls_sba-published = abap_true
+          rollname = COND #( WHEN lcl_wb=>comp( is_data = <ls_sba>
+                                                iv_path = `PUBLISHED` ) = abap_true
                              THEN lcl_t=>t( d = 'ja' e = 'yes' )
                              ELSE lcl_t=>t( d = 'nein' e = 'no' ) ) ) ).
 
@@ -9637,14 +9938,14 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         SPLIT lv_up AT '"' INTO lv_up DATA(lv_rest).
       ENDIF.
 
-      FIND FIRST OCCURRENCE OF PCRE `CALL\s+FUNCTION\s+'([A-Z0-9_/][^']*)'`
-        IN lv_up SUBMATCHES lv_hit.
+      FIND FIRST OCCURRENCE OF REGEX `CALL\s+FUNCTION\s+'([A-Z0-9_/][^']*)'`
+        IN lv_up SUBMATCHES lv_hit ##REGEX_POSIX.
       IF sy-subrc = 0.
         APPEND CONV rs38l_fnam( lv_hit ) TO lt_fun.
       ENDIF.
 
-      FIND FIRST OCCURRENCE OF PCRE `^SUBMIT\s+([A-Z0-9_/]+)`
-        IN lv_up SUBMATCHES lv_hit.
+      FIND FIRST OCCURRENCE OF REGEX `^SUBMIT\s+([A-Z0-9_/]+)`
+        IN lv_up SUBMATCHES lv_hit ##REGEX_POSIX.
       IF sy-subrc = 0.
         CLEAR ls_ref.
         ls_ref-type = 'PROG'.
@@ -9656,34 +9957,34 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *     Table access. Dynamic forms - FROM (lv_name) - and internal tables
 *     - FROM @lt_x - do not match, the pattern insists on a letter.
       CLEAR lt_hits.
-      FIND ALL OCCURRENCES OF PCRE
+      FIND ALL OCCURRENCES OF REGEX
         `\b(?:FROM|JOIN|UPDATE)\s+([A-Z][A-Z0-9_/]{2,29})\b`
-        IN lv_up RESULTS DATA(lt_r1).
+        IN lv_up RESULTS DATA(lt_r1) ##REGEX_POSIX.
       LOOP AT lt_r1 INTO DATA(ls_r1).
         DATA(ls_sub1) = ls_r1-submatches[ 1 ].
         APPEND CONV sobj_name( lv_up+ls_sub1-offset(ls_sub1-length) ) TO lt_tab.
       ENDLOOP.
 
-      FIND ALL OCCURRENCES OF PCRE
+      FIND ALL OCCURRENCES OF REGEX
         `^(?:INSERT|MODIFY|DELETE)\s+([A-Z][A-Z0-9_/]{2,29})\s+FROM\b`
-        IN lv_up RESULTS DATA(lt_r2).
+        IN lv_up RESULTS DATA(lt_r2) ##REGEX_POSIX.
       LOOP AT lt_r2 INTO DATA(ls_r2).
         DATA(ls_sub2) = ls_r2-submatches[ 1 ].
         APPEND CONV sobj_name( lv_up+ls_sub2-offset(ls_sub2-length) ) TO lt_tab.
       ENDLOOP.
 
 *     Classes and interfaces: static access, a reference variable, or NEW.
-      FIND ALL OCCURRENCES OF PCRE
+      FIND ALL OCCURRENCES OF REGEX
         `\b([A-Z/][A-Z0-9_/]{2,29})\s*=>`
-        IN lv_up RESULTS DATA(lt_r3).
+        IN lv_up RESULTS DATA(lt_r3) ##REGEX_POSIX.
       LOOP AT lt_r3 INTO DATA(ls_r3).
         DATA(ls_sub3) = ls_r3-submatches[ 1 ].
         APPEND CONV sobj_name( lv_up+ls_sub3-offset(ls_sub3-length) ) TO lt_cls.
       ENDLOOP.
 
-      FIND ALL OCCURRENCES OF PCRE
+      FIND ALL OCCURRENCES OF REGEX
         `\b(?:REF\s+TO|NEW)\s+([A-Z/][A-Z0-9_/]{2,29})\b`
-        IN lv_up RESULTS DATA(lt_r4).
+        IN lv_up RESULTS DATA(lt_r4) ##REGEX_POSIX.
       LOOP AT lt_r4 INTO DATA(ls_r4).
         DATA(ls_sub4) = ls_r4-submatches[ 1 ].
         APPEND CONV sobj_name( lv_up+ls_sub4-offset(ls_sub4-length) ) TO lt_cls.
@@ -9698,8 +9999,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *     Every literal that could be an object name is collected and checked
 *     against the catalogue below. A name with a blank in it cannot match
 *     the pattern, so ordinary text literals fall away by themselves.
-      FIND ALL OCCURRENCES OF PCRE `'([A-Z][A-Z0-9_/]{2,29})'`
-        IN lv_up RESULTS DATA(lt_r5).
+      FIND ALL OCCURRENCES OF REGEX `'([A-Z][A-Z0-9_/]{2,29})'`
+        IN lv_up RESULTS DATA(lt_r5) ##REGEX_POSIX.
       LOOP AT lt_r5 INTO DATA(ls_r5).
         DATA(ls_sub5) = ls_r5-submatches[ 1 ].
         APPEND CONV sobj_name( lv_up+ls_sub5-offset(ls_sub5-length) ) TO lt_lit.
@@ -9711,15 +10012,15 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *     the class in parentheses behind the message number. Without the
 *     class the imported report shows the bare key - S:ZBLE_0001:006 -
 *     instead of the text.
-      FIND ALL OCCURRENCES OF PCRE `MESSAGE-ID\s+([A-Z0-9_/]+)`
-        IN lv_up RESULTS DATA(lt_r6).
+      FIND ALL OCCURRENCES OF REGEX `MESSAGE-ID\s+([A-Z0-9_/]+)`
+        IN lv_up RESULTS DATA(lt_r6) ##REGEX_POSIX.
       LOOP AT lt_r6 INTO DATA(ls_r6).
         DATA(ls_sub6) = ls_r6-submatches[ 1 ].
         APPEND CONV sobj_name( lv_up+ls_sub6-offset(ls_sub6-length) ) TO lt_msg.
       ENDLOOP.
 
-      FIND ALL OCCURRENCES OF PCRE `MESSAGE\s+[A-Z]?\d{3}\(([A-Z0-9_/]+)\)`
-        IN lv_up RESULTS DATA(lt_r7).
+      FIND ALL OCCURRENCES OF REGEX `MESSAGE\s+[A-Z]?\d{3}\(([A-Z0-9_/]+)\)`
+        IN lv_up RESULTS DATA(lt_r7) ##REGEX_POSIX.
       LOOP AT lt_r7 INTO DATA(ls_r7).
         DATA(ls_sub7) = ls_r7-submatches[ 1 ].
         APPEND CONV sobj_name( lv_up+ls_sub7-offset(ls_sub7-length) ) TO lt_msg.
@@ -9891,8 +10192,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *     Zielsystem scheitert SEGMENT_CREATE an Feldern, deren Datenelement
 *     es dort nicht gibt. Dieselbe Falle wie bei der Feldliste.
       lv_sg2 = iv_name.
-      SELECT SINGLE @abap_true FROM edisegment
-        WHERE segtyp = @lv_sg2 INTO @DATA(lv_isg2).
+      SELECT COUNT(*) FROM edisegment WHERE segtyp = @lv_sg2.
+      DATA(lv_isg2) = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
 
       IF lv_isg2 = abap_true.
         SELECT DISTINCT rollname FROM edsappl
@@ -9930,9 +10231,9 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *       INCLUDE TYPE and INCLUDE STRUCTURE are something else entirely -
 *       they add components to a structure definition. The optional
 *       IF FOUND and the trailing period are not part of the name.
-        FIND ALL OCCURRENCES OF PCRE
-             `(?im)^\s*INCLUDE\s+(?!TYPE\b|STRUCTURE\b)([A-Za-z][\w/]*)`
-             IN lv_psrc RESULTS DATA(lt_pinc).
+        FIND ALL OCCURRENCES OF REGEX
+             `^\s*INCLUDE\s+(?!TYPE\b|STRUCTURE\b)([A-Za-z][\w/]*)`
+             IN lv_psrc IGNORING CASE RESULTS DATA(lt_pinc) ##REGEX_POSIX.
         LOOP AT lt_pinc INTO DATA(ls_pinc).
           READ TABLE ls_pinc-submatches INTO DATA(ls_psub) INDEX 1.
           IF sy-subrc <> 0.

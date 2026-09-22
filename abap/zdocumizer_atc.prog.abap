@@ -1320,8 +1320,23 @@ CLASS lcl_collector_atc IMPLEMENTATION.
 
 *   SCIPRIORITIES traegt nur die Abweichungen. Was hier nicht steht,
 *   laeuft mit der Prioritaet, die die Checkklasse selbst vergibt.
-    SELECT checkname, checkcode, custom_prio FROM scipriorities
-      INTO TABLE @DATA(lt_p).
+*   Dynamisch gelesen: die Tabelle gibt es nicht auf jedem Stand. Fehlt
+*   sie, bleibt die Kundenspalte leer, statt dass der Report auf einem
+*   aelteren System nicht uebersetzt.
+    TYPES: BEGIN OF ty_p,
+             checkname   TYPE c LENGTH 30,
+             checkcode   TYPE c LENGTH 10,
+             custom_prio TYPE c LENGTH 1,
+           END OF ty_p.
+    DATA lt_p   TYPE STANDARD TABLE OF ty_p WITH EMPTY KEY.
+    DATA lv_ptab TYPE tabname.
+    lv_ptab = 'SCIPRIORITIES'.
+    TRY.
+        SELECT checkname, checkcode, custom_prio FROM (lv_ptab)
+          INTO CORRESPONDING FIELDS OF TABLE @lt_p.
+      CATCH cx_root.
+        CLEAR lt_p.
+    ENDTRY.
     LOOP AT lt_p INTO DATA(ls_p).
       INSERT VALUE ty_prio( test = ls_p-checkname
                             code = ls_p-checkcode
@@ -1337,9 +1352,20 @@ CLASS lcl_collector_atc IMPLEMENTATION.
 *   nicht gefiltert, weil dessen Schluessel zwischen Staenden wechselt -
 *   gezaehlt wird also "es gibt eine Ausnahme dazu", nicht "sie ist
 *   genehmigt". Das Dokument sagt es so.
-    SELECT chkclass, chkcode FROM satc_ci_exempt
-      WHERE deleted <> @abap_true
-      INTO TABLE @DATA(lt_e).
+    TYPES: BEGIN OF ty_e,
+             chkclass TYPE c LENGTH 30,
+             chkcode  TYPE c LENGTH 10,
+           END OF ty_e.
+    DATA lt_e    TYPE STANDARD TABLE OF ty_e WITH EMPTY KEY.
+    DATA lv_etab TYPE tabname.
+    lv_etab = 'SATC_CI_EXEMPT'.
+    TRY.
+        SELECT chkclass, chkcode FROM (lv_etab)
+          WHERE deleted <> @abap_true
+          INTO CORRESPONDING FIELDS OF TABLE @lt_e.
+      CATCH cx_root.
+        CLEAR lt_e.
+    ENDTRY.
     LOOP AT lt_e INTO DATA(ls_e).
       INSERT VALUE ty_prio( test = ls_e-chkclass
                             code = ls_e-chkcode ) INTO TABLE mt_exmp.
@@ -1862,7 +1888,7 @@ CLASS lcl_renderer_html IMPLEMENTATION.
       " operator ignores trailing blanks in the search operand, which is
       " why "line CS space" is always true.
       lv_len = strlen( lv_line ).
-      FIND PCRE '^&[A-Z0-9_]+&$' IN lv_line.
+      FIND REGEX '^&[A-Z0-9_]+&$' IN lv_line ##REGEX_POSIX.
       IF sy-subrc = 0.
         rv_html = |{ rv_html }<p class="sec">{ esc(
                     itf_section( substring( val = lv_line off = 1 len = lv_len - 2 ) ) ) }</p>|.
@@ -1876,9 +1902,9 @@ CLASS lcl_renderer_html IMPLEMENTATION.
       " two- to three-character markers are handled generically; cross
       " references <DS:...> are added. All of them are rendered in bold,
       " the closing marker </> applies to every one of them.
-      REPLACE ALL OCCURRENCES OF PCRE '&lt;DS:[^&]+&gt;' IN lv_line WITH '<b>'.
+      REPLACE ALL OCCURRENCES OF REGEX '&lt;DS:[^&]+&gt;' IN lv_line WITH '<b>' ##REGEX_POSIX.
       REPLACE ALL OCCURRENCES OF '&lt;/&gt;' IN lv_line WITH '</b>'.
-      REPLACE ALL OCCURRENCES OF PCRE '&lt;[A-Z0-9]{2,3}&gt;' IN lv_line WITH '<b>'.
+      REPLACE ALL OCCURRENCES OF REGEX '&lt;[A-Z0-9]{2,3}&gt;' IN lv_line WITH '<b>' ##REGEX_POSIX.
 
       " Balance the markup per line. In ITF markers also run across line
       " boundaries; without balancing an open marker would style the rest

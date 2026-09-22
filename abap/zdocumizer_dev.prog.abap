@@ -11152,7 +11152,7 @@ FORM f4_sval.
 * Same rule as for the type list: dictionary types only, no string.
   TYPES: BEGIN OF ty_hit,
            name TYPE sobj_name,
-           text TYPE char60,
+           text TYPE ddtext,
          END OF ty_hit.
 
   DATA lt_hit  TYPE STANDARD TABLE OF ty_hit.

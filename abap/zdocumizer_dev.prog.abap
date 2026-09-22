@@ -3034,7 +3034,7 @@ CLASS lcl_importer IMPLEMENTATION.
       DATA lv_cont TYPE xstring.
       CLEAR lv_cont.
       TRY.
-          lv_cont = cl_web_http_utility=>decode_x_base64( ls_row-src ).
+          lv_cont = cl_http_utility=>decode_x_base64( encoded = ls_row-src ).
         CATCH cx_root.
           lv_bad = lv_bad + 1.
           CONTINUE.
@@ -6565,7 +6565,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
           attrs = VALUE #( ( name = 'PATH'     value = lv_path )
                            ( name = 'MIMETYPE' value = lv_mime )
                            ( name = 'SIZE'     value = |{ lv_size }| ) )
-          src   = cl_web_http_utility=>encode_x_base64( lv_cont ) ) ).
+          src   = cl_http_utility=>encode_x_base64( unencoded = lv_cont ) ) ).
       ENDLOOP.
     ENDWHILE.
 

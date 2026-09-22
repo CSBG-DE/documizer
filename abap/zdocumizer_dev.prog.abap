@@ -7434,7 +7434,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
       WHEN 'WAPA'.
 *       Eine BSP-/UI5-Anwendung traegt ihre Beschreibung nicht in einer
-*       Texttabelle je Sprache, sondern als DESCRIPT im Attributsatz -
+*       Texttabelle je Sprache, sondern als TEXT im Attributsatz -
 *       in der Mastersprache. Sie kommt ueber dieselbe API wie die
 *       Definitionsdaten (def_wapa); ein Katalogeintrag ohne Anwendung
 *       dahinter liefert dabei nichts. Ohne diesen Zweig bekamen die
@@ -7452,7 +7452,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
           lo_wapp->get_attributes( IMPORTING  p_attributes = ls_wattr
                                    EXCEPTIONS OTHERS       = 1 ).
           IF sy-subrc = 0.
-            rv_text = ls_wattr-descript.
+            rv_text = ls_wattr-text.
           ENDIF.
         ENDIF.
 
@@ -9353,9 +9353,9 @@ CLASS lcl_collector_dev IMPLEMENTATION.
               CONTINUE.
             ENDIF.
             READ TABLE lt_srvd TRANSPORTING NO FIELDS
-                 WITH KEY table_line = CONV string( ls_sbver-srvd_ref-name ).
+                 WITH KEY table_line = ls_sbver-srvd_ref-name.
             IF sy-subrc <> 0.
-              APPEND CONV string( ls_sbver-srvd_ref-name ) TO lt_srvd.
+              APPEND ls_sbver-srvd_ref-name TO lt_srvd.
             ENDIF.
           ENDLOOP.
         ENDLOOP.
@@ -10549,7 +10549,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
             CONTINUE.
           ENDIF.
         ENDIF.
-        INSERT CONV ddlname( ls_ddl-object_name ) INTO TABLE lt_ddls.
+        INSERT ls_ddl-object_name INTO TABLE lt_ddls.
       ENDLOOP.
 
       DATA lv_last_type TYPE trobjtype.
@@ -10674,6 +10674,16 @@ CLASS lcl_collector_dev IMPLEMENTATION.
             lo_ochap->set_source( lv_source ).
             mv_n_src = mv_n_src + 1.
           ENDIF.
+        ENDIF.
+
+*       Definitionsdaten auch im Paketlauf. Bisher entstanden sie nur im
+*       Einzelobjektmodus (document_object); ein Paketexport trug trotz
+*       angehakter Definitionsdaten keine einzige und liess sich nicht
+*       importieren.
+        IF mv_def = abap_true.
+          add_definition( iv_type    = ls_tadir-object_type
+                          iv_name    = ls_tadir-object_name
+                          io_chapter = lo_ochap ).
         ENDIF.
 
       ENDLOOP.

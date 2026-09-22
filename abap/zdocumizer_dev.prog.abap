@@ -192,6 +192,8 @@ TYPES: BEGIN OF ty_meta,
          truncated  TYPE abap_bool,
          node_limit TYPE i,
          node_total TYPE i,
+         src_trunc  TYPE abap_bool,
+         src_limit  TYPE i,
        END OF ty_meta.
 
 *   Eine Paketregel: das Paket, in dem ein Objekt im Quellsystem lag,
@@ -740,6 +742,12 @@ CLASS lcl_renderer_xml IMPLEMENTATION.
     ENDIF.
     write_text_element( iv_name = 'node_limit' iv_value = |{ ls_meta-node_limit }| ).
     write_text_element( iv_name = 'node_total' iv_value = |{ ls_meta-node_total }| ).
+    IF ls_meta-src_trunc = abap_true.
+      write_text_element( iv_name = 'src_truncated' iv_value = 'true' ).
+    ELSE.
+      write_text_element( iv_name = 'src_truncated' iv_value = 'false' ).
+    ENDIF.
+    write_text_element( iv_name = 'src_limit' iv_value = |{ ls_meta-src_limit }| ).
     mo_writer->close_element( ).
 
     mo_writer->open_element( name = 'chapters' ).
@@ -924,7 +932,8 @@ CLASS lcl_parser_xml IMPLEMENTATION.
               ENDLOOP.
 
             WHEN 'system' OR 'client' OR 'created_by' OR 'created_at'
-              OR 'language' OR 'truncated' OR 'node_limit' OR 'node_total'.
+              OR 'language' OR 'truncated' OR 'node_limit' OR 'node_total'
+              OR 'src_truncated' OR 'src_limit'.
               lv_target = lv_name.
 
             WHEN 'chapter'.
@@ -1066,9 +1075,14 @@ CLASS lcl_parser_xml IMPLEMENTATION.
               WHEN 'language'.   ls_meta-language   = lv_value.
               WHEN 'node_limit'. ls_meta-node_limit = CONV i( lv_value ).
               WHEN 'node_total'. ls_meta-node_total = CONV i( lv_value ).
+              WHEN 'src_limit'.  ls_meta-src_limit  = CONV i( lv_value ).
               WHEN 'truncated'.
                 IF lv_value = 'true'.
                   ls_meta-truncated = abap_true.
+                ENDIF.
+              WHEN 'src_truncated'.
+                IF lv_value = 'true'.
+                  ls_meta-src_trunc = abap_true.
                 ENDIF.
               WHEN 'title'.
                 IF lo_current IS BOUND.
@@ -5224,7 +5238,7 @@ CLASS lcl_renderer_html IMPLEMENTATION.
          |<td>{ ls_meta-node_total } { lcl_t=>t( d = 'gefunden' e = 'found' ) }</td></tr>| ).
     add( '</table>' ).
 
-    IF ls_meta-truncated = abap_true.
+    IF ls_meta-node_limit > 0 AND ls_meta-node_total > ls_meta-node_limit.
       add( |<p class="warn">{ lcl_t=>t(
              d = |Achtung: Von { ls_meta-node_total } Objekten sind nur | &&
                  |{ ls_meta-node_limit } enthalten. Das Dokument ist | &&
@@ -5232,6 +5246,17 @@ CLASS lcl_renderer_html IMPLEMENTATION.
              e = |Caution: of { ls_meta-node_total } objects only | &&
                  |{ ls_meta-node_limit } are contained. The document is | &&
                  |incomplete.| ) }</p>| ).
+    ENDIF.
+
+    IF ls_meta-src_trunc = abap_true.
+      add( |<p class="warn">{ lcl_t=>t(
+             d = |Achtung: Mindestens ein Quelltext ist bei | &&
+                 |{ ls_meta-src_limit } Zeilen abgeschnitten. Die | &&
+                 |Markierung „* ... gekürzt bei" steht im jeweiligen | &&
+                 |Quelltext.|
+             e = |Caution: at least one source is truncated at | &&
+                 |{ ls_meta-src_limit } lines. The marker | &&
+                 |"* ... truncated at" is in the source concerned.| ) }</p>| ).
     ENDIF.
 
     add( |<h2>{ lcl_t=>t( d = 'Inhalt' e = 'Contents' ) }</h2><ul class="toc">| ).
@@ -5521,6 +5546,7 @@ CLASS lcl_collector_dev DEFINITION.
     DATA mv_n_use  TYPE i.
     DATA mv_n_call TYPE i.
     DATA mv_n_src  TYPE i.
+    DATA mv_src_trunc TYPE abap_bool.
     DATA mv_n_pack TYPE i.
     DATA mv_n_obj  TYPE i.
     DATA mv_n_tot  TYPE i.
@@ -7406,6 +7432,30 @@ CLASS lcl_collector_dev IMPLEMENTATION.
           ENDTRY.
         ENDIF.
 
+      WHEN 'WAPA'.
+*       Eine BSP-/UI5-Anwendung traegt ihre Beschreibung nicht in einer
+*       Texttabelle je Sprache, sondern als DESCRIPT im Attributsatz -
+*       in der Mastersprache. Sie kommt ueber dieselbe API wie die
+*       Definitionsdaten (def_wapa); ein Katalogeintrag ohne Anwendung
+*       dahinter liefert dabei nichts. Ohne diesen Zweig bekamen die
+*       beiden Reports gar keine Beschreibung, jeder andere Typ schon.
+        DATA lo_wapp  TYPE REF TO cl_o2_api_application.
+        DATA ls_wattr TYPE o2applattr.
+        cl_o2_api_application=>load(
+          EXPORTING  p_application_name  = CONV o2applname( iv_name )
+          IMPORTING  p_application       = lo_wapp
+          EXCEPTIONS object_not_existing = 1
+                     permission_failure  = 2
+                     error_occured       = 3
+                     OTHERS              = 4 ).
+        IF sy-subrc = 0 AND lo_wapp IS BOUND.
+          lo_wapp->get_attributes( IMPORTING  p_attributes = ls_wattr
+                                   EXCEPTIONS OTHERS       = 1 ).
+          IF sy-subrc = 0.
+            rv_text = ls_wattr-descript.
+          ENDIF.
+        ENDIF.
+
     ENDCASE.
 
   ENDMETHOD.
@@ -7503,7 +7553,6 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     DATA lt_src  TYPE string_table.
     DATA lt_incl TYPE STANDARD TABLE OF progname.
     DATA lv_prog TYPE syrepid.
-    DATA lv_i    TYPE i.
 
     CASE iv_type.
 
@@ -7537,29 +7586,19 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         ENDLOOP.
 
       WHEN 'CLAS' OR 'INTF'.
-        " The name of the class pool is the object name padded to 30
-        " characters with equals signs, plus CP.
-        lv_prog = iv_name.
-        lv_i = strlen( iv_name ).
-        WHILE lv_i < 30.
-          lv_prog = |{ lv_prog }=|.
-          lv_i = lv_i + 1.
-        ENDWHILE.
-        lv_prog = |{ lv_prog }CP|.
-        CALL FUNCTION 'RS_GET_ALL_INCLUDES'
-          EXPORTING
-            program             = lv_prog
-            with_class_includes = abap_true
-          TABLES
-            includetab          = lt_incl
-          EXCEPTIONS
-            not_existent        = 1
-            no_program          = 2
-            OTHERS              = 3.
-        LOOP AT lt_incl INTO DATA(ls_i2).
-          append_report( EXPORTING iv_prog = ls_i2
-                         CHANGING  ct_source = lt_src ).
-        ENDLOOP.
+*       Die generierten Includes des Klassenpools (CCDEF, CCIMP, CU, CO,
+*       CI ...) stehen in interner Reihenfolge - Implementierung vor
+*       Definition, ohne CLASS ... IMPLEMENTATION und ohne ENDCLASS, mit
+*       leeren Standard-Includes als Rauschen. Aus ihnen laesst sich
+*       keine Klasse nachbauen. Die quelltextbasierte Fassung von
+*       CL_OO_FACTORY (dieselbe, die auch der Reimport ueber def_clif
+*       liest) traegt Definition und Implementierung in einer Quelle
+*       zusammen - das ist die Kopiervorlage.
+        DATA(lv_clifsrc) = clif_source( iv_name ).
+        IF lv_clifsrc IS NOT INITIAL.
+          SPLIT lv_clifsrc AT cl_abap_char_utilities=>newline
+                INTO TABLE lt_src.
+        ENDIF.
 
       WHEN 'BDEF' OR 'SRVD' OR 'DDLX'.
 *       Verhaltensdefinition, Service-Definition und Metadata Extension
@@ -7631,6 +7670,10 @@ CLASS lcl_collector_dev IMPLEMENTATION.
                     |* ... { lcl_t=>t( d = `gekürzt bei` e = `truncated at` ) }| &&
                     | { mv_maxsrc } { lcl_t=>t( d = `von` e = `of` ) }| &&
                     | { lines( lt_src ) }|.
+*       Mindestens ein Quelltext ist an der Zeilengrenze abgeschnitten.
+*       Das gehoert in den Kopf, sonst meldet er Vollstaendigkeit, die
+*       nicht besteht.
+        mv_src_trunc = abap_true.
         EXIT.
       ENDIF.
       IF rv_source IS INITIAL.
@@ -8697,14 +8740,29 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
 *       Kein Segment, oder eines ohne Feldsaetze: der gewohnte Weg.
         IF lt_f IS INITIAL.
-          SELECT fieldname, rollname, keyflag FROM dd03l
+          SELECT fieldname, rollname, keyflag, datatype, leng FROM dd03l
             WHERE tabname = @lv_tab AND as4local = 'A' AND fieldname NOT LIKE '.%'
             ORDER BY position
             INTO TABLE @DATA(lt_d3).
           LOOP AT lt_d3 INTO DATA(ls_d3).
+            DATA lv_ftype TYPE string.
+            IF ls_d3-rollname IS NOT INITIAL.
+              lv_ftype = ls_d3-rollname.
+            ELSE.
+*             Kein Datenelement: der eingebaute Typ tritt an seine
+*             Stelle, damit die Spalte „Typ / Datenelement" nicht leer
+*             bleibt - dieselbe Darstellung wie in der CDS-Feldliste
+*             (CHAR 120, INT4, STRG). Fuehrende Nullen der Laenge fallen
+*             textuell weg, INT4 und STRG bleiben so ohne Laengenrest.
+              DATA lv_flen TYPE string.
+              lv_flen = ls_d3-leng.
+              SHIFT lv_flen LEFT DELETING LEADING '0'.
+              lv_ftype = |{ ls_d3-datatype } { lv_flen }|.
+              CONDENSE lv_ftype.
+            ENDIF.
             APPEND VALUE ty_field(
               name     = ls_d3-fieldname
-              rollname = ls_d3-rollname
+              rollname = lv_ftype
               keyflag  = COND #( WHEN ls_d3-keyflag = 'X' THEN abap_true
                                  ELSE abap_false ) ) TO lt_f.
           ENDLOOP.
@@ -9234,6 +9292,86 @@ CLASS lcl_collector_dev IMPLEMENTATION.
                                             rollname = ls_d-objecttype ) ).
         ENDLOOP.
         io_chapter->add_object( lo_o3 ).
+
+      WHEN 'SRVB'.
+*       Ein Service-Binding hat keinen Quelltext, und die volle Struktur
+*       ist ueberwiegend Verwaltungskram. Drei Angaben tragen die
+*       Aussage: die Bindungsart (z.B. ODATA V2), die verknuepfte
+*       Service-Definition - die sonst nirgends im Dokument steht - und
+*       ob das Binding veroeffentlicht ist. Das gehoert zu den Details
+*       (nicht an die Definitionsdaten gebunden), damit es auch dann
+*       erscheint, wenn nur die Details gezogen werden.
+        DATA lo_sbd TYPE REF TO if_wb_object_data_model.
+        DATA ls_sba TYPE cl_srvb_object_data=>ty_object_data.
+        DATA(ls_sbt) = lcl_wb=>obj_type( 'SRVB' ).
+        IF ls_sbt-objtype_tr IS INITIAL.
+          RETURN.
+        ENDIF.
+        TRY.
+            cl_wb_object_operator_factory=>create_object_operator(
+              object_type = ls_sbt
+              object_key  = CONV seu_objkey( iv_name )
+            )->read( EXPORTING version        = 'A'
+                               data_selection = if_wb_object_data_selection_co=>c_all_data
+                     IMPORTING eo_object_data = lo_sbd ).
+            IF lo_sbd IS BOUND.
+              lo_sbd->get_selected_data(
+                EXPORTING p_data_selection = if_wb_object_data_selection_co=>c_all_data
+                IMPORTING p_data           = ls_sba ).
+            ENDIF.
+          CATCH cx_root.
+            RETURN.
+        ENDTRY.
+        IF ls_sba-content-bind_type IS INITIAL.
+          RETURN.
+        ENDIF.
+
+        DATA(lo_sbo) = NEW lcl_object( iv_type = CONV string( iv_type )
+                                       iv_name = CONV string( iv_name ) ).
+        lo_sbo->set_note( lcl_t=>t( d = 'Service-Binding' e = 'Service binding' ) ).
+
+*       Bindungsart aus Kategorie und Version, z.B. "ODATA V2"; faellt
+*       einer der beiden aus, bleibt der technische Bindungstyp.
+        DATA lv_bkind TYPE string.
+        lv_bkind = condense( |{ ls_sba-content-bind_type_category } | &&
+                             |{ ls_sba-content-bind_type_version }| ).
+        IF lv_bkind IS INITIAL.
+          lv_bkind = ls_sba-content-bind_type.
+        ENDIF.
+        lo_sbo->add_field( VALUE ty_field(
+          name     = lcl_t=>t( d = 'Bindungsart' e = 'Binding type' )
+          rollname = lv_bkind ) ).
+
+*       Die verknuepfte Service-Definition steht in den Versionszeilen
+*       der Services; bei einem Binding meist fuer alle Versionen
+*       dieselbe. Jede genannte wird einmal aufgefuehrt.
+        DATA lt_srvd TYPE STANDARD TABLE OF string WITH EMPTY KEY.
+        CLEAR lt_srvd.
+        LOOP AT ls_sba-content-services INTO DATA(ls_sbsrv).
+          LOOP AT ls_sbsrv-service_content INTO DATA(ls_sbver).
+            IF ls_sbver-srvd_ref-name IS INITIAL.
+              CONTINUE.
+            ENDIF.
+            READ TABLE lt_srvd TRANSPORTING NO FIELDS
+                 WITH KEY table_line = CONV string( ls_sbver-srvd_ref-name ).
+            IF sy-subrc <> 0.
+              APPEND CONV string( ls_sbver-srvd_ref-name ) TO lt_srvd.
+            ENDIF.
+          ENDLOOP.
+        ENDLOOP.
+        LOOP AT lt_srvd INTO DATA(lv_srvd).
+          lo_sbo->add_field( VALUE ty_field(
+            name     = lcl_t=>t( d = 'Service-Definition' e = 'Service definition' )
+            rollname = lv_srvd ) ).
+        ENDLOOP.
+
+        lo_sbo->add_field( VALUE ty_field(
+          name     = lcl_t=>t( d = 'Veröffentlicht' e = 'Published' )
+          rollname = COND #( WHEN ls_sba-published = abap_true
+                             THEN lcl_t=>t( d = 'ja' e = 'yes' )
+                             ELSE lcl_t=>t( d = 'nein' e = 'no' ) ) ) ).
+
+        io_chapter->add_object( lo_sbo ).
 
     ENDCASE.
 
@@ -10294,9 +10432,11 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         created_by = sy-uname
         created_at = |{ sy-datum DATE = ISO } { sy-uzeit TIME = ISO }|
         language   = mv_langu
-        truncated  = lv_trunc
+        truncated  = boolc( lv_trunc = abap_true OR mv_src_trunc = abap_true )
         node_limit = mv_maxobj
-        node_total = mv_n_tot ) ).
+        node_total = mv_n_tot
+        src_trunc  = mv_src_trunc
+        src_limit  = mv_maxsrc ) ).
       RETURN.
     ENDIF.
 
@@ -10386,6 +10526,32 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         WHERE devclass = @lv_pack AND delflag = @abap_true
         INTO TABLE @DATA(lt_gone).
 
+*     Eine CDS-View steht im Katalog zweimal: als DDL-Quelle (DDLS) mit
+*     allem und als Strukturobjekt (STOB) mit nur Titel und Beschreibung.
+*     Steht die DDL-Quelle im selben Export, traegt der STOB-Eintrag
+*     nichts Eigenes bei. Er wird unterdrueckt - gleicher Gedanke wie der
+*     Filter fuer geloeschte Objekte. Die Zuordnung STOB -> DDL-Quelle
+*     steht in DDLDEPENDENCY; nur die tatsaechlich enthaltenen DDL-
+*     Quellen zaehlen, deshalb dieselben Filter wie in der Hauptschleife.
+      DATA lt_ddls TYPE SORTED TABLE OF ddlname WITH UNIQUE KEY table_line.
+      CLEAR lt_ddls.
+      LOOP AT lt_tadir INTO DATA(ls_ddl) WHERE object_type = 'DDLS'.
+        IF s_objtyp[] IS NOT INITIAL AND ls_ddl-object_type NOT IN s_objtyp.
+          CONTINUE.
+        ENDIF.
+        IF s_objnam[] IS NOT INITIAL AND ls_ddl-object_name NOT IN s_objnam.
+          CONTINUE.
+        ENDIF.
+        IF lt_gone IS NOT INITIAL.
+          READ TABLE lt_gone TRANSPORTING NO FIELDS
+               WITH KEY object = 'DDLS' obj_name = ls_ddl-object_name.
+          IF sy-subrc = 0.
+            CONTINUE.
+          ENDIF.
+        ENDIF.
+        INSERT CONV ddlname( ls_ddl-object_name ) INTO TABLE lt_ddls.
+      ENDLOOP.
+
       DATA lv_last_type TYPE trobjtype.
       DATA lo_tchap TYPE REF TO lcl_chapter.
       DATA lv_tno TYPE i.
@@ -10411,6 +10577,26 @@ CLASS lcl_collector_dev IMPLEMENTATION.
                         obj_name = ls_tadir-object_name.
           IF sy-subrc = 0.
             CONTINUE.
+          ENDIF.
+        ENDIF.
+
+*       STOB-Duplikat einer CDS-View unterdruecken, wenn ihre DDL-Quelle
+*       im selben Export steht. Vor dem Zaehler, damit der leere Eintrag
+*       auch nicht in node_total mitzaehlt.
+        IF ls_tadir-object_type = 'STOB' AND lt_ddls IS NOT INITIAL.
+          DATA lv_stob TYPE ddldependency-objectname.
+          DATA lv_sddl TYPE ddldependency-ddlname.
+          lv_stob = ls_tadir-object_name.
+          CLEAR lv_sddl.
+          SELECT SINGLE ddlname FROM ddldependency
+            WHERE objectname = @lv_stob AND objecttype = 'STOB' AND state = 'A'
+            INTO @lv_sddl.
+          IF sy-subrc = 0 AND lv_sddl IS NOT INITIAL.
+            READ TABLE lt_ddls TRANSPORTING NO FIELDS
+                 WITH KEY table_line = lv_sddl.
+            IF sy-subrc = 0.
+              CONTINUE.
+            ENDIF.
           ENDIF.
         ENDIF.
 
@@ -10502,9 +10688,11 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       created_by = sy-uname
       created_at = |{ sy-datum DATE = ISO } { sy-uzeit TIME = ISO }|
       language   = mv_langu
-      truncated  = lv_trunc
+      truncated  = boolc( lv_trunc = abap_true OR mv_src_trunc = abap_true )
       node_limit = mv_maxobj
-      node_total = mv_n_tot ) ).
+      node_total = mv_n_tot
+      src_trunc  = mv_src_trunc
+      src_limit  = mv_maxsrc ) ).
 
   ENDMETHOD.
 
@@ -11505,8 +11693,11 @@ START-OF-SELECTION.
     WRITE: / lcl_t=>ui( d = `XML-Zeichen                      :` e = `XML characters                   :` ), strlen( lv_xml ).
   ENDIF.
 
-  IF ls_docmeta-truncated = abap_true.
+  IF ls_docmeta-node_limit > 0 AND ls_docmeta-node_total > ls_docmeta-node_limit.
     WRITE: / lcl_t=>ui( d = `ACHTUNG: Objektgrenze erreicht, Dokument unvollständig.` e = `CAUTION: object limit reached, document is incomplete.` ).
+  ENDIF.
+  IF ls_docmeta-src_trunc = abap_true.
+    WRITE: / lcl_t=>ui( d = `ACHTUNG: Quelltext an der Zeilengrenze abgeschnitten.` e = `CAUTION: source truncated at the line limit.` ).
   ENDIF.
 
   IF p_rtest = abap_true AND lv_xml IS NOT INITIAL.

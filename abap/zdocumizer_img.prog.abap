@@ -1431,6 +1431,7 @@ CLASS lcl_cust IMPLEMENTATION.
     DATA lv_max     TYPE i.
     DATA lv_kf      TYPE string.
     DATA lv_kflen   TYPE i.
+    DATA lv_kftype  TYPE c LENGTH 1.
     DATA lv_in      TYPE string.
     DATA lv_tabname TYPE tabname.
     FIELD-SYMBOLS <lt_data> TYPE STANDARD TABLE.
@@ -1457,8 +1458,9 @@ CLASS lcl_cust IMPLEMENTATION.
           CONTINUE.
         ENDIF.
         IF ls_k-inttype = 'C' OR ls_k-inttype = 'N'.
-          lv_kf    = ls_k-fieldname.
-          lv_kflen = ls_k-leng.
+          lv_kf     = ls_k-fieldname.
+          lv_kflen  = ls_k-leng.
+          lv_kftype = ls_k-inttype.
         ENDIF.
         EXIT.
       ENDLOOP.
@@ -1476,10 +1478,19 @@ CLASS lcl_cust IMPLEMENTATION.
             IF sy-tabix > 300.
               EXIT.
             ENDIF.
-*           Ein Wert, der laenger ist als das Feld, kann nicht passen - und
+*           Ein Wert, der nicht ins Feld passt, kann nichts finden - und
 *           bringt aeltere Releases zum Abbruch (SAPSQL_DATA_LOSS), statt
-*           nur nichts zu finden.
+*           nur nichts zu finden. Drei Faelle: zu lang; ein generischer
+*           Transportschluessel, der einen Platzhalter enthaelt; und bei
+*           einem Ziffernfeld alles, was keine Ziffer in voller Laenge ist.
             IF strlen( lv_key ) > lv_kflen.
+              CONTINUE.
+            ENDIF.
+            IF lv_key CA '*%'.
+              CONTINUE.
+            ENDIF.
+            IF lv_kftype = 'N'
+              AND ( lv_key CN '0123456789' OR strlen( lv_key ) <> lv_kflen ).
               CONTINUE.
             ENDIF.
             REPLACE ALL OCCURRENCES OF |'| IN lv_key WITH |''|.

@@ -12,3 +12,7 @@ startclaude_*.bat
 # Kommandozeilen dieser Maschine und gehoeren niemandem sonst.
 .claude/settings.local.json
 .claude/settings.local.json.bak
+
+# Wegwerf-Arbeitsverzeichnis der Assistant-Sitzung (Probe-Objekte,
+# Zwischenergebnisse) - gehoert nicht ins Repository.
+scratchpad/

@@ -5986,6 +5986,56 @@ CLASS lcl_collector_dev DEFINITION.
       IMPORTING iv_type          TYPE trobjtype
                 iv_name          TYPE sobj_name
       RETURNING VALUE(rt_source) TYPE string_table.
+*   Smart Form (SSFO): Baum, Schnittstelle, globale Definitionen und das
+*   Coding der Code-Knoten. Nichts davon steht in einer lesbaren
+*   DDIC-Tabelle - die Struktur liegt allein im Objektmodell des Form
+*   Builders vor und wird ueber CL_SSF_FB_SMART_FORM geladen.
+    METHODS ssfo_form
+      IMPORTING iv_name        TYPE sobj_name
+      RETURNING VALUE(ro_form) TYPE REF TO cl_ssf_fb_smart_form.
+    METHODS ssfo_type_label
+      IMPORTING iv_type         TYPE clike
+      RETURNING VALUE(rv_label) TYPE string.
+    METHODS ssfo_tree
+      IMPORTING io_node    TYPE REF TO cl_ssf_fb_node
+                iv_outline TYPE string
+      CHANGING  ct_field   TYPE ty_fields.
+    METHODS ssfo_code
+      IMPORTING io_node TYPE REF TO cl_ssf_fb_node
+      CHANGING  ct_src  TYPE string_table.
+*   Adobe Form (SFPF) und Adobe-Form-Schnittstelle (SFPI): Schnittstelle,
+*   globale Definitionen, Coding und - beim Formular - der Kontextbaum.
+*   Nichts davon steht in einer lesbaren DDIC-Tabelle; die Struktur liegt
+*   als XML in der Ablage und wird ueber das Objektmodell der Form-
+*   Workbench (CL_FP_WB_FORM / CL_FP_WB_INTERFACE) geladen.
+    METHODS sfpf_form
+      IMPORTING iv_name        TYPE sobj_name
+      RETURNING VALUE(ro_form) TYPE REF TO if_fp_form.
+    METHODS sfpi_ifc_data
+      IMPORTING iv_name        TYPE sobj_name
+      RETURNING VALUE(ro_data) TYPE REF TO if_fp_interface_data.
+    METHODS sfpi_source
+      IMPORTING iv_name          TYPE sobj_name
+      RETURNING VALUE(rt_source) TYPE string_table.
+    METHODS sfp_trim_code
+      IMPORTING it_code         TYPE tfpcoding
+      RETURNING VALUE(rt_lines) TYPE string_table.
+    METHODS sfpf_node_label
+      IMPORTING iv_type         TYPE i
+      RETURNING VALUE(rv_label) TYPE string.
+    METHODS sfpf_context
+      IMPORTING io_node    TYPE REF TO if_fp_node
+                iv_outline TYPE string
+      CHANGING  ct_field   TYPE ty_fields.
+    METHODS sfp_param_rows
+      IMPORTING io_obj TYPE REF TO lcl_object
+                it_par TYPE tfpiopar
+                iv_dir TYPE c.
+    METHODS add_sfp_ifc_blocks
+      IMPORTING iv_type    TYPE trobjtype
+                iv_name    TYPE sobj_name
+                iv_ifname  TYPE sobj_name
+                io_chapter TYPE REF TO lcl_chapter.
     METHODS append_report
       IMPORTING iv_prog   TYPE syrepid
       CHANGING  ct_source TYPE string_table.
@@ -6132,6 +6182,9 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       WHEN 'DEVC'. rv_title = lcl_t=>t( d = 'Pakete' e = 'Packages' ).
       WHEN 'FUNC'. rv_title = lcl_t=>t( d = 'Funktionsbausteine' e = 'Function modules' ).
       WHEN 'VCLS'. rv_title = lcl_t=>t( d = 'View-Cluster' e = 'View clusters' ).
+      WHEN 'SSFO'. rv_title = lcl_t=>t( d = 'Smart Forms' e = 'Smart Forms' ).
+      WHEN 'SFPF'. rv_title = lcl_t=>t( d = 'Adobe Forms (Formulare)' e = 'Adobe Forms (forms)' ).
+      WHEN 'SFPI'. rv_title = lcl_t=>t( d = 'Adobe Forms (Schnittstellen)' e = 'Adobe Forms (interfaces)' ).
       WHEN OTHERS. rv_title = |{ lcl_t=>t( d = `Objekttyp` e = `Object type` ) } { iv_type }|.
     ENDCASE.
   ENDMETHOD.
@@ -7921,6 +7974,75 @@ CLASS lcl_collector_dev IMPLEMENTATION.
           SPLIT lv_cds AT cl_abap_char_utilities=>newline INTO TABLE lt_src.
         ENDIF.
 
+      WHEN 'SSFO'.
+*       Ein Smart Form hat keinen zusammenhaengenden Quelltext. Was einem
+*       Quelltext am naechsten kommt, ist das ABAP der Form: die globalen
+*       Typdefinitionen, die globalen Routinen samt Initialisierung und
+*       das Coding der Code-Knoten. Zusammengetragen ergibt das einen
+*       lesbaren Block - und speist zugleich die Aufrufsuche, die daraus
+*       Funktionsbausteine, Tabellen und Klassen der Form erkennt.
+        DATA(lo_sf2) = ssfo_form( iv_name ).
+        IF lo_sf2 IS NOT BOUND.
+          RETURN.
+        ENDIF.
+        APPEND |* Smart Form { iv_name }| TO lt_src.
+        APPEND `` TO lt_src.
+        IF lo_sf2->gtypes IS NOT INITIAL.
+          APPEND |*--- { lcl_t=>t( d = 'Globale Typen' e = 'Global types' ) } ---| TO lt_src.
+          LOOP AT lo_sf2->gtypes INTO DATA(lv_gt).
+            APPEND lv_gt TO lt_src.
+          ENDLOOP.
+          APPEND `` TO lt_src.
+        ENDIF.
+        IF lo_sf2->gcoding IS NOT INITIAL.
+          APPEND |*--- { lcl_t=>t( d = 'Globale Routinen / Initialisierung'
+                                   e = 'Global routines / initialization' ) } ---| TO lt_src.
+          LOOP AT lo_sf2->gcoding INTO DATA(lv_gc).
+            APPEND lv_gc TO lt_src.
+          ENDLOOP.
+          APPEND `` TO lt_src.
+        ENDIF.
+        DATA lt_cnodes TYPE string_table.
+        CLEAR lt_cnodes.
+        LOOP AT lo_sf2->varheader INTO DATA(ls_vhs).
+          ssfo_code( EXPORTING io_node = ls_vhs-pagetree
+                     CHANGING  ct_src  = lt_cnodes ).
+        ENDLOOP.
+        IF lt_cnodes IS NOT INITIAL.
+          APPEND LINES OF lt_cnodes TO lt_src.
+        ENDIF.
+
+      WHEN 'SFPI'.
+*       Eine Adobe-Form-Schnittstelle hat keinen zusammenhaengenden
+*       Quelltext. Was einem Quelltext am naechsten kommt, sind die
+*       globalen Typen, die Initialisierung und die Formularroutinen der
+*       Schnittstelle. Zusammengetragen ergibt das einen lesbaren Block -
+*       und speist zugleich die Aufrufsuche.
+        DATA(lt_isrc) = sfpi_source( iv_name ).
+        IF lt_isrc IS NOT INITIAL.
+          APPEND |* Adobe Form - { lcl_t=>t( d = 'Schnittstelle' e = 'Interface' ) } { iv_name }| TO lt_src.
+          APPEND `` TO lt_src.
+          APPEND LINES OF lt_isrc TO lt_src.
+        ENDIF.
+
+      WHEN 'SFPF'.
+*       Der Code eines Adobe-Formulars liegt nicht im Formular selbst,
+*       sondern in seiner Schnittstelle. Deren globale Typen,
+*       Initialisierung und Formularroutinen werden ueber den
+*       Schnittstellennamen aufgesammelt.
+        DATA(lo_fsrc) = sfpf_form( iv_name ).
+        IF lo_fsrc IS BOUND.
+          DATA(lv_ifsrc) = lo_fsrc->get_interface_name( ).
+          IF lv_ifsrc IS NOT INITIAL.
+            DATA(lt_fsrc) = sfpi_source( CONV sobj_name( lv_ifsrc ) ).
+            IF lt_fsrc IS NOT INITIAL.
+              APPEND |* Adobe Form { iv_name } - { lcl_t=>t( d = 'Schnittstelle' e = 'Interface' ) } { lv_ifsrc }| TO lt_src.
+              APPEND `` TO lt_src.
+              APPEND LINES OF lt_fsrc TO lt_src.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+
       WHEN OTHERS.
         RETURN.
 
@@ -7928,6 +8050,372 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
     rt_source = lt_src.
 
+  ENDMETHOD.
+
+  METHOD ssfo_form.
+*   Ein Smart Form wird ueber das Objektmodell des Form Builders gelesen.
+*   CL_SSF_FB_SMART_FORM=>LOAD baut aus der Ablage den vollstaendigen
+*   Baum auf - denselben, den auch SE80/SMARTFORMS anzeigt. Zuerst wird
+*   die aktive Fassung versucht; existiert keine, die gespeicherte. LOAD
+*   legt im SHOW-Modus eine Anzeigesperre an, die sofort wieder
+*   freigegeben wird - die geladenen Daten bleiben dabei erhalten.
+    DATA lv_formname TYPE tdsfname.
+    DATA lv_rc       TYPE i.
+    lv_formname = iv_name.
+
+    TRY.
+        DATA(lo_form) = NEW cl_ssf_fb_smart_form( ).
+        TRY.
+            lo_form->load( EXPORTING im_formname = lv_formname
+                                     im_active   = 'X' ).
+          CATCH cx_ssf_fb.
+*           Keine aktive Fassung: die gespeicherte lesen.
+            lo_form = NEW cl_ssf_fb_smart_form( ).
+            lo_form->load( EXPORTING im_formname = lv_formname ).
+        ENDTRY.
+        TRY.
+            lo_form->dequeue( EXPORTING formname = lv_formname
+                              IMPORTING rval     = lv_rc ).
+          CATCH cx_ssf_fb.
+        ENDTRY.
+        ro_form = lo_form.
+      CATCH cx_ssf_fb.
+        CLEAR ro_form.
+    ENDTRY.
+  ENDMETHOD.
+
+  METHOD ssfo_type_label.
+*   Die zweistelligen Knotentypen aus der Typgruppe CSSF, lesbar gemacht.
+    CASE iv_type.
+      WHEN 'RP'. rv_label = lcl_t=>t( d = 'Seitenbaum-Wurzel' e = 'Page tree root' ).
+      WHEN 'PA'. rv_label = lcl_t=>t( d = 'Seite'             e = 'Page' ).
+      WHEN 'WI'. rv_label = lcl_t=>t( d = 'Fenster'           e = 'Window' ).
+      WHEN 'RC'. rv_label = lcl_t=>t( d = 'Ablaufsteuerung'   e = 'Flow logic' ).
+      WHEN 'TI'. rv_label = lcl_t=>t( d = 'Text'              e = 'Text' ).
+      WHEN 'GR'. rv_label = lcl_t=>t( d = 'Grafik'            e = 'Graphic' ).
+      WHEN 'AD'. rv_label = lcl_t=>t( d = 'Adresse'           e = 'Address' ).
+      WHEN 'CM'. rv_label = lcl_t=>t( d = 'Kommando'          e = 'Command' ).
+      WHEN 'CO'. rv_label = lcl_t=>t( d = 'Code'              e = 'Code' ).
+      WHEN 'CD'. rv_label = lcl_t=>t( d = 'Bedingung'         e = 'Condition' ).
+      WHEN 'SE'. rv_label = lcl_t=>t( d = 'Ausgabebereich'    e = 'Section' ).
+      WHEN 'EV'. rv_label = lcl_t=>t( d = 'Ereignis'          e = 'Event' ).
+      WHEN 'RE'. rv_label = lcl_t=>t( d = 'Referenz'          e = 'Reference' ).
+      WHEN 'NO'. rv_label = lcl_t=>t( d = 'Knoten'            e = 'Node' ).
+      WHEN OTHERS. rv_label = iv_type.
+    ENDCASE.
+  ENDMETHOD.
+
+  METHOD ssfo_tree.
+*   Ein Knoten und darunter, rekursiv, seine Nachfolger (SUCC). Name und
+*   Beschreibung stehen im angehaengten Objekt (CL_SSF_FB_SF_OBJECT);
+*   Wurzel- und Steuerknoten tragen keins - dort spricht der Typ. Die
+*   Gliederungsnummer bildet die Hierarchie ohne Einrueckung ab, damit
+*   sie in jedem Ausgabeformat (HTML wie DOCX) erhalten bleibt.
+    IF io_node IS NOT BOUND.
+      RETURN.
+    ENDIF.
+
+    DATA lv_nname TYPE string.
+    DATA lv_ncapt TYPE string.
+    IF io_node->obj IS BOUND.
+      TRY.
+          DATA(lo_sfo) = CAST cl_ssf_fb_sf_object( io_node->obj ).
+*         SSFNAME ist eine Struktur (INAME/VARI); der Objektname ist INAME.
+          lv_nname = lo_sfo->name-iname.
+          lv_ncapt = lo_sfo->caption.
+        CATCH cx_sy_move_cast_error.
+      ENDTRY.
+    ENDIF.
+
+    DATA(lv_type) = ssfo_type_label( io_node->nodetype ).
+    DATA(lv_disp) = COND string( WHEN lv_ncapt IS NOT INITIAL THEN lv_ncapt
+                                 WHEN lv_nname IS NOT INITIAL THEN lv_nname
+                                 ELSE lv_type ).
+    DATA(lv_roll) = lv_type.
+    IF lv_ncapt IS NOT INITIAL AND lv_nname IS NOT INITIAL.
+      lv_roll = |{ lv_type } ({ lv_nname })|.
+    ENDIF.
+
+    APPEND VALUE ty_field(
+      name     = condense( |{ iv_outline }  { lv_disp }| )
+      rollname = lv_roll ) TO ct_field.
+
+    DATA lv_i   TYPE i.
+    DATA lv_sub TYPE string.
+    LOOP AT io_node->succ INTO DATA(lo_succ).
+      IF lo_succ IS NOT BOUND.
+        CONTINUE.
+      ENDIF.
+      lv_i = lv_i + 1.
+      IF iv_outline IS INITIAL.
+        lv_sub = |{ lv_i }|.
+      ELSE.
+        lv_sub = |{ iv_outline }.{ lv_i }|.
+      ENDIF.
+      ssfo_tree( EXPORTING io_node = lo_succ iv_outline = lv_sub
+                 CHANGING  ct_field = ct_field ).
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD ssfo_code.
+*   Sammelt rekursiv das ABAP der Code-Knoten. Der Zeilentyp von CODE ist
+*   ein 132 Zeichen breiter Text (TDSFCLINE), also unmittelbar Quelltext.
+    IF io_node IS NOT BOUND.
+      RETURN.
+    ENDIF.
+
+    IF io_node->nodetype = 'CO' AND io_node->obj IS BOUND.
+      TRY.
+          DATA(lo_code) = CAST cl_ssf_fb_code( io_node->obj ).
+          DATA(lv_hdr)  = |*--- { lcl_t=>t( d = 'Code-Knoten' e = 'Code node' ) }: { lo_code->name-iname }|.
+          IF lo_code->caption IS NOT INITIAL.
+            lv_hdr = |{ lv_hdr } ({ lo_code->caption })|.
+          ENDIF.
+          APPEND lv_hdr TO ct_src.
+          LOOP AT lo_code->code INTO DATA(lv_cline).
+            APPEND lv_cline TO ct_src.
+          ENDLOOP.
+          APPEND `` TO ct_src.
+        CATCH cx_sy_move_cast_error.
+      ENDTRY.
+    ENDIF.
+
+    LOOP AT io_node->succ INTO DATA(lo_succ).
+      ssfo_code( EXPORTING io_node = lo_succ CHANGING ct_src = ct_src ).
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD sfpf_form.
+*   Ein Adobe-Formular wird ueber das Objektmodell der Form-Workbench
+*   gelesen. CL_FP_WB_FORM=>LOAD baut aus der Ablage (Kontext-XML) den
+*   vollstaendigen Baum auf - denselben, den auch die Transaktion SFP
+*   anzeigt. Im Lesemodus wird keine exklusive Sperre gesetzt.
+    DATA lv_formname TYPE fpname.
+    lv_formname = iv_name.
+    TRY.
+        DATA(lo_wbf) = cl_fp_wb_form=>load( i_name = lv_formname
+                                            i_mode = if_fp_wb_object=>c_mode_read ).
+        ro_form ?= lo_wbf->if_fp_wb_object~get_object( ).
+      CATCH cx_root.
+        CLEAR ro_form.
+    ENDTRY.
+  ENDMETHOD.
+
+  METHOD sfpi_ifc_data.
+*   Die Schnittstellendaten (Parameter, globale Definitionen, Coding)
+*   liegen als XML in der Ablage und werden ueber CL_FP_WB_INTERFACE=>LOAD
+*   in das Objektmodell deserialisiert. Die Standardparameter (DOCPARAMS,
+*   FORMOUTPUT ...) sind dabei bereits herausgefiltert.
+    DATA lv_ifname TYPE fpname.
+    lv_ifname = iv_name.
+    TRY.
+        DATA(lo_wbi) = cl_fp_wb_interface=>load( i_name = lv_ifname
+                                                 i_mode = if_fp_wb_object=>c_mode_read ).
+        DATA(lo_ifc) = CAST if_fp_interface( lo_wbi->if_fp_wb_object~get_object( ) ).
+        ro_data = lo_ifc->get_interface_data( ).
+      CATCH cx_root.
+        CLEAR ro_data.
+    ENDTRY.
+  ENDMETHOD.
+
+  METHOD sfp_trim_code.
+*   Die Code-Tabellen einer Schnittstelle (Typen, Initialisierung,
+*   Routinen) enthalten viele leere Nachlaufzeilen. Fuehrende und innere
+*   Leerzeilen bleiben erhalten, die am Ende werden entfernt, damit im
+*   Dokument keine grossen Luecken stehen.
+    DATA lt TYPE string_table.
+    LOOP AT it_code INTO DATA(lv_l).
+      APPEND lv_l TO lt.
+    ENDLOOP.
+    WHILE lines( lt ) > 0.
+      DATA(lv_idx)  = lines( lt ).
+      DATA(lv_last) = condense( lt[ lv_idx ] ).
+      IF lv_last IS INITIAL.
+        DELETE lt INDEX lv_idx.
+      ELSE.
+        EXIT.
+      ENDIF.
+    ENDWHILE.
+    rt_lines = lt.
+  ENDMETHOD.
+
+  METHOD sfpi_source.
+*   Aus einer Adobe-Form-Schnittstelle wird der lesbare Quelltext
+*   zusammengetragen: globale Typen, Initialisierungscoding und
+*   Formularroutinen. Jeder Block wird nur ausgegeben, wenn er nach dem
+*   Entfernen der Nachlaufleerzeilen noch Inhalt hat.
+    DATA(lo_data) = sfpi_ifc_data( iv_name ).
+    IF lo_data IS NOT BOUND.
+      RETURN.
+    ENDIF.
+
+    DATA lt_src TYPE string_table.
+
+    DATA(lo_gd)  = lo_data->get_global_definitions( ).
+    DATA(lt_typ) = sfp_trim_code( lo_gd->get_types( ) ).
+    IF lt_typ IS NOT INITIAL.
+      APPEND |*--- { lcl_t=>t( d = 'Globale Typen' e = 'Global types' ) } ---| TO lt_src.
+      APPEND LINES OF lt_typ TO lt_src.
+      APPEND `` TO lt_src.
+    ENDIF.
+
+    DATA(lo_code) = lo_data->get_coding( ).
+    DATA(lt_ini)  = sfp_trim_code( lo_code->get_init_coding( ) ).
+    IF lt_ini IS NOT INITIAL.
+      APPEND |*--- { lcl_t=>t( d = 'Initialisierung' e = 'Initialization' ) } ---| TO lt_src.
+      APPEND LINES OF lt_ini TO lt_src.
+      APPEND `` TO lt_src.
+    ENDIF.
+
+    DATA(lt_frm) = sfp_trim_code( lo_code->get_forms_coding( ) ).
+    IF lt_frm IS NOT INITIAL.
+      APPEND |*--- { lcl_t=>t( d = 'Formularroutinen' e = 'Form routines' ) } ---| TO lt_src.
+      APPEND LINES OF lt_frm TO lt_src.
+      APPEND `` TO lt_src.
+    ENDIF.
+
+    rt_source = lt_src.
+  ENDMETHOD.
+
+  METHOD sfpf_node_label.
+*   Die numerischen Knotentypen des Kontextbaums (IF_FP_NODE=>C_TYPE_*),
+*   lesbar gemacht.
+    CASE iv_type.
+      WHEN 1.  rv_label = lcl_t=>t( d = 'Kontext'                   e = 'Context' ).
+      WHEN 2.  rv_label = lcl_t=>t( d = 'Feld'                      e = 'Field' ).
+      WHEN 3.  rv_label = lcl_t=>t( d = 'Struktur'                  e = 'Structure' ).
+      WHEN 4.  rv_label = lcl_t=>t( d = 'Ordner'                    e = 'Folder' ).
+      WHEN 5.  rv_label = lcl_t=>t( d = 'Textbaustein'              e = 'Text module' ).
+      WHEN 6.  rv_label = lcl_t=>t( d = 'Text-Include'              e = 'Text include' ).
+      WHEN 7.  rv_label = lcl_t=>t( d = 'Dynamischer Text'          e = 'Dynamic text' ).
+      WHEN 8.  rv_label = lcl_t=>t( d = 'BTF-Text'                  e = 'BTF text' ).
+      WHEN 9.  rv_label = lcl_t=>t( d = 'Adresse'                   e = 'Address' ).
+      WHEN 10. rv_label = lcl_t=>t( d = 'Grafik (URL)'             e = 'Graphic (URL)' ).
+      WHEN 11. rv_label = lcl_t=>t( d = 'Grafik (Inhalt)'          e = 'Graphic (content)' ).
+      WHEN 12. rv_label = lcl_t=>t( d = 'Schleife'                  e = 'Loop' ).
+      WHEN 13. rv_label = lcl_t=>t( d = 'Schleifendaten'            e = 'Loop data' ).
+      WHEN 14. rv_label = lcl_t=>t( d = 'Alternative'               e = 'Alternative' ).
+      WHEN 15. rv_label = lcl_t=>t( d = 'Alternative (wahr)'        e = 'Alternative (true)' ).
+      WHEN 16. rv_label = lcl_t=>t( d = 'Alternative (falsch)'      e = 'Alternative (false)' ).
+      WHEN 17. rv_label = lcl_t=>t( d = 'Programmzeilen'            e = 'Program lines' ).
+      WHEN 18. rv_label = lcl_t=>t( d = 'Kommando'                  e = 'Command' ).
+      WHEN 19. rv_label = lcl_t=>t( d = 'Einzelsatz'                e = 'Single record' ).
+      WHEN 20. rv_label = lcl_t=>t( d = 'Schleifensteuerung (Daten)'  e = 'Loop control (data)' ).
+      WHEN 21. rv_label = lcl_t=>t( d = 'Schleifensteuerung (Gruppe)' e = 'Loop control (group)' ).
+      WHEN OTHERS. rv_label = |{ lcl_t=>t( d = 'Typ' e = 'Type' ) } { iv_type }|.
+    ENDCASE.
+  ENDMETHOD.
+
+  METHOD sfpf_context.
+*   Ein Kontextknoten und darunter, rekursiv, seine Kinder. Anders als beim
+*   Smart Form gibt es keine Geschwisterliste - Kinder haengen ueber
+*   GET_CHILD (erstes Kind) und GET_SUCCESSOR (naechstes Geschwister)
+*   aneinander. Die Gliederungsnummer bildet die Hierarchie ohne
+*   Einrueckung ab, damit sie in jedem Ausgabeformat erhalten bleibt.
+    IF io_node IS NOT BOUND.
+      RETURN.
+    ENDIF.
+
+    DATA lv_desc TYPE fptext.
+    TRY.
+        lv_desc = io_node->get_description( ).
+      CATCH cx_fp_api_usage.
+    ENDTRY.
+
+    DATA(lv_type) = sfpf_node_label( io_node->get_type( ) ).
+    DATA(lv_name) = CONV string( io_node->get_name( ) ).
+    DATA(lv_disp) = COND string( WHEN lv_name IS NOT INITIAL THEN lv_name ELSE lv_type ).
+    DATA(lv_roll) = COND string( WHEN lv_desc IS NOT INITIAL THEN |{ lv_type }: { lv_desc }|
+                                 ELSE lv_type ).
+
+    APPEND VALUE ty_field(
+      name     = condense( |{ iv_outline }  { lv_disp }| )
+      rollname = lv_roll ) TO ct_field.
+
+    DATA lv_i   TYPE i.
+    DATA(lo_ch) = io_node->get_child( ).
+    WHILE lo_ch IS BOUND.
+      lv_i = lv_i + 1.
+      DATA(lv_sub) = COND string( WHEN iv_outline IS INITIAL THEN |{ lv_i }|
+                                  ELSE |{ iv_outline }.{ lv_i }| ).
+      sfpf_context( EXPORTING io_node = lo_ch iv_outline = lv_sub
+                    CHANGING  ct_field = ct_field ).
+      lo_ch = lo_ch->get_successor( ).
+    ENDWHILE.
+  ENDMETHOD.
+
+  METHOD sfp_param_rows.
+*   Haengt die Parameter einer Richtung an ein Schnittstellen-Objekt.
+    DATA lv_dir TYPE string.
+    CASE iv_dir.
+      WHEN 'I'. lv_dir = lcl_t=>t( d = 'Import'   e = 'Import' ).
+      WHEN 'E'. lv_dir = lcl_t=>t( d = 'Export'   e = 'Export' ).
+      WHEN 'T'. lv_dir = lcl_t=>t( d = 'Tabelle'  e = 'Table' ).
+      WHEN 'X'. lv_dir = lcl_t=>t( d = 'Ausnahme' e = 'Exception' ).
+      WHEN OTHERS. lv_dir = iv_dir.
+    ENDCASE.
+
+    LOOP AT it_par INTO DATA(ls_par).
+      IF ls_par-standard = 'X'.
+        CONTINUE.
+      ENDIF.
+      DATA(lv_def) = condense( |{ ls_par-typing } { ls_par-typename }| ).
+      DATA(lv_rn)  = COND string( WHEN lv_def IS NOT INITIAL THEN |{ lv_dir }: { lv_def }|
+                                  ELSE lv_dir ).
+      IF ls_par-optional = 'X'.
+        lv_rn = |{ lv_rn } ({ lcl_t=>t( d = 'optional' e = 'optional' ) })|.
+      ENDIF.
+      io_obj->add_field( VALUE ty_field( name     = CONV string( ls_par-name )
+                                         rollname = lv_rn ) ).
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD add_sfp_ifc_blocks.
+*   Schnittstelle und globale Definitionen einer Adobe-Form-Schnittstelle.
+*   Wird sowohl fuer die Schnittstelle selbst (SFPI) als auch fuer das
+*   Formular (SFPF, ueber seinen Schnittstellennamen) verwendet.
+    DATA(lo_data) = sfpi_ifc_data( iv_ifname ).
+    IF lo_data IS NOT BOUND.
+      RETURN.
+    ENDIF.
+
+*   Formularschnittstelle: Import-/Export-/Tabellenparameter und Ausnahmen.
+    DATA(lo_par) = lo_data->get_parameters( ).
+    DATA(lo_ifc) = NEW lcl_object( iv_type = CONV string( iv_type )
+                                   iv_name = CONV string( iv_name ) ).
+    lo_ifc->set_note( |{ lcl_t=>t( d = 'Formularschnittstelle' e = 'Form interface' ) } ({ iv_ifname })| ).
+    sfp_param_rows( io_obj = lo_ifc it_par = lo_par->get_import_parameters( ) iv_dir = 'I' ).
+    sfp_param_rows( io_obj = lo_ifc it_par = lo_par->get_export_parameters( ) iv_dir = 'E' ).
+    sfp_param_rows( io_obj = lo_ifc it_par = lo_par->get_table_parameters( )  iv_dir = 'T' ).
+    sfp_param_rows( io_obj = lo_ifc it_par = lo_par->get_exceptions( )        iv_dir = 'X' ).
+    IF lo_ifc->get_fields( ) IS NOT INITIAL.
+      io_chapter->add_object( lo_ifc ).
+    ENDIF.
+
+*   Globale Definitionen: global vereinbarte Datenfelder und Feldsymbole.
+    DATA(lo_gd)    = lo_data->get_global_definitions( ).
+    DATA(lt_gdata) = lo_gd->get_global_data( ).
+    DATA(lt_fsym)  = lo_gd->get_fieldsymbols( ).
+    IF lt_gdata IS NOT INITIAL OR lt_fsym IS NOT INITIAL.
+      DATA(lo_gbl) = NEW lcl_object( iv_type = CONV string( iv_type )
+                                     iv_name = CONV string( iv_name ) ).
+      lo_gbl->set_note( lcl_t=>t( d = 'Globale Definitionen' e = 'Global definitions' ) ).
+      LOOP AT lt_gdata INTO DATA(ls_gd).
+        DATA(lv_gdef) = condense( |{ ls_gd-typing } { ls_gd-typename }| ).
+        IF ls_gd-constant = 'X'.
+          lv_gdef = condense( |{ lv_gdef } ({ lcl_t=>t( d = 'Konstante' e = 'constant' ) })| ).
+        ENDIF.
+        lo_gbl->add_field( VALUE ty_field( name     = CONV string( ls_gd-name )
+                                           rollname = lv_gdef ) ).
+      ENDLOOP.
+      LOOP AT lt_fsym INTO DATA(ls_fs).
+        DATA(lv_fdef) = condense( |{ lcl_t=>t( d = 'Feldsymbol' e = 'Field symbol' ) } | &&
+                                  |{ ls_fs-typing } { ls_fs-typename }| ).
+        lo_gbl->add_field( VALUE ty_field( name     = CONV string( ls_fs-name )
+                                           rollname = lv_fdef ) ).
+      ENDLOOP.
+      io_chapter->add_object( lo_gbl ).
+    ENDIF.
   ENDMETHOD.
 
   METHOD read_source.
@@ -9674,6 +10162,164 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
         io_chapter->add_object( lo_sbo ).
 
+      WHEN 'SSFO'.
+*       Ein Smart Form ist ein Baum aus Knoten mit einer Formular-
+*       schnittstelle und globalen Definitionen. Anders als bei einer
+*       Tabelle steht davon nichts in einer lesbaren DDIC-Tabelle; die
+*       Struktur liegt allein im Objektmodell des Form Builders vor. Es
+*       wird einmal geladen und in drei Bloecke ueberfuehrt:
+*       Schnittstelle, globale Definitionen, Knotenbaum.
+        DATA(lo_sf) = ssfo_form( iv_name ).
+        IF lo_sf IS NOT BOUND.
+          RETURN.
+        ENDIF.
+
+*       Formularschnittstelle: Import-/Export-/Tabellenparameter und
+*       Ausnahmen mit Richtung und Typ.
+        IF lo_sf->interface IS NOT INITIAL.
+          DATA(lo_ifc) = NEW lcl_object( iv_type = CONV string( iv_type )
+                                         iv_name = CONV string( iv_name ) ).
+          lo_ifc->set_note( lcl_t=>t( d = 'Formularschnittstelle' e = 'Form interface' ) ).
+          LOOP AT lo_sf->interface INTO DATA(ls_ifp).
+            DATA lv_iodir TYPE string.
+            CASE ls_ifp-iotype.
+              WHEN 'I'. lv_iodir = lcl_t=>t( d = 'Import'   e = 'Import' ).
+              WHEN 'E'. lv_iodir = lcl_t=>t( d = 'Export'   e = 'Export' ).
+              WHEN 'T'. lv_iodir = lcl_t=>t( d = 'Tabelle'  e = 'Table' ).
+              WHEN 'X'. lv_iodir = lcl_t=>t( d = 'Ausnahme' e = 'Exception' ).
+              WHEN OTHERS. lv_iodir = ls_ifp-iotype.
+            ENDCASE.
+            DATA(lv_iodef) = condense( |{ ls_ifp-typing } { ls_ifp-typename }| ).
+            DATA(lv_iorn)  = COND string( WHEN lv_iodef IS NOT INITIAL
+                                          THEN |{ lv_iodir }: { lv_iodef }|
+                                          ELSE lv_iodir ).
+            IF ls_ifp-optional = 'X'.
+              lv_iorn = |{ lv_iorn } ({ lcl_t=>t( d = 'optional' e = 'optional' ) })|.
+            ENDIF.
+            lo_ifc->add_field( VALUE ty_field( name     = CONV string( ls_ifp-name )
+                                               rollname = lv_iorn ) ).
+          ENDLOOP.
+          io_chapter->add_object( lo_ifc ).
+        ENDIF.
+
+*       Globale Definitionen: global vereinbarte Datenfelder der Form.
+        IF lo_sf->gdata IS NOT INITIAL.
+          DATA(lo_gbl) = NEW lcl_object( iv_type = CONV string( iv_type )
+                                         iv_name = CONV string( iv_name ) ).
+          lo_gbl->set_note( lcl_t=>t( d = 'Globale Definitionen' e = 'Global definitions' ) ).
+          LOOP AT lo_sf->gdata INTO DATA(ls_gbl).
+            DATA(lv_gdef) = condense( |{ ls_gbl-typing } { ls_gbl-typename }| ).
+            IF ls_gbl-constant = 'X'.
+              lv_gdef = condense( |{ lv_gdef } ({ lcl_t=>t( d = 'Konstante' e = 'constant' ) })| ).
+            ENDIF.
+            lo_gbl->add_field( VALUE ty_field( name     = CONV string( ls_gbl-name )
+                                               rollname = lv_gdef ) ).
+          ENDLOOP.
+          io_chapter->add_object( lo_gbl ).
+        ENDIF.
+
+*       Knotenbaum: die Struktur des Formulars, rekursiv aus den
+*       Seitenbaeumen der Varianten. Die Gliederungsnummer traegt die
+*       Hierarchie, damit sie in jedem Ausgabeformat erhalten bleibt.
+        DATA lt_ntree TYPE ty_fields.
+        CLEAR lt_ntree.
+        LOOP AT lo_sf->varheader INTO DATA(ls_vh).
+          ssfo_tree( EXPORTING io_node = ls_vh-pagetree iv_outline = ``
+                     CHANGING  ct_field = lt_ntree ).
+        ENDLOOP.
+        IF lt_ntree IS NOT INITIAL.
+          DATA(lo_ntr) = NEW lcl_object( iv_type = CONV string( iv_type )
+                                         iv_name = CONV string( iv_name ) ).
+          lo_ntr->set_note( lcl_t=>t( d = 'Knotenbaum' e = 'Node tree' ) ).
+          LOOP AT lt_ntree INTO DATA(ls_ntn).
+            lo_ntr->add_field( ls_ntn ).
+          ENDLOOP.
+          io_chapter->add_object( lo_ntr ).
+        ENDIF.
+
+      WHEN 'SFPI'.
+*       Eine Adobe-Form-Schnittstelle bringt Formularschnittstelle und
+*       globale Definitionen mit; das Coding steht im Quelltextteil.
+        add_sfp_ifc_blocks( iv_type    = iv_type
+                            iv_name    = iv_name
+                            iv_ifname  = iv_name
+                            io_chapter = io_chapter ).
+
+      WHEN 'SFPF'.
+*       Ein Adobe-Formular besteht aus einer Schnittstelle (eigenes
+*       Objekt), einem Kontext (Datenbindung) und einem Layout. Es wird
+*       einmal geladen und in Eigenschaften, Schnittstelle und Kontext-
+*       baum ueberfuehrt. Das Layout ist ein XFA-/DOCX-Artefakt und wird
+*       nur mit seiner Technologie vermerkt.
+        DATA(lo_aff) = sfpf_form( iv_name ).
+        IF lo_aff IS NOT BOUND.
+          RETURN.
+        ENDIF.
+        DATA(lv_ifn) = lo_aff->get_interface_name( ).
+
+*       Formulareigenschaften.
+        DATA(lo_prp) = NEW lcl_object( iv_type = CONV string( iv_type )
+                                       iv_name = CONV string( iv_name ) ).
+        lo_prp->set_note( lcl_t=>t( d = 'Formulareigenschaften' e = 'Form properties' ) ).
+        lo_prp->add_field( VALUE ty_field(
+          name     = lcl_t=>t( d = 'Schnittstelle' e = 'Interface' )
+          rollname = CONV string( lv_ifn ) ) ).
+        DATA lv_ftl TYPE string.
+        CASE lo_aff->get_form_type( ).
+          WHEN 'M'.    lv_ftl = lcl_t=>t( d = 'migriert (aus Smart Form)' e = 'migrated (from Smart Form)' ).
+          WHEN 'G'.    lv_ftl = lcl_t=>t( d = 'Guided Procedures' e = 'Guided Procedures' ).
+          WHEN OTHERS. lv_ftl = lcl_t=>t( d = 'normal' e = 'normal' ).
+        ENDCASE.
+        lo_prp->add_field( VALUE ty_field(
+          name     = lcl_t=>t( d = 'Formulartyp' e = 'Form type' )
+          rollname = lv_ftl ) ).
+        DATA(lo_lay) = lo_aff->get_layout( ).
+        DATA lv_tcl TYPE string.
+        CASE lo_lay->get_form_tech( ).
+          WHEN 'W'.    lv_tcl = 'DOCX (Microsoft Word)'.
+          WHEN 'C'.    lv_tcl = 'Crystal Reports'.
+          WHEN 'F'.    lv_tcl = 'XSL-FO'.
+          WHEN 'X'.    lv_tcl = 'XForms'.
+          WHEN OTHERS. lv_tcl = 'XFA (Adobe LiveCycle Designer)'.
+        ENDCASE.
+        lo_prp->add_field( VALUE ty_field(
+          name     = lcl_t=>t( d = 'Layout-Technologie' e = 'Layout technology' )
+          rollname = lv_tcl ) ).
+        io_chapter->add_object( lo_prp ).
+
+*       Schnittstelle und globale Definitionen der referenzierten SFPI.
+        IF lv_ifn IS NOT INITIAL.
+          add_sfp_ifc_blocks( iv_type    = iv_type
+                              iv_name    = iv_name
+                              iv_ifname  = CONV sobj_name( lv_ifn )
+                              io_chapter = io_chapter ).
+        ENDIF.
+
+*       Kontextbaum: die Datenbindung des Formulars, rekursiv aus den
+*       Kindern der Kontextwurzel. Die Gliederungsnummer traegt die
+*       Hierarchie, damit sie in jedem Ausgabeformat erhalten bleibt.
+        DATA lt_ctree TYPE ty_fields.
+        DATA(lo_croot) = lo_aff->get_context( ).
+        IF lo_croot IS BOUND.
+          DATA lv_ci   TYPE i.
+          DATA(lo_cch) = lo_croot->get_child( ).
+          WHILE lo_cch IS BOUND.
+            lv_ci = lv_ci + 1.
+            sfpf_context( EXPORTING io_node = lo_cch iv_outline = |{ lv_ci }|
+                          CHANGING  ct_field = lt_ctree ).
+            lo_cch = lo_cch->get_successor( ).
+          ENDWHILE.
+        ENDIF.
+        IF lt_ctree IS NOT INITIAL.
+          DATA(lo_ctx) = NEW lcl_object( iv_type = CONV string( iv_type )
+                                         iv_name = CONV string( iv_name ) ).
+          lo_ctx->set_note( lcl_t=>t( d = 'Kontext' e = 'Context' ) ).
+          LOOP AT lt_ctree INTO DATA(ls_ctn).
+            lo_ctx->add_field( ls_ctn ).
+          ENDLOOP.
+          io_chapter->add_object( lo_ctx ).
+        ENDIF.
+
     ENDCASE.
 
   ENDMETHOD.
@@ -9703,6 +10349,9 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       WHEN 'IS'. rs_obj = VALUE #( type = 'TABL' name = lv_name ).
       WHEN 'IT'. rs_obj = VALUE #( type = 'IDOC' name = lv_name ).
       WHEN 'U5'. rs_obj = VALUE #( type = 'WAPA' name = lv_name ).
+      WHEN 'SF'. rs_obj = VALUE #( type = 'SSFO' name = lv_name ).
+      WHEN 'AF'. rs_obj = VALUE #( type = 'SFPF' name = lv_name ).
+      WHEN 'AI'. rs_obj = VALUE #( type = 'SFPI' name = lv_name ).
       WHEN 'C'.
 *       A class and an interface share one input field, as in SE80. Which
 *       of the two it is comes from the catalog.
@@ -9887,7 +10536,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       WHERE pgmid = 'R3TR' AND delflag = @abap_false
         AND object IN ( 'CLAS', 'INTF', 'TABL', 'VIEW', 'DTEL', 'DOMA',
                         'TTYP', 'DDLS', 'PROG', 'FUGR', 'MSAG', 'SHLP',
-                        'ENQU', 'BDEF', 'SRVD', 'SRVB', 'DDLX', 'IDOC', 'WAPA' )
+                        'ENQU', 'BDEF', 'SRVD', 'SRVB', 'DDLX', 'IDOC', 'WAPA',
+                        'SSFO', 'SFPF', 'SFPI' )
         AND obj_name = @lv_obj_name
       INTO @DATA(lv_type).
     IF sy-subrc = 0.
@@ -11066,6 +11716,9 @@ FORM stype_list CHANGING ct_list TYPE ty_stypes.
       ( code = 'IS' text = 'IDoc-Segmenttyp' )
       ( code = 'IT' text = 'IDoc-Basistyp' )
       ( code = 'U5' text = 'UI5-Anwendung (BSP)' )
+      ( code = 'SF' text = 'Smart Form' )
+      ( code = 'AF' text = 'Adobe Form (Formular)' )
+      ( code = 'AI' text = 'Adobe Form (Schnittstelle)' )
 *     Kein Objekt, sondern eine Liste davon: die Fehlliste, die der
 *     IMG-Report im Zielsystem geschrieben hat. Der Startpunkt steht
 *     dann in der Datei, nicht im Namensfeld.
@@ -11089,6 +11742,9 @@ FORM stype_list CHANGING ct_list TYPE ty_stypes.
       ( code = 'IS' text = 'IDoc segment type' )
       ( code = 'IT' text = 'IDoc basic type' )
       ( code = 'U5' text = 'UI5 application (BSP)' )
+      ( code = 'SF' text = 'Smart Form' )
+      ( code = 'AF' text = 'Adobe Form' )
+      ( code = 'AI' text = 'Adobe Form interface' )
       ( code = 'AL' text = 'Work list from request list' ) ).
   ENDIF.
 
@@ -11205,6 +11861,9 @@ FORM f4_sval.
         WHEN 'IS'. lv_obj = 'TABL'.
         WHEN 'IT'. lv_obj = 'IDOC'.
         WHEN 'U5'. lv_obj = 'WAPA'.
+        WHEN 'SF'. lv_obj = 'SSFO'.
+        WHEN 'AF'. lv_obj = 'SFPF'.
+        WHEN 'AI'. lv_obj = 'SFPI'.
         WHEN OTHERS. lv_obj = 'PROG'.
       ENDCASE.
       SELECT obj_name AS name, devclass AS text

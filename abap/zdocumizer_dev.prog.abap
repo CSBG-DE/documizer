@@ -1571,6 +1571,11 @@ CLASS lcl_importer DEFINITION.
       IMPORTING io_chapter     TYPE REF TO lcl_chapter
                 iv_tag         TYPE string
       RETURNING VALUE(rt_code) TYPE tfpcoding.
+*   Adobe-Formular (SFPF) aus der SAP-eigenen Serialisierung wieder
+*   anlegen - derselbe Weg, den die Kopierfunktion der Transaktion SFP
+*   nimmt (CL_FP_HELPER).
+    METHODS put_sfpf  IMPORTING io_chapter TYPE REF TO lcl_chapter
+                                iv_name    TYPE string.
 *   Checks after the run what actually stands in the system. An object
 *   can be created and still be unusable - a structure whose data
 *   element is missing activates with rc 8 - and an object written early
@@ -1914,6 +1919,8 @@ CLASS lcl_importer IMPLEMENTATION.
           put_vcls( io_chapter = ls_work-chapter iv_name = ls_work-name ).
         WHEN 'SFPI'.
           put_sfpi( io_chapter = ls_work-chapter iv_name = ls_work-name ).
+        WHEN 'SFPF'.
+          put_sfpf( io_chapter = ls_work-chapter iv_name = ls_work-name ).
       ENDCASE.
     ENDLOOP.
 
@@ -2148,6 +2155,9 @@ CLASS lcl_importer IMPLEMENTATION.
 *       Adobe-Form-Schnittstelle: steht auf ihren DDIC-Typen, das
 *       Formular wiederum auf ihr. Beide ganz zuletzt.
         WHEN 'SFPI'. lv_seq = 17.
+*       Das Formular steht auf seiner Schnittstelle - die muss vorher
+*       da und aktiv sein.
+        WHEN 'SFPF'. lv_seq = 18.
         WHEN OTHERS. lv_seq = 99.
       ENDCASE.
 
@@ -2191,7 +2201,7 @@ CLASS lcl_importer IMPLEMENTATION.
         rv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'NAME' ).
       WHEN 'TRAN'. rv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'TCODE' ).
       WHEN 'VCLS'. rv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'VCLNAME' ).
-      WHEN 'SFPI'. rv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'NAME' ).
+      WHEN 'SFPI' OR 'SFPF'. rv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'NAME' ).
     ENDCASE.
   ENDMETHOD.
 
@@ -3758,8 +3768,12 @@ CLASS lcl_importer IMPLEMENTATION.
         lo_code->set_init_output_params( lt_co ).
 
         lo_wb->if_fp_wb_object~save( ).
+*       Die eigene Sperre VOR dem Aktivieren freigeben - sonst blockiert
+*       der Lauf sich selbst ("Benutzer bearbeitet bereits ..."). Aktiviert
+*       wird ueber die statische Methode, wie in CL_FP_WB_*=>COPY.
+        lo_wb->if_fp_wb_object~free( ).
         IF mv_act = abap_true.
-          lo_wb->if_fp_wb_object~activate( ).
+          cl_fp_wb_interface=>activate( i_name = lv_fpname i_ordernum = lv_corr ).
         ENDIF.
       CATCH cx_root INTO DATA(lx_put).
         log( iv_kind = 'SFPI' iv_name = iv_name
@@ -3769,6 +3783,102 @@ CLASS lcl_importer IMPLEMENTATION.
     ENDTRY.
 
     log( iv_kind = 'SFPI' iv_name = iv_name
+         iv_action = COND #( WHEN lv_ex = abap_true
+                             THEN lcl_t=>ui( d = `geaendert` e = `changed` )
+                             ELSE lcl_t=>ui( d = `angelegt` e = `created` ) ) ).
+
+  ENDMETHOD.
+
+  METHOD put_sfpf.
+*   Gegenstueck zu def_sfpf. Das Formular wird nicht Knoten fuer Knoten
+*   nachgebaut, sondern aus der SAP-eigenen Serialisierung wiederher-
+*   gestellt - genau der Weg, den CL_FP_WB_FORM=>COPY nimmt:
+*   CONVERT_XSTRING_TO_FORM, neue Layout-Kennung (das XFA-Template
+*   traegt eine, die je Formular eindeutig sein muss), Schnittstellen-
+*   und Handlername aus dem Klartext-Kopf neu setzen (dort greift eine
+*   Umbenennung, in der Serialisierung nicht), dann ueber die Form-
+*   Workbench anlegen, sichern, aktivieren. Ein vorhandenes Formular
+*   wird beim Ueberschreiben geloescht und neu angelegt - in einen
+*   bestehenden Workbench-Handle laesst sich kein anderes Formular-
+*   objekt einhaengen.
+    DATA lo_wb     TYPE REF TO if_fp_wb_form.
+    DATA lo_form   TYPE REF TO if_fp_form.
+    DATA lv_corr   TYPE trkorr.
+    DATA lv_fpname TYPE fpname.
+    DATA lv_ifname TYPE fpname.
+    DATA lv_offh   TYPE seoclsname.
+    DATA lv_blob   TYPE xstring.
+
+    DATA(lv_ex) = sfp_exists( iv_kind = 'SFPF' iv_name = iv_name ).
+    IF lv_ex = abap_true AND mv_over = abap_false.
+      log( iv_kind = 'SFPF' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+           iv_text   = lcl_t=>ui( d = `existiert bereits` e = `already exists` ) ).
+      RETURN.
+    ENDIF.
+
+*   Ohne die Serialisierung gibt es nichts anzulegen.
+    DATA(lt_rows) = io_chapter->get_defrows( ).
+    READ TABLE lt_rows INTO DATA(ls_blob) WITH KEY tag = 'FORM_DATA'.
+    IF sy-subrc <> 0 OR ls_blob-src IS INITIAL.
+      log( iv_kind = 'SFPF' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+           iv_text   = lcl_t=>ui( d = `Keine Formulardaten (FORM_DATA) in den Definitionsdaten.`
+                                  e = `No form data (FORM_DATA) in the definition data.` ) ).
+      RETURN.
+    ENDIF.
+
+    IF mv_test = abap_true.
+      log( iv_kind = 'SFPF' iv_name = iv_name
+           iv_action = COND #( WHEN lv_ex = abap_true
+                               THEN lcl_t=>ui( d = `wuerde geaendert` e = `would change` )
+                               ELSE lcl_t=>ui( d = `wuerde angelegt` e = `would create` ) ) ).
+      RETURN.
+    ENDIF.
+
+    IF mv_pack NP '$*'.
+      lv_corr = mv_tr.
+    ENDIF.
+    lv_fpname = iv_name.
+    DATA(lt_head) = io_chapter->get_defhead( ).
+    lv_ifname = lcl_attr=>value( it_attrs = lt_head iv_name = 'INTERFACE' ).
+    lv_offh   = lcl_attr=>value( it_attrs = lt_head iv_name = 'OFFLINE_HANDLER' ).
+
+    TRY.
+        lv_blob = cl_http_utility=>decode_x_base64( encoded = ls_blob-src ).
+        lo_form = cl_fp_helper=>convert_xstring_to_form( i_xstring  = lv_blob
+                                                         i_language = sy-langu ).
+        cl_fp_helper=>set_new_layout_id( CHANGING c_form = lo_form ).
+        IF lv_ifname IS NOT INITIAL.
+          lo_form->set_interface_name( lv_ifname ).
+        ENDIF.
+        IF lv_offh IS NOT INITIAL.
+          lo_form->set_offline_handler( lv_offh ).
+        ENDIF.
+
+        IF lv_ex = abap_true.
+          cl_fp_wb_form=>delete( i_name     = lv_fpname
+                                 i_ordernum = lv_corr ).
+        ENDIF.
+        lo_wb = cl_fp_wb_form=>create( i_name     = lv_fpname
+                                       i_form     = lo_form
+                                       i_devclass = mv_pack
+                                       i_ordernum = lv_corr ).
+        lo_wb->if_fp_wb_object~save( ).
+*       Eigene Sperre VOR dem Aktivieren freigeben (sonst Selbstblockade),
+*       dann statisch aktivieren - wie in CL_FP_WB_*=>COPY.
+        lo_wb->if_fp_wb_object~free( ).
+        IF mv_act = abap_true.
+          cl_fp_wb_form=>activate( i_name = lv_fpname i_ordernum = lv_corr ).
+        ENDIF.
+      CATCH cx_root INTO DATA(lx_put).
+        log( iv_kind = 'SFPF' iv_name = iv_name
+             iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+             iv_text   = lx_put->get_text( ) ).
+        RETURN.
+    ENDTRY.
+
+    log( iv_kind = 'SFPF' iv_name = iv_name
          iv_action = COND #( WHEN lv_ex = abap_true
                              THEN lcl_t=>ui( d = `geaendert` e = `changed` )
                              ELSE lcl_t=>ui( d = `angelegt` e = `created` ) ) ).
@@ -6225,6 +6335,12 @@ CLASS lcl_collector_dev DEFINITION.
       IMPORTING iv_tag     TYPE string
                 it_code    TYPE tfpcoding
                 io_chapter TYPE REF TO lcl_chapter.
+*   Reimport-Definitionsdaten eines Adobe-Formulars (SFPF): Kopfdaten
+*   im Klartext, Kontext und Layout als SAP-eigene Serialisierung.
+    METHODS def_sfpf
+      IMPORTING iv_name      TYPE sobj_name
+                io_chapter   TYPE REF TO lcl_chapter
+      RETURNING VALUE(rv_ok) TYPE abap_bool.
 *   The complete source of a class or interface in its source-based
 *   form - the text SE24 and ADT show, not the generated includes.
     METHODS clif_source
@@ -6515,6 +6631,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       WHEN 'TRAN'. lv_ok = def_tran( iv_name = iv_name io_chapter = io_chapter ).
       WHEN 'VCLS'. lv_ok = def_vcls( iv_name = iv_name io_chapter = io_chapter ).
       WHEN 'SFPI'. lv_ok = def_sfpi( iv_name = iv_name io_chapter = io_chapter ).
+      WHEN 'SFPF'. lv_ok = def_sfpf( iv_name = iv_name io_chapter = io_chapter ).
       WHEN OTHERS.
         RETURN.
     ENDCASE.
@@ -8558,6 +8675,64 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     CONCATENATE LINES OF lt INTO DATA(lv_src)
                 SEPARATED BY cl_abap_char_utilities=>newline.
     io_chapter->add_defrow( VALUE ty_defrow( tag = iv_tag src = lv_src ) ).
+  ENDMETHOD.
+
+  METHOD def_sfpf.
+*   Reimportfaehige Definitionsdaten eines Adobe-Formulars. Kontext,
+*   Layout und Formulareigenschaften reisen nicht als einzelne Zeilen,
+*   sondern in der SAP-eigenen Serialisierung (CL_FP_HELPER=>
+*   CONVERT_FORM_TO_XSTRING) - demselben Byte-Strom, den die Kopier-
+*   funktion der Transaktion SFP verwendet. Nur so ist der Round-Trip
+*   verlustfrei: der Kontextbaum mit generierten und manuellen Knoten,
+*   allen Bindungen, Bedingungen und Beschreibungstexten sowie das
+*   XFA-/DOCX-Layout kommen 1:1 zurueck, ohne dass das Formularmodell
+*   hier nachgebaut werden muesste. Der Kopf traegt die Eigenschaften
+*   zusaetzlich im Klartext - lesbar, und damit die Umbenennung beim
+*   Import (Formular-, Schnittstellen-, Handlername) greifen kann.
+    DATA(lo_form) = sfpf_form( iv_name ).
+    IF lo_form IS NOT BOUND.
+      RETURN.
+    ENDIF.
+
+    DATA lv_blob TYPE xstring.
+    TRY.
+        lv_blob = cl_fp_helper=>convert_form_to_xstring( i_form = lo_form ).
+      CATCH cx_root.
+        RETURN.
+    ENDTRY.
+    IF lv_blob IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    DATA lt_head TYPE ty_attrs.
+    APPEND VALUE ty_attr( name = 'NAME' value = iv_name ) TO lt_head.
+    DATA(lv_desc) = read_short_text( iv_type = 'SFPF' iv_name = iv_name ).
+    IF lv_desc IS NOT INITIAL.
+      APPEND VALUE ty_attr( name = 'DESCRIPTION' value = lv_desc ) TO lt_head.
+    ENDIF.
+    APPEND VALUE ty_attr( name  = 'INTERFACE'
+                          value = CONV string( lo_form->get_interface_name( ) ) ) TO lt_head.
+    APPEND VALUE ty_attr( name  = 'FORM_TYPE'
+                          value = CONV string( lo_form->get_form_type( ) ) ) TO lt_head.
+    DATA(lo_lay) = lo_form->get_layout( ).
+    IF lo_lay IS BOUND.
+      APPEND VALUE ty_attr( name  = 'FORM_TECH'
+                            value = CONV string( lo_lay->get_form_tech( ) ) ) TO lt_head.
+      APPEND VALUE ty_attr( name  = 'LAYOUT_TYPE'
+                            value = CONV string( lo_lay->get_layout_type( ) ) ) TO lt_head.
+    ENDIF.
+    DATA(lv_offh) = lo_form->get_offline_handler( ).
+    IF lv_offh IS NOT INITIAL.
+      APPEND VALUE ty_attr( name = 'OFFLINE_HANDLER' value = CONV string( lv_offh ) ) TO lt_head.
+    ENDIF.
+    io_chapter->set_definition( iv_kind = 'SFPF' it_head = lt_head ).
+
+    io_chapter->add_defrow( VALUE ty_defrow(
+      tag   = 'FORM_DATA'
+      attrs = VALUE #( ( name = 'SIZE' value = |{ xstrlen( lv_blob ) }| ) )
+      src   = cl_http_utility=>encode_x_base64( unencoded = lv_blob ) ) ).
+
+    rv_ok = abap_true.
   ENDMETHOD.
 
   METHOD sfpf_form.

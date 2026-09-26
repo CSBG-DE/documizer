@@ -12610,9 +12610,11 @@ ENDFORM.
 *&---------------------------------------------------------------------*
 *& FORM ren_prepare
 *&---------------------------------------------------------------------*
-* Baut die Vorschlagsliste der umbenennbaren Objekte. Nur Kundenobjekte
-* (Z*/Y*/Namespace) sind anlegbar und damit umbenennbar. Zielname und
+* Baut die Vorschlagsliste ALLER importierbaren Objekte. Zielname und
 * Zielpaket sind mit dem Original bzw. dem Zielpaket vom Bild vorbelegt.
+* Anlegen laesst sich nur im Kundennamensraum - das prueft ren_validate
+* am Zielnamen. So kann auch ein SAP-/Fremdobjekt (z. B. FP_TEST_03) unter
+* einem Z-Namen hereingeholt werden, ohne das Original zu ueberschreiben.
 *----------------------------------------------------------------------*
 FORM ren_prepare USING io_doc TYPE REF TO lcl_document.
 
@@ -12625,10 +12627,6 @@ FORM ren_prepare USING io_doc TYPE REF TO lcl_document.
   DATA(lt_work) = lo_pl->plan( io_doc ).
 
   LOOP AT lt_work INTO DATA(ls_w).
-    DATA(lv_c) = substring( val = ls_w-name off = 0 len = 1 ).
-    IF lv_c <> 'Z' AND lv_c <> 'Y' AND lv_c <> '/'.
-      CONTINUE.
-    ENDIF.
     APPEND VALUE ty_renrow(
       kind    = ls_w-kind
       oldname = ls_w-name

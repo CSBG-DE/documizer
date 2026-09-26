@@ -5617,6 +5617,12 @@ AT SELECTION-SCREEN OUTPUT.
 * The plain code says little; the text next to it says what was picked.
     PERFORM stype_text USING p_stype CHANGING gv_tstyt.
     PERFORM suggest_fname.
+* Die Definitionsdaten fuer den Reimport reisen im XML. Ohne XML-Ausgabe
+* stuenden sie in keiner Datei - deshalb wird XML automatisch mit
+* aktiviert, sobald "Definitionsdaten fuer Reimport" gesetzt ist.
+    IF p_def = abap_true.
+      p_xml = abap_true.
+    ENDIF.
 * On an import run there is no start point. The two fields are declared
 * OBLIGATORY for the documentation run; the required flag is taken off
 * here so that the screen does not insist on something the run ignores.
@@ -12295,6 +12301,15 @@ FORM screen_mode.
           screen-input = 1.
         ELSE.
           screen-input = 0.
+        ENDIF.
+        MODIFY SCREEN.
+      WHEN 'P_XML'.
+*       An "Definitionsdaten fuer Reimport" gekoppelt: dann erzwungen an
+*       und nicht abwaehlbar.
+        IF p_def = abap_true.
+          screen-input = 0.
+        ELSE.
+          screen-input = 1.
         ENDIF.
         MODIFY SCREEN.
     ENDCASE.

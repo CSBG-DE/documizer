@@ -204,6 +204,23 @@ TYPES: BEGIN OF ty_packmap,
        END OF ty_packmap.
 TYPES ty_packmaps TYPE STANDARD TABLE OF ty_packmap WITH EMPTY KEY.
 
+* Objekt-Umbenennung: je importierbarem Kundenobjekt eine Zeile. Der
+* Benutzer kann in einem editierbaren Grid Zielname und Zielpaket
+* ueberschreiben; der neue Name wird danach in der ganzen Payload
+* angewandt, bevor der Import laeuft.
+TYPES: BEGIN OF ty_renrow,
+         kind    TYPE string,
+         oldname TYPE string,
+         newname TYPE string,
+         oldpack TYPE devclass,
+         newpack TYPE devclass,
+       END OF ty_renrow.
+TYPES ty_renrows TYPE STANDARD TABLE OF ty_renrow WITH EMPTY KEY.
+
+DATA gt_ren      TYPE ty_renrows.
+DATA go_ren_dock TYPE REF TO cl_gui_docking_container.
+DATA go_ren_grid TYPE REF TO cl_gui_alv_grid.
+
 TYPES ty_chapters TYPE STANDARD TABLE OF REF TO lcl_chapter WITH EMPTY KEY.
 TYPES ty_objects  TYPE STANDARD TABLE OF REF TO lcl_object  WITH EMPTY KEY.
 
@@ -1457,7 +1474,19 @@ CLASS lcl_importer DEFINITION.
                 it_map  TYPE ty_packmaps OPTIONAL.
     METHODS run IMPORTING io_document TYPE REF TO lcl_document.
     METHODS get_log RETURNING VALUE(rt_log) TYPE ty_implog.
+*   Ermittelt ohne zu schreiben die Arbeitsliste (Objektart + Name) eines
+*   Dokuments - fuer die Umbenennungs-Vorschau.
+    METHODS plan
+      IMPORTING io_document    TYPE REF TO lcl_document
+      RETURNING VALUE(rt_work) TYPE ty_impwork.
+*   Uebergibt die Umbenennungstabelle; set_pack liest daraus je Objekt
+*   das Zielpaket.
+    METHODS set_renames IMPORTING it_ren TYPE ty_renrows.
   PRIVATE SECTION.
+    DATA mt_ren TYPE ty_renrows.
+    METHODS obj_name
+      IMPORTING io_chapter     TYPE REF TO lcl_chapter
+      RETURNING VALUE(rv_name) TYPE string.
     DATA mv_test TYPE abap_bool.
     DATA mv_over TYPE abap_bool.
     DATA mv_act  TYPE abap_bool.
@@ -1531,6 +1560,17 @@ CLASS lcl_importer DEFINITION.
                                 iv_name    TYPE string.
     METHODS put_idoc  IMPORTING io_chapter TYPE REF TO lcl_chapter
                                 iv_name    TYPE string.
+*   Adobe-Form-Schnittstelle (SFPI) ueber die Form-Workbench anlegen.
+    METHODS put_sfpi  IMPORTING io_chapter TYPE REF TO lcl_chapter
+                                iv_name    TYPE string.
+    METHODS sfp_exists
+      IMPORTING iv_kind        TYPE string
+                iv_name        TYPE string
+      RETURNING VALUE(rv_flag) TYPE abap_bool.
+    METHODS sfp_code_row
+      IMPORTING io_chapter     TYPE REF TO lcl_chapter
+                iv_tag         TYPE string
+      RETURNING VALUE(rt_code) TYPE tfpcoding.
 *   Checks after the run what actually stands in the system. An object
 *   can be created and still be unusable - a structure whose data
 *   element is missing activates with rc 8 - and an object written early
@@ -1635,6 +1675,25 @@ CLASS lcl_importer IMPLEMENTATION.
 
     IF io_chapter IS NOT BOUND.
       RETURN.
+    ENDIF.
+
+*   Objekt-Umbenennung mit eigenem Zielpaket: die editierbare Liste
+*   gewinnt vor den Paketregeln. Der Name im Dokument ist hier bereits
+*   der neue.
+    IF mt_ren IS NOT INITIAL.
+      READ TABLE mt_ren INTO DATA(ls_rn)
+        WITH KEY kind    = io_chapter->get_defkind( )
+                 newname = obj_name( io_chapter ).
+      IF sy-subrc = 0 AND ls_rn-newpack IS NOT INITIAL.
+        mv_pack = ls_rn-newpack.
+        IF mv_pack CP '$*'.
+          CLEAR mv_tr.
+        ELSE.
+          mv_tr = mv_tr0.
+          warn_no_order( mv_pack ).
+        ENDIF.
+        RETURN.
+      ENDIF.
     ENDIF.
 
     lv_src = io_chapter->get_reference( )-tcode.
@@ -1853,6 +1912,8 @@ CLASS lcl_importer IMPLEMENTATION.
           put_tran( io_chapter = ls_work-chapter iv_name = ls_work-name ).
         WHEN 'VCLS'.
           put_vcls( io_chapter = ls_work-chapter iv_name = ls_work-name ).
+        WHEN 'SFPI'.
+          put_sfpi( io_chapter = ls_work-chapter iv_name = ls_work-name ).
       ENDCASE.
     ENDLOOP.
 
@@ -2084,32 +2145,15 @@ CLASS lcl_importer IMPLEMENTATION.
 *       View-Cluster auf den Views seiner Knoten. Beide ganz zuletzt.
         WHEN 'VCLS'. lv_seq = 15.
         WHEN 'TRAN'. lv_seq = 16.
+*       Adobe-Form-Schnittstelle: steht auf ihren DDIC-Typen, das
+*       Formular wiederum auf ihr. Beide ganz zuletzt.
+        WHEN 'SFPI'. lv_seq = 17.
         WHEN OTHERS. lv_seq = 99.
       ENDCASE.
 
 *     The name comes from the definition, never from the chapter title -
 *     the title carries the short text as well and is translated.
-      DATA lv_name TYPE string.
-      DATA(lt_head) = io_chapter->get_defhead( ).
-      CASE lv_kind.
-        WHEN 'DOMA'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'DOMNAME' ).
-        WHEN 'DTEL'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'ROLLNAME' ).
-        WHEN 'TABL'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'TABNAME' ).
-        WHEN 'PROG'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'NAME' ).
-        WHEN 'VIEW'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'VIEWNAME' ).
-        WHEN 'DDLS'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'DDLNAME' ).
-        WHEN 'CLAS' OR 'INTF'.
-          lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'CLSNAME' ).
-        WHEN 'FUGR'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'AREA' ).
-        WHEN 'MSAG'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'ARBGB' ).
-        WHEN 'SEGM'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'SEGTYP' ).
-        WHEN 'IDOC'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'IDOCTYP' ).
-        WHEN 'WAPA'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'APPLNAME' ).
-        WHEN 'BDEF' OR 'SRVD' OR 'DDLX' OR 'SRVB'.
-          lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'NAME' ).
-        WHEN 'TRAN'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'TCODE' ).
-        WHEN 'VCLS'. lv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'VCLNAME' ).
-      ENDCASE.
+      DATA(lv_name) = obj_name( io_chapter ).
 
       IF lv_name IS NOT INITIAL AND lv_seq < 99.
         APPEND VALUE ty_impwork_row( seq     = lv_seq
@@ -2123,6 +2167,42 @@ CLASS lcl_importer IMPLEMENTATION.
       collect( EXPORTING io_chapter = lo_child CHANGING ct_work = ct_work ).
     ENDLOOP.
 
+  ENDMETHOD.
+
+  METHOD obj_name.
+*   Der Objektname je Objektart aus dem Kopf der Definitionsdaten - nie
+*   aus dem (uebersetzten) Kapiteltitel. Von collect und set_pack genutzt.
+    DATA(lv_kind) = io_chapter->get_defkind( ).
+    DATA(lt_head) = io_chapter->get_defhead( ).
+    CASE lv_kind.
+      WHEN 'DOMA'. rv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'DOMNAME' ).
+      WHEN 'DTEL'. rv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'ROLLNAME' ).
+      WHEN 'TABL'. rv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'TABNAME' ).
+      WHEN 'PROG'. rv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'NAME' ).
+      WHEN 'VIEW'. rv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'VIEWNAME' ).
+      WHEN 'DDLS'. rv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'DDLNAME' ).
+      WHEN 'CLAS' OR 'INTF'. rv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'CLSNAME' ).
+      WHEN 'FUGR'. rv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'AREA' ).
+      WHEN 'MSAG'. rv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'ARBGB' ).
+      WHEN 'SEGM'. rv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'SEGTYP' ).
+      WHEN 'IDOC'. rv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'IDOCTYP' ).
+      WHEN 'WAPA'. rv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'APPLNAME' ).
+      WHEN 'BDEF' OR 'SRVD' OR 'DDLX' OR 'SRVB'.
+        rv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'NAME' ).
+      WHEN 'TRAN'. rv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'TCODE' ).
+      WHEN 'VCLS'. rv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'VCLNAME' ).
+      WHEN 'SFPI'. rv_name = lcl_attr=>value( it_attrs = lt_head iv_name = 'NAME' ).
+    ENDCASE.
+  ENDMETHOD.
+
+  METHOD plan.
+    LOOP AT io_document->get_chapters( ) INTO DATA(lo_ch).
+      collect( EXPORTING io_chapter = lo_ch CHANGING ct_work = rt_work ).
+    ENDLOOP.
+  ENDMETHOD.
+
+  METHOD set_renames.
+    mt_ren = it_ren.
   ENDMETHOD.
 
   METHOD exists.
@@ -3560,6 +3640,170 @@ CLASS lcl_importer IMPLEMENTATION.
                              THEN lcl_t=>ui( d = `geaendert` e = `changed` )
                              ELSE lcl_t=>ui( d = `angelegt` e = `created` ) ) ).
 
+  ENDMETHOD.
+
+  METHOD put_sfpi.
+*   Gegenstueck zu def_sfpi: die Schnittstelle wird ueber die Form-
+*   Workbench angelegt (oder, wenn sie schon da ist, im Schreibmodus
+*   geladen) und mit den Definitionsdaten gefuellt. Standardparameter
+*   verwaltet das System selbst. Paket und Auftrag reichen create( )
+*   selbst durch - kein eigener TADIR-Eintrag noetig.
+    DATA lo_wb     TYPE REF TO if_fp_wb_interface.
+    DATA lo_ifc    TYPE REF TO if_fp_interface.
+    DATA lv_corr   TYPE trkorr.
+    DATA lv_fpname TYPE fpname.
+
+    DATA(lv_ex) = sfp_exists( iv_kind = 'SFPI' iv_name = iv_name ).
+    IF lv_ex = abap_true AND mv_over = abap_false.
+      log( iv_kind = 'SFPI' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+           iv_text   = lcl_t=>ui( d = `existiert bereits` e = `already exists` ) ).
+      RETURN.
+    ENDIF.
+
+    IF mv_test = abap_true.
+      log( iv_kind = 'SFPI' iv_name = iv_name
+           iv_action = COND #( WHEN lv_ex = abap_true
+                               THEN lcl_t=>ui( d = `wuerde geaendert` e = `would change` )
+                               ELSE lcl_t=>ui( d = `wuerde angelegt` e = `would create` ) ) ).
+      RETURN.
+    ENDIF.
+
+    IF mv_pack NP '$*'.
+      lv_corr = mv_tr.
+    ENDIF.
+    lv_fpname = iv_name.
+
+    TRY.
+        IF lv_ex = abap_true.
+          lo_wb = cl_fp_wb_interface=>load( i_name     = lv_fpname
+                                            i_mode     = if_fp_wb_object=>c_mode_write
+                                            i_ordernum = lv_corr ).
+          lo_ifc ?= lo_wb->if_fp_wb_object~get_object( ).
+        ELSE.
+*         create( ) verlangt ein Schnittstellenobjekt - ein frisches,
+*         leeres vom richtigen Typ wird angelegt und danach ueber die
+*         Setter gefuellt.
+          DATA lv_iftype TYPE fpinterfacetype.
+          lv_iftype = lcl_attr=>value( it_attrs = io_chapter->get_defhead( )
+                                       iv_name  = 'IFTYPE' ).
+          lo_ifc = cl_fp_interface=>create( i_interface_type = lv_iftype ).
+          lo_wb  = cl_fp_wb_interface=>create( i_name      = lv_fpname
+                                               i_interface = lo_ifc
+                                               i_devclass  = mv_pack
+                                               i_ordernum  = lv_corr ).
+        ENDIF.
+        DATA(lo_id) = lo_ifc->get_interface_data( ).
+
+*       Alle Zeilentabellen aus den Definitionszeilen aufbauen. Konkrete
+*       Zeilentypen (kein generisches to_struct), damit die Belegung so
+*       typsicher laeuft wie bei den DDIC-Importen.
+        DATA lt_i  TYPE tfpiopar.
+        DATA lt_e  TYPE tfpiopar.
+        DATA lt_t  TYPE tfpiopar.
+        DATA lt_x  TYPE tfpiopar.
+        DATA lt_gd TYPE tfpgdata.
+        DATA lt_fs TYPE tfpgdata.
+        DATA lt_ci TYPE tfpparameter.
+        DATA lt_co TYPE tfpparameter.
+        DATA ls_iopar TYPE sfpiopar.
+        DATA ls_gdata TYPE sfpgdata.
+        DATA ls_cparm LIKE LINE OF lt_ci.
+        DATA(lt_rows) = io_chapter->get_defrows( ).
+        LOOP AT lt_rows INTO DATA(ls_r).
+          CASE ls_r-tag.
+            WHEN 'PAR_I' OR 'PAR_E' OR 'PAR_T' OR 'PAR_X'.
+              CLEAR ls_iopar.
+              lcl_attr=>to_struct( EXPORTING it_attrs = ls_r-attrs CHANGING cs_data = ls_iopar ).
+              CASE ls_r-tag.
+                WHEN 'PAR_I'. APPEND ls_iopar TO lt_i.
+                WHEN 'PAR_E'. APPEND ls_iopar TO lt_e.
+                WHEN 'PAR_T'. APPEND ls_iopar TO lt_t.
+                WHEN 'PAR_X'. APPEND ls_iopar TO lt_x.
+              ENDCASE.
+            WHEN 'GDATA' OR 'FSYM'.
+              CLEAR ls_gdata.
+              lcl_attr=>to_struct( EXPORTING it_attrs = ls_r-attrs CHANGING cs_data = ls_gdata ).
+              IF ls_r-tag = 'GDATA'.
+                APPEND ls_gdata TO lt_gd.
+              ELSE.
+                APPEND ls_gdata TO lt_fs.
+              ENDIF.
+            WHEN 'CP_IN' OR 'CP_OUT'.
+              CLEAR ls_cparm.
+              lcl_attr=>to_struct( EXPORTING it_attrs = ls_r-attrs CHANGING cs_data = ls_cparm ).
+              IF ls_r-tag = 'CP_IN'.
+                APPEND ls_cparm TO lt_ci.
+              ELSE.
+                APPEND ls_cparm TO lt_co.
+              ENDIF.
+          ENDCASE.
+        ENDLOOP.
+
+        DATA(lo_par) = lo_id->get_parameters( ).
+        lo_par->set_import_parameters( lt_i ).
+        lo_par->set_export_parameters( lt_e ).
+        lo_par->set_table_parameters( lt_t ).
+        lo_par->set_exceptions( lt_x ).
+
+        DATA(lo_gd) = lo_id->get_global_definitions( ).
+        lo_gd->set_global_data( lt_gd ).
+        lo_gd->set_fieldsymbols( lt_fs ).
+        lo_gd->set_types( sfp_code_row( io_chapter = io_chapter iv_tag = 'C_TYPES' ) ).
+
+        DATA(lo_code) = lo_id->get_coding( ).
+        lo_code->set_init_coding( sfp_code_row( io_chapter = io_chapter iv_tag = 'C_INIT' ) ).
+        lo_code->set_forms_coding( sfp_code_row( io_chapter = io_chapter iv_tag = 'C_FORMS' ) ).
+        lo_code->set_init_input_params( lt_ci ).
+        lo_code->set_init_output_params( lt_co ).
+
+        lo_wb->if_fp_wb_object~save( ).
+        IF mv_act = abap_true.
+          lo_wb->if_fp_wb_object~activate( ).
+        ENDIF.
+      CATCH cx_root INTO DATA(lx_put).
+        log( iv_kind = 'SFPI' iv_name = iv_name
+             iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
+             iv_text   = lx_put->get_text( ) ).
+        RETURN.
+    ENDTRY.
+
+    log( iv_kind = 'SFPI' iv_name = iv_name
+         iv_action = COND #( WHEN lv_ex = abap_true
+                             THEN lcl_t=>ui( d = `geaendert` e = `changed` )
+                             ELSE lcl_t=>ui( d = `angelegt` e = `created` ) ) ).
+
+  ENDMETHOD.
+
+  METHOD sfp_exists.
+*   Ein Katalogeintrag beweist bei Formularobjekten nichts - massgeblich
+*   ist, ob die Workbench das Objekt laedt. Im Lesemodus ohne Sperre.
+    DATA lv_fpname TYPE fpname.
+    lv_fpname = iv_name.
+    TRY.
+        IF iv_kind = 'SFPF'.
+          DATA(lo_f) = cl_fp_wb_form=>load( i_name = lv_fpname
+                                            i_mode = if_fp_wb_object=>c_mode_read ).
+          rv_flag = boolc( lo_f IS BOUND ).
+        ELSE.
+          DATA(lo_i) = cl_fp_wb_interface=>load( i_name = lv_fpname
+                                                 i_mode = if_fp_wb_object=>c_mode_read ).
+          rv_flag = boolc( lo_i IS BOUND ).
+        ENDIF.
+      CATCH cx_root.
+        CLEAR rv_flag.
+    ENDTRY.
+  ENDMETHOD.
+
+  METHOD sfp_code_row.
+*   Ein als src abgelegter Coding-Block wird wieder in eine Zeilentabelle
+*   zerlegt. Fehlt der Block, bleibt die Tabelle leer.
+    DATA(lt_rows) = io_chapter->get_defrows( ).
+    READ TABLE lt_rows INTO DATA(ls_row) WITH KEY tag = iv_tag.
+    IF sy-subrc <> 0 OR ls_row-src IS INITIAL.
+      RETURN.
+    ENDIF.
+    SPLIT ls_row-src AT cl_abap_char_utilities=>newline INTO TABLE rt_code.
   ENDMETHOD.
 
   METHOD put_msag.
@@ -5179,6 +5423,10 @@ SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE gv_blk4.
     SELECTION-SCREEN COMMENT 1(30) gv_titsk FOR FIELD p_itask.
     PARAMETERS p_itask AS CHECKBOX DEFAULT 'X'.
   SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tiren FOR FIELD p_iren.
+    PARAMETERS p_iren AS CHECKBOX.
+  SELECTION-SCREEN END OF LINE.
 
 * Das Zielpaket oben gilt fuer alles. Wer die Paketstruktur des
 * Quellsystems behalten oder umlenken will, nimmt die Regeln darunter:
@@ -5214,6 +5462,13 @@ SELECTION-SCREEN BEGIN OF BLOCK b4 WITH FRAME TITLE gv_blk4.
     PARAMETERS p_inew4 TYPE devclass VISIBLE LENGTH 20.
   SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b4.
+
+* Traegerbild fuer das editierbare Umbenennungs-Grid. Das Grid selbst
+* wird im PBO dieses Bildes ueber einen Docking-Container aufgebaut -
+* kein Screen-Painter-Objekt noetig, alles liegt in diesem Report.
+SELECTION-SCREEN BEGIN OF SCREEN 2000 TITLE gv_tren2.
+  SELECTION-SCREEN COMMENT 1(70) gv_tren3.
+SELECTION-SCREEN END OF SCREEN 2000.
 
 INITIALIZATION.
 * Screen labels live in the source, not in the text pool, so that a copied
@@ -5275,6 +5530,9 @@ INITIALIZATION.
     gv_tiar3 = '->'.
     gv_tiar4 = '->'.
     gv_titr  = 'Auftrag'.
+    gv_tiren = 'Objekte umbenennen'.
+    gv_tren2 = 'Objekte umbenennen'.
+    gv_tren3 = 'Zielname und Zielpaket bei Bedarf ueberschreiben, dann Ausfuehren.'.
     %_s_objtyp_%_app_%-text = 'Objekttyp'.
     %_s_objnam_%_app_%-text = 'Objektname'.
   ELSE.
@@ -5333,6 +5591,9 @@ INITIALIZATION.
     gv_tiar3 = '->'.
     gv_tiar4 = '->'.
     gv_titr  = 'Request'.
+    gv_tiren = 'Rename objects'.
+    gv_tren2 = 'Rename objects'.
+    gv_tren3 = 'Overwrite target name and package as needed, then Execute.'.
 * Select-options take their label from the text pool; the COMMENT approach
 * used for the other fields does not apply. The generated fields
 * %_<name>_%_app_%-text allow setting it at runtime.
@@ -5350,33 +5611,41 @@ AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_sval.
   PERFORM f4_sval.
 
 AT SELECTION-SCREEN OUTPUT.
+  IF sy-dynnr = 2000.
+    PERFORM ren_pbo.
+  ELSE.
 * The plain code says little; the text next to it says what was picked.
-  PERFORM stype_text USING p_stype CHANGING gv_tstyt.
-  PERFORM suggest_fname.
+    PERFORM stype_text USING p_stype CHANGING gv_tstyt.
+    PERFORM suggest_fname.
 * On an import run there is no start point. The two fields are declared
 * OBLIGATORY for the documentation run; the required flag is taken off
 * here so that the screen does not insist on something the run ignores.
-  PERFORM screen_mode.
+    PERFORM screen_mode.
+  ENDIF.
 
 AT SELECTION-SCREEN.
+  IF sy-dynnr = 2000.
+    PERFORM ren_pai.
+  ELSE.
 * Only when the run really starts. This event also fires on a plain
 * round trip - ticking the import flag is one - and checking there would
 * block the very box the user is trying to reach.
-  IF sy-ucomm = 'ONLI' OR sy-ucomm = 'SJOB' OR sy-ucomm = 'PRIN'.
-    IF p_imp = abap_false.
-      IF p_stype = 'AL'.
-        IF p_afile IS INITIAL.
-          MESSAGE lcl_t=>ui( d = `Bitte die Fehlliste angeben.`
-                             e = `Please enter the request list.` ) TYPE 'E'.
+    IF sy-ucomm = 'ONLI' OR sy-ucomm = 'SJOB' OR sy-ucomm = 'PRIN'.
+      IF p_imp = abap_false.
+        IF p_stype = 'AL'.
+          IF p_afile IS INITIAL.
+            MESSAGE lcl_t=>ui( d = `Bitte die Fehlliste angeben.`
+                               e = `Please enter the request list.` ) TYPE 'E'.
+          ENDIF.
+        ELSEIF p_sval IS INITIAL.
+          MESSAGE lcl_t=>ui( d = `Bitte einen Startpunkt angeben.`
+                             e = `Please enter a start point.` ) TYPE 'E'.
         ENDIF.
-      ELSEIF p_sval IS INITIAL.
-        MESSAGE lcl_t=>ui( d = `Bitte einen Startpunkt angeben.`
-                           e = `Please enter a start point.` ) TYPE 'E'.
+        PERFORM check_stype.
+      ELSEIF p_ifile IS INITIAL.
+        MESSAGE lcl_t=>ui( d = `Bitte die XML-Datei angeben.`
+                           e = `Please enter the XML file.` ) TYPE 'E'.
       ENDIF.
-      PERFORM check_stype.
-    ELSEIF p_ifile IS INITIAL.
-      MESSAGE lcl_t=>ui( d = `Bitte die XML-Datei angeben.`
-                         e = `Please enter the XML file.` ) TYPE 'E'.
     ENDIF.
   ENDIF.
 
@@ -5940,6 +6209,16 @@ CLASS lcl_collector_dev DEFINITION.
     METHODS def_func
       IMPORTING iv_func    TYPE rs38l_fnam
                 io_chapter TYPE REF TO lcl_chapter.
+*   Reimport-Definitionsdaten einer Adobe-Form-Schnittstelle (SFPI):
+*   Parameter, globale Definitionen und Coding aus dem Objektmodell.
+    METHODS def_sfpi
+      IMPORTING iv_name      TYPE sobj_name
+                io_chapter   TYPE REF TO lcl_chapter
+      RETURNING VALUE(rv_ok) TYPE abap_bool.
+    METHODS def_sfp_code_row
+      IMPORTING iv_tag     TYPE string
+                it_code    TYPE tfpcoding
+                io_chapter TYPE REF TO lcl_chapter.
 *   The complete source of a class or interface in its source-based
 *   form - the text SE24 and ADT show, not the generated includes.
     METHODS clif_source
@@ -6229,6 +6508,7 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       WHEN 'WAPA'. lv_ok = def_wapa( iv_name = iv_name io_chapter = io_chapter ).
       WHEN 'TRAN'. lv_ok = def_tran( iv_name = iv_name io_chapter = io_chapter ).
       WHEN 'VCLS'. lv_ok = def_vcls( iv_name = iv_name io_chapter = io_chapter ).
+      WHEN 'SFPI'. lv_ok = def_sfpi( iv_name = iv_name io_chapter = io_chapter ).
       WHEN OTHERS.
         RETURN.
     ENDCASE.
@@ -8183,6 +8463,95 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     LOOP AT io_node->succ INTO DATA(lo_succ).
       ssfo_code( EXPORTING io_node = lo_succ CHANGING ct_src = ct_src ).
     ENDLOOP.
+  ENDMETHOD.
+
+  METHOD def_sfpi.
+*   Reimportfaehige Definitionsdaten einer Adobe-Form-Schnittstelle.
+*   Anders als bei DDIC-Objekten gibt es keine lesbare Tabelle: Parameter,
+*   globale Definitionen und Coding kommen aus dem Objektmodell. Parameter
+*   und Datenzeilen reisen als name/value-Zeilen (from_struct), Coding als
+*   Quelltextbloecke (src). put_sfpi schreibt genau diese ueber
+*   CL_FP_WB_INTERFACE wieder zurueck. Standardparameter (DOCPARAMS,
+*   FORMOUTPUT) sind von der API bereits herausgefiltert.
+    DATA(lo_data) = sfpi_ifc_data( iv_name ).
+    IF lo_data IS NOT BOUND.
+      RETURN.
+    ENDIF.
+
+    DATA lt_head TYPE ty_attrs.
+    APPEND VALUE ty_attr( name = 'NAME' value = iv_name ) TO lt_head.
+    DATA(lv_desc) = read_short_text( iv_type = 'SFPI' iv_name = iv_name ).
+    IF lv_desc IS NOT INITIAL.
+      APPEND VALUE ty_attr( name = 'DESCRIPTION' value = lv_desc ) TO lt_head.
+    ENDIF.
+*   Der Schnittstellentyp (neu / XSD / SF-kompatibel) muss erhalten
+*   bleiben - er bestimmt das Parametermodell.
+    DATA(lv_iftype) = lo_data->get_interface( )->get_interface_type( ).
+    APPEND VALUE ty_attr( name = 'IFTYPE' value = lv_iftype ) TO lt_head.
+    io_chapter->set_definition( iv_kind = 'SFPI' it_head = lt_head ).
+
+*   Schnittstellenparameter je Richtung (Import/Export/Tabelle/Ausnahme).
+    DATA(lo_par) = lo_data->get_parameters( ).
+    LOOP AT lo_par->get_import_parameters( ) INTO DATA(ls_pi).
+      IF ls_pi-standard = abap_true. CONTINUE. ENDIF.
+      io_chapter->add_defrow( VALUE ty_defrow( tag = 'PAR_I' attrs = lcl_attr=>from_struct( ls_pi ) ) ).
+    ENDLOOP.
+    LOOP AT lo_par->get_export_parameters( ) INTO DATA(ls_pe).
+      IF ls_pe-standard = abap_true. CONTINUE. ENDIF.
+      io_chapter->add_defrow( VALUE ty_defrow( tag = 'PAR_E' attrs = lcl_attr=>from_struct( ls_pe ) ) ).
+    ENDLOOP.
+    LOOP AT lo_par->get_table_parameters( ) INTO DATA(ls_pt).
+      IF ls_pt-standard = abap_true. CONTINUE. ENDIF.
+      io_chapter->add_defrow( VALUE ty_defrow( tag = 'PAR_T' attrs = lcl_attr=>from_struct( ls_pt ) ) ).
+    ENDLOOP.
+    LOOP AT lo_par->get_exceptions( ) INTO DATA(ls_px).
+      io_chapter->add_defrow( VALUE ty_defrow( tag = 'PAR_X' attrs = lcl_attr=>from_struct( ls_px ) ) ).
+    ENDLOOP.
+
+*   Globale Definitionen: Daten und Feldsymbole als Zeilen, Typen als
+*   Quelltextblock.
+    DATA(lo_gd) = lo_data->get_global_definitions( ).
+    LOOP AT lo_gd->get_global_data( ) INTO DATA(ls_gd).
+      io_chapter->add_defrow( VALUE ty_defrow( tag = 'GDATA' attrs = lcl_attr=>from_struct( ls_gd ) ) ).
+    ENDLOOP.
+    LOOP AT lo_gd->get_fieldsymbols( ) INTO DATA(ls_fs).
+      io_chapter->add_defrow( VALUE ty_defrow( tag = 'FSYM' attrs = lcl_attr=>from_struct( ls_fs ) ) ).
+    ENDLOOP.
+    def_sfp_code_row( io_chapter = io_chapter iv_tag = 'C_TYPES' it_code = lo_gd->get_types( ) ).
+
+*   Coding: Initialisierung und Formularroutinen als Quelltext,
+*   Initialisierungsparameter als Zeilen.
+    DATA(lo_code) = lo_data->get_coding( ).
+    def_sfp_code_row( io_chapter = io_chapter iv_tag = 'C_INIT'  it_code = lo_code->get_init_coding( ) ).
+    def_sfp_code_row( io_chapter = io_chapter iv_tag = 'C_FORMS' it_code = lo_code->get_forms_coding( ) ).
+    LOOP AT lo_code->get_init_input_params( ) INTO DATA(ls_ip).
+      DATA(lt_ipa) = lcl_attr=>from_struct( ls_ip ).
+      IF lt_ipa IS NOT INITIAL.
+        io_chapter->add_defrow( VALUE ty_defrow( tag = 'CP_IN' attrs = lt_ipa ) ).
+      ENDIF.
+    ENDLOOP.
+    LOOP AT lo_code->get_init_output_params( ) INTO DATA(ls_op).
+      DATA(lt_opa) = lcl_attr=>from_struct( ls_op ).
+      IF lt_opa IS NOT INITIAL.
+        io_chapter->add_defrow( VALUE ty_defrow( tag = 'CP_OUT' attrs = lt_opa ) ).
+      ENDIF.
+    ENDLOOP.
+
+    rv_ok = abap_true.
+  ENDMETHOD.
+
+  METHOD def_sfp_code_row.
+*   Ein Coding-Block (Typen, Initialisierung, Formularroutinen) wird - um
+*   Nachlaufleerzeilen bereinigt - als ein einziger Quelltext-src einer
+*   Definitionszeile abgelegt. put_sfpi teilt ihn beim Import wieder in
+*   Zeilen. Ein leerer Block erzeugt keine Zeile.
+    DATA(lt) = sfp_trim_code( it_code ).
+    IF lt IS INITIAL.
+      RETURN.
+    ENDIF.
+    CONCATENATE LINES OF lt INTO DATA(lv_src)
+                SEPARATED BY cl_abap_char_utilities=>newline.
+    io_chapter->add_defrow( VALUE ty_defrow( tag = iv_tag src = lv_src ) ).
   ENDMETHOD.
 
   METHOD sfpf_form.
@@ -11919,6 +12288,7 @@ FORM screen_mode.
         MODIFY SCREEN.
       WHEN 'P_IFILE' OR 'P_ISRV' OR 'P_ITEST' OR 'P_IOVER'
         OR 'P_IACT' OR 'P_IPACK' OR 'P_ITR' OR 'P_IKEEP' OR 'P_ITASK'
+        OR 'P_IREN'
         OR 'P_IOLD1' OR 'P_INEW1' OR 'P_IOLD2' OR 'P_INEW2'
         OR 'P_IOLD3' OR 'P_INEW3' OR 'P_IOLD4' OR 'P_INEW4'.
         IF p_imp = abap_true.
@@ -12237,6 +12607,164 @@ ENDFORM.
 * it and hands it to the importer. Everything the run did is written to
 * the list, including what it deliberately did not do.
 *----------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*& FORM ren_prepare
+*&---------------------------------------------------------------------*
+* Baut die Vorschlagsliste der umbenennbaren Objekte. Nur Kundenobjekte
+* (Z*/Y*/Namespace) sind anlegbar und damit umbenennbar. Zielname und
+* Zielpaket sind mit dem Original bzw. dem Zielpaket vom Bild vorbelegt.
+*----------------------------------------------------------------------*
+FORM ren_prepare USING io_doc TYPE REF TO lcl_document.
+
+  CLEAR gt_ren.
+  DATA(lo_pl) = NEW lcl_importer( iv_test = abap_true
+                                  iv_over = abap_false
+                                  iv_act  = abap_false
+                                  iv_pack = p_ipack
+                                  iv_tr   = p_itr ).
+  DATA(lt_work) = lo_pl->plan( io_doc ).
+
+  LOOP AT lt_work INTO DATA(ls_w).
+    DATA(lv_c) = substring( val = ls_w-name off = 0 len = 1 ).
+    IF lv_c <> 'Z' AND lv_c <> 'Y' AND lv_c <> '/'.
+      CONTINUE.
+    ENDIF.
+    APPEND VALUE ty_renrow(
+      kind    = ls_w-kind
+      oldname = ls_w-name
+      newname = ls_w-name
+      oldpack = ls_w-chapter->get_reference( )-tcode
+      newpack = p_ipack ) TO gt_ren.
+  ENDLOOP.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& FORM ren_pbo  (PBO der Umbenennungs-Dynpro 2000)
+*&---------------------------------------------------------------------*
+* Baut einmalig den Docking-Container und das editierbare ALV-Grid auf
+* und bindet es an gt_ren. Editierbar sind Zielname und Zielpaket.
+*----------------------------------------------------------------------*
+FORM ren_pbo.
+
+  IF go_ren_grid IS BOUND.
+    RETURN.
+  ENDIF.
+
+  CREATE OBJECT go_ren_dock
+    EXPORTING repid     = sy-repid
+              dynnr     = '2000'
+              side      = cl_gui_docking_container=>dock_at_bottom
+              extension = 2000.
+
+  CREATE OBJECT go_ren_grid
+    EXPORTING i_parent = go_ren_dock.
+
+  DATA lt_fcat TYPE lvc_t_fcat.
+  DATA ls_fcat TYPE lvc_s_fcat.
+  CLEAR ls_fcat. ls_fcat-fieldname = 'KIND'.    ls_fcat-outputlen = 8.
+  ls_fcat-coltext = lcl_t=>t( d = 'Objektart'    e = 'Object type' ).    APPEND ls_fcat TO lt_fcat.
+  CLEAR ls_fcat. ls_fcat-fieldname = 'OLDNAME'. ls_fcat-outputlen = 30.
+  ls_fcat-coltext = lcl_t=>t( d = 'Originalname' e = 'Original name' ).  APPEND ls_fcat TO lt_fcat.
+  CLEAR ls_fcat. ls_fcat-fieldname = 'NEWNAME'. ls_fcat-outputlen = 30. ls_fcat-edit = 'X'.
+  ls_fcat-coltext = lcl_t=>t( d = 'Zielname'     e = 'Target name' ).    APPEND ls_fcat TO lt_fcat.
+  CLEAR ls_fcat. ls_fcat-fieldname = 'OLDPACK'. ls_fcat-outputlen = 20.
+  ls_fcat-coltext = lcl_t=>t( d = 'Quellpaket'   e = 'Source package' ). APPEND ls_fcat TO lt_fcat.
+  CLEAR ls_fcat. ls_fcat-fieldname = 'NEWPACK'. ls_fcat-outputlen = 20. ls_fcat-edit = 'X'.
+  ls_fcat-coltext = lcl_t=>t( d = 'Zielpaket'    e = 'Target package' ). APPEND ls_fcat TO lt_fcat.
+
+  DATA ls_lay TYPE lvc_s_layo.
+  ls_lay-cwidth_opt = 'X'.
+  ls_lay-grid_title = lcl_t=>t( d = 'Umzubenennende Objekte' e = 'Objects to rename' ).
+
+  go_ren_grid->set_table_for_first_display(
+    EXPORTING is_layout       = ls_lay
+    CHANGING  it_outtab       = gt_ren
+              it_fieldcatalog = lt_fcat ).
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& FORM ren_pai  (PAI der Umbenennungs-Dynpro 2000)
+*&---------------------------------------------------------------------*
+* Uebernimmt die editierten Zellen in gt_ren und gibt Grid/Container
+* beim Verlassen frei, damit ein weiterer Lauf sauber neu aufbaut.
+*----------------------------------------------------------------------*
+FORM ren_pai.
+
+  IF go_ren_grid IS BOUND.
+    go_ren_grid->check_changed_data( ).
+  ENDIF.
+
+  CASE sy-ucomm.
+    WHEN 'ONLI' OR 'CANC' OR 'ENDE' OR 'ECAN' OR 'RW'.
+      IF go_ren_grid IS BOUND.
+        go_ren_grid->free( ).
+        CLEAR go_ren_grid.
+      ENDIF.
+      IF go_ren_dock IS BOUND.
+        go_ren_dock->free( ).
+        CLEAR go_ren_dock.
+      ENDIF.
+  ENDCASE.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& FORM ren_validate
+*&---------------------------------------------------------------------*
+* Prueft die Zielnamen: nicht leer, Kundennamensraum, keine Dubletten.
+* Normalisiert auf Grossschreibung. Bei Fehler: Text in cv_err (Abbruch).
+*----------------------------------------------------------------------*
+FORM ren_validate CHANGING cv_err TYPE string.
+
+  CLEAR cv_err.
+  DATA lt_seen TYPE STANDARD TABLE OF string WITH EMPTY KEY.
+
+  LOOP AT gt_ren ASSIGNING FIELD-SYMBOL(<ls>).
+    DATA(lv_new) = <ls>-newname.
+    CONDENSE lv_new.
+    IF lv_new IS INITIAL.
+      cv_err = |{ lcl_t=>ui( d = `Leerer Zielname fuer` e = `Empty target name for` ) } { <ls>-oldname }|.
+      RETURN.
+    ENDIF.
+    TRANSLATE lv_new TO UPPER CASE.
+    <ls>-newname = lv_new.
+    DATA(lv_c) = lv_new(1).
+    IF lv_c <> 'Z' AND lv_c <> 'Y' AND lv_c <> '/'.
+      cv_err = |{ lcl_t=>ui( d = `Zielname nicht im Kundennamensraum:` e = `Target name not in customer namespace:` ) } { lv_new }|.
+      RETURN.
+    ENDIF.
+    DATA(lv_key) = |{ <ls>-kind }/{ lv_new }|.
+    READ TABLE lt_seen TRANSPORTING NO FIELDS WITH KEY table_line = lv_key.
+    IF sy-subrc = 0.
+      cv_err = |{ lcl_t=>ui( d = `Zielname doppelt:` e = `Duplicate target name:` ) } { lv_new }|.
+      RETURN.
+    ENDIF.
+    APPEND lv_key TO lt_seen.
+  ENDLOOP.
+
+ENDFORM.
+
+*&---------------------------------------------------------------------*
+*& FORM ren_apply
+*&---------------------------------------------------------------------*
+* Wendet jede Umbenennung auf die ganze XML-Payload an: wort-genau und
+* gross/klein-unabhaengig. Deckt sowohl Attributwerte (value="ALT") als
+* auch Quelltext-Verwendungen (SELECT FROM alt, TYPE REF TO alt) ab. Nur
+* Kundenobjekte werden umbenannt, deren Namen mit dem XML-Vokabular nicht
+* kollidieren; die Wortgrenze verhindert Teiltreffer (ZKUNDE <> ZKUNDE2).
+*----------------------------------------------------------------------*
+FORM ren_apply CHANGING cv_xml TYPE string.
+
+  LOOP AT gt_ren INTO DATA(ls).
+    CHECK ls-newname <> ls-oldname.
+    REPLACE ALL OCCURRENCES OF PCRE |\\b{ ls-oldname }\\b|
+      IN cv_xml WITH ls-newname IGNORING CASE.
+  ENDLOOP.
+
+ENDFORM.
+
 FORM import.
 
   DATA lv_xml  TYPE string.
@@ -12313,6 +12841,38 @@ FORM import.
       RETURN.
   ENDTRY.
 
+* Optionale Objekt-Umbenennung vor dem Import. Nur im Dialog moeglich -
+* die editierbare Liste braucht die GUI. Bei ungueltiger Eingabe: Abbruch.
+  IF p_iren = abap_true.
+    IF sy-batch = abap_true.
+      WRITE: / lcl_t=>ui( d = `Umbenennen geht nur im Dialog - im Hintergrund uebersprungen.`
+                          e = `Rename works only in dialog - skipped in background.` ).
+    ELSE.
+      PERFORM ren_prepare USING lo_doc.
+      IF gt_ren IS NOT INITIAL.
+        CALL SELECTION-SCREEN 2000 STARTING AT 5 3.
+        IF sy-subrc <> 0.
+          WRITE: / lcl_t=>ui( d = `Import abgebrochen.` e = `Import cancelled.` ).
+          RETURN.
+        ENDIF.
+        DATA lv_rerr TYPE string.
+        PERFORM ren_validate CHANGING lv_rerr.
+        IF lv_rerr IS NOT INITIAL.
+          WRITE: / lcl_t=>ui( d = `Umbenennung ungueltig:` e = `Rename invalid:` ), lv_rerr.
+          RETURN.
+        ENDIF.
+        PERFORM ren_apply CHANGING lv_xml.
+        TRY.
+            lo_doc = lcl_parser_xml=>parse( lv_xml ).
+          CATCH cx_root.
+            WRITE: / lcl_t=>ui( d = `Umbenanntes XML nicht mehr lesbar.`
+                                e = `Renamed XML no longer parseable.` ).
+            RETURN.
+        ENDTRY.
+      ENDIF.
+    ENDIF.
+  ENDIF.
+
   DATA(ls_meta) = lo_doc->get_meta( ).
   WRITE: / lcl_t=>ui( d = `Import` e = `Import` ).
   ULINE.
@@ -12371,6 +12931,9 @@ FORM import.
                                    iv_tr   = p_itr
                                    iv_keep = p_ikeep
                                    it_map  = lt_pmap ).
+  IF p_iren = abap_true.
+    lo_imp->set_renames( gt_ren ).
+  ENDIF.
   lo_imp->run( lo_doc ).
 
 * Fixed-width columns through typed fields, not through offsets on the

@@ -3844,39 +3844,70 @@ CLASS lcl_importer IMPLEMENTATION.
     lv_ifname = lcl_attr=>value( it_attrs = lt_head iv_name = 'INTERFACE' ).
     lv_offh   = lcl_attr=>value( it_attrs = lt_head iv_name = 'OFFLINE_HANDLER' ).
 
+    DATA lv_step TYPE string.
     TRY.
+        lv_step = 'decode'.
         lv_blob = cl_http_utility=>decode_x_base64( encoded = ls_blob-src ).
+        lv_step = 'convert_xstring_to_form'.
         lo_form = cl_fp_helper=>convert_xstring_to_form( i_xstring  = lv_blob
                                                          i_language = sy-langu ).
-        cl_fp_helper=>set_new_layout_id( CHANGING c_form = lo_form ).
+*       Neue Layout-Kennung vergeben (wie beim Kopieren). Intern kopiert
+*       das die XFA-Vorlage ueber die Template-Services/ADS. Ist ADS im
+*       System nicht erreichbar, scheitert nur diese Optimierung - dann
+*       wird das Formular mit der urspruenglichen Kennung angelegt, statt
+*       den ganzen Import abzubrechen. Best-effort.
+        lv_step = 'set_new_layout_id'.
+        TRY.
+            cl_fp_helper=>set_new_layout_id( CHANGING c_form = lo_form ).
+          CATCH cx_root.
+        ENDTRY.
         IF lv_ifname IS NOT INITIAL.
+          lv_step = 'set_interface_name'.
           lo_form->set_interface_name( lv_ifname ).
         ENDIF.
         IF lv_offh IS NOT INITIAL.
+          lv_step = 'set_offline_handler'.
           lo_form->set_offline_handler( lv_offh ).
         ENDIF.
 
         IF lv_ex = abap_true.
+          lv_step = 'delete'.
           cl_fp_wb_form=>delete( i_name     = lv_fpname
                                  i_ordernum = lv_corr ).
         ENDIF.
+        lv_step = 'create'.
         lo_wb = cl_fp_wb_form=>create( i_name     = lv_fpname
                                        i_form     = lo_form
                                        i_devclass = mv_pack
                                        i_ordernum = lv_corr ).
+        lv_step = 'save'.
         lo_wb->if_fp_wb_object~save( ).
-*       Eigene Sperre VOR dem Aktivieren freigeben (sonst Selbstblockade),
-*       dann statisch aktivieren - wie in CL_FP_WB_*=>COPY.
+*       Eigene Sperre VOR dem Aktivieren freigeben (sonst Selbstblockade).
+        lv_step = 'free'.
         lo_wb->if_fp_wb_object~free( ).
-        IF mv_act = abap_true.
-          cl_fp_wb_form=>activate( i_name = lv_fpname i_ordernum = lv_corr ).
-        ENDIF.
       CATCH cx_root INTO DATA(lx_put).
+        DATA(lv_cls) = cl_abap_typedescr=>describe_by_object_ref( lx_put )->get_relative_name( ).
         log( iv_kind = 'SFPF' iv_name = iv_name
              iv_action = lcl_t=>ui( d = `Fehler` e = `error` )
-             iv_text   = lx_put->get_text( ) ).
+             iv_text   = |[{ lv_step }/{ lv_cls }] { lx_put->get_text( ) }| ).
         RETURN.
     ENDTRY.
+
+*   Aktivierung getrennt und best-effort: das Formular ist angelegt und
+*   gesichert. Die Aktivierung generiert das Layout und braucht dazu ADS
+*   (Adobe Document Services). Ist ADS nicht erreichbar, bleibt das
+*   Formular inaktiv - es gilt aber als angelegt, kein harter Fehler.
+    IF mv_act = abap_true.
+      TRY.
+          cl_fp_wb_form=>activate( i_name = lv_fpname i_ordernum = lv_corr ).
+        CATCH cx_root INTO DATA(lx_act).
+          log( iv_kind = 'SFPF' iv_name = iv_name
+               iv_action = lcl_t=>ui( d = `angelegt, inaktiv` e = `created, inactive` )
+               iv_text   = |{ lcl_t=>ui( d = `Aktivierung fehlgeschlagen - ADS erreichbar?`
+                                         e = `activation failed - is ADS reachable?` ) }: { lx_act->get_text( ) }| ).
+          RETURN.
+      ENDTRY.
+    ENDIF.
 
     log( iv_kind = 'SFPF' iv_name = iv_name
          iv_action = COND #( WHEN lv_ex = abap_true

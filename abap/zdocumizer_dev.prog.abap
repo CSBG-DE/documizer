@@ -8732,6 +8732,28 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       attrs = VALUE #( ( name = 'SIZE' value = |{ xstrlen( lv_blob ) }| ) )
       src   = cl_http_utility=>encode_x_base64( unencoded = lv_blob ) ) ).
 
+*   Die Schnittstelle muss mitwandern - das Formular haengt an ihr. Sie
+*   reist als Unterkapitel mit eigenen Reimport-Definitionsdaten. So legt
+*   der Import sie VOR dem Formular an (Seq 17 < 18) und die Umbenennung
+*   zieht Formular, Schnittstelle UND die INTERFACE-Referenz konsistent
+*   mit (Formular und Schnittstelle teilen sich denselben Namen).
+    DATA(lv_ifname) = CONV sobj_name( lo_form->get_interface_name( ) ).
+    IF lv_ifname IS NOT INITIAL.
+      DATA(lo_ifchap) = NEW lcl_chapter( iv_id    = |{ io_chapter->get_id( ) }.1|
+                                         iv_level = io_chapter->get_level( ) + 1
+                                         iv_type  = 'OBJECT'
+                                         iv_title = CONV string( lv_ifname ) ).
+      SELECT SINGLE devclass, author FROM tadir
+        WHERE pgmid = 'R3TR' AND object = 'SFPI' AND obj_name = @lv_ifname
+        INTO ( @DATA(lv_ipack), @DATA(lv_iauth) ).
+      lo_ifchap->set_reference( VALUE ty_reference( activity = 'SFPI'
+                                                    docu_id  = CONV string( lv_iauth )
+                                                    tcode    = CONV string( lv_ipack ) ) ).
+      IF def_sfpi( iv_name = lv_ifname io_chapter = lo_ifchap ) = abap_true.
+        io_chapter->add_child( lo_ifchap ).
+      ENDIF.
+    ENDIF.
+
     rv_ok = abap_true.
   ENDMETHOD.
 

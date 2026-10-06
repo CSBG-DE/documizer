@@ -208,7 +208,13 @@ TYPES ty_packmaps TYPE STANDARD TABLE OF ty_packmap WITH EMPTY KEY.
 * Benutzer kann in einem editierbaren Grid Zielname und Zielpaket
 * ueberschreiben; der neue Name wird danach in der ganzen Payload
 * angewandt, bevor der Import laeuft.
+*
+* SKIP nimmt eine Zeile ganz aus dem Lauf: das Objekt wird weder
+* angelegt noch geaendert. Es bekommt trotzdem eine Protokollzeile,
+* damit das Weglassen im Protokoll steht und nicht wie ein Fehler
+* aussieht.
 TYPES: BEGIN OF ty_renrow,
+         skip    TYPE abap_bool,
          kind    TYPE string,
          oldname TYPE string,
          newname TYPE string,
@@ -1880,6 +1886,29 @@ CLASS lcl_importer IMPLEMENTATION.
                                   e = `nothing to do` )
            iv_text   = lcl_t=>ui( d = `Das Dokument enthaelt keine Definitionsdaten. Beim Export muss "Definitionsdaten fuer Reimport" angehakt sein.`
                                   e = `The document carries no definition data. The export needs "Definition data for reimport" switched on.` ) ).
+      RETURN.
+    ENDIF.
+
+*   Abgewaehlte Objekte aus der Umbenennungsliste fallen hier heraus -
+*   vor jedem Schreibzugriff und vor der Pruefung danach. Sie werden
+*   nicht umbenannt, der Name im Dokument ist also der Originalname.
+    LOOP AT mt_ren INTO DATA(ls_skip) WHERE skip = abap_true.
+      DELETE lt_work WHERE kind = ls_skip-kind AND name = ls_skip-oldname.
+      IF sy-subrc = 0.
+        log( iv_kind   = ls_skip-kind
+             iv_name   = ls_skip-oldname
+             iv_action = lcl_t=>ui( d = `uebergangen` e = `skipped` )
+             iv_text   = lcl_t=>ui( d = `abgewaehlt - weder angelegt noch geaendert`
+                                    e = `deselected - neither created nor changed` ) ).
+      ENDIF.
+    ENDLOOP.
+
+    IF lt_work IS INITIAL.
+      log( iv_kind   = ''
+           iv_name   = ''
+           iv_action = lcl_t=>ui( d = `nichts zu tun` e = `nothing to do` )
+           iv_text   = lcl_t=>ui( d = `Alle Objekte wurden abgewaehlt.`
+                                  e = `All objects were deselected.` ) ).
       RETURN.
     ENDIF.
 
@@ -5671,9 +5700,9 @@ INITIALIZATION.
     gv_tiar3 = '->'.
     gv_tiar4 = '->'.
     gv_titr  = 'Auftrag'.
-    gv_tiren = 'Objekte umbenennen'.
-    gv_tren2 = 'Objekte umbenennen'.
-    gv_tren3 = 'Zielname und Zielpaket bei Bedarf ueberschreiben, dann Ausfuehren.'.
+    gv_tiren = 'Objekte umbenennen/abwaehlen'.
+    gv_tren2 = 'Objekte umbenennen oder abwaehlen'.
+    gv_tren3 = 'Uebergehen ankreuzen oder Zielname/-paket aendern, dann Ausfuehren.'.
     %_s_objtyp_%_app_%-text = 'Objekttyp'.
     %_s_objnam_%_app_%-text = 'Objektname'.
   ELSE.
@@ -5732,9 +5761,9 @@ INITIALIZATION.
     gv_tiar3 = '->'.
     gv_tiar4 = '->'.
     gv_titr  = 'Request'.
-    gv_tiren = 'Rename objects'.
-    gv_tren2 = 'Rename objects'.
-    gv_tren3 = 'Overwrite target name and package as needed, then Execute.'.
+    gv_tiren = 'Rename or skip objects'.
+    gv_tren2 = 'Rename or skip objects'.
+    gv_tren3 = 'Tick Skip or change target name/package, then Execute.'.
 * Select-options take their label from the text pool; the COMMENT approach
 * used for the other fields does not apply. The generated fields
 * %_<name>_%_app_%-text allow setting it at runtime.
@@ -12903,6 +12932,9 @@ FORM ren_pbo.
 
   DATA lt_fcat TYPE lvc_t_fcat.
   DATA ls_fcat TYPE lvc_s_fcat.
+  CLEAR ls_fcat. ls_fcat-fieldname = 'SKIP'.    ls_fcat-outputlen = 10.
+  ls_fcat-checkbox = 'X'. ls_fcat-edit = 'X'.
+  ls_fcat-coltext = lcl_t=>t( d = 'Uebergehen'   e = 'Skip' ).           APPEND ls_fcat TO lt_fcat.
   CLEAR ls_fcat. ls_fcat-fieldname = 'KIND'.    ls_fcat-outputlen = 8.
   ls_fcat-coltext = lcl_t=>t( d = 'Objektart'    e = 'Object type' ).    APPEND ls_fcat TO lt_fcat.
   CLEAR ls_fcat. ls_fcat-fieldname = 'OLDNAME'. ls_fcat-outputlen = 30.
@@ -12916,7 +12948,7 @@ FORM ren_pbo.
 
   DATA ls_lay TYPE lvc_s_layo.
   ls_lay-cwidth_opt = 'X'.
-  ls_lay-grid_title = lcl_t=>t( d = 'Umzubenennende Objekte' e = 'Objects to rename' ).
+  ls_lay-grid_title = lcl_t=>t( d = 'Objekte im Import' e = 'Objects in the import' ).
 
   go_ren_grid->set_table_for_first_display(
     EXPORTING is_layout       = ls_lay
@@ -12963,6 +12995,12 @@ FORM ren_validate CHANGING cv_err TYPE string.
   DATA lt_seen TYPE STANDARD TABLE OF string WITH EMPTY KEY.
 
   LOOP AT gt_ren ASSIGNING FIELD-SYMBOL(<ls>).
+*   Abgewaehlt: kein Zielname noetig, und umbenannt wird auch nicht -
+*   sonst liefe die Ersetzung ueber ein Objekt, das gar nicht kommt.
+    IF <ls>-skip = abap_true.
+      <ls>-newname = <ls>-oldname.
+      CONTINUE.
+    ENDIF.
     DATA(lv_new) = <ls>-newname.
     CONDENSE lv_new.
     IF lv_new IS INITIAL.
@@ -13129,6 +13167,26 @@ FORM import.
   IF p_itest = abap_true.
     WRITE: / lcl_t=>ui( d = `TESTLAUF - es wird nichts angelegt.`
                         e = `TEST RUN - nothing is created.` ).
+  ENDIF.
+
+* Abgewaehlte Objekte vorweg nennen - zusammen mit dem, was daraus
+* folgen kann. Der Report haelt niemanden davon ab: oft ist das Objekt
+* im Ziel schon vorhanden und soll gerade nicht angefasst werden.
+  DATA lv_nskip TYPE i.
+  LOOP AT gt_ren INTO DATA(ls_sk) WHERE skip = abap_true.
+    IF lv_nskip = 0.
+      SKIP.
+      WRITE: / lcl_t=>ui( d = `Abgewaehlt - wird nicht angelegt und nicht geaendert:`
+                          e = `Deselected - neither created nor changed:` ).
+    ENDIF.
+    lv_nskip = lv_nskip + 1.
+    WRITE: /4 ls_sk-kind, ls_sk-oldname.
+  ENDLOOP.
+  IF lv_nskip > 0.
+    WRITE: / lcl_t=>ui(
+      d = `Objekte, die darauf aufbauen, koennen deshalb nicht aktivierbar sein - das Protokoll nennt sie.`
+      e = `Objects built on these may therefore fail to activate - the log names them.` ).
+    SKIP.
   ENDIF.
 
 * Die vier Regelzeilen vom Bild werden hier zur Tabelle. Leere Zeilen

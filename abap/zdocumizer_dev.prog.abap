@@ -238,7 +238,7 @@ TYPES: BEGIN OF ty_implog_row,
          action TYPE string,
          text   TYPE string,
 *        Zeile aus einem Quelltextvergleich: '+' neu, '-' alt,
-*        ' ' Umgebung, '.' Luecke. Leer bei einer normalen
+*        '=' Umgebung, '.' Luecke. Leer bei einer normalen
 *        Protokollzeile.
          tag    TYPE c LENGTH 1,
        END OF ty_implog_row.
@@ -1496,7 +1496,7 @@ ENDCLASS.
 CLASS lcl_diff DEFINITION.
   PUBLIC SECTION.
     TYPES: BEGIN OF ty_row,
-             tag  TYPE c LENGTH 1,   " '+' neu, '-' alt, ' ' Umgebung, '.' Lücke
+             tag  TYPE c LENGTH 1,   " '+' neu, '-' alt, '=' Umgebung, '.' Luecke
              old  TYPE i,
              new  TYPE i,
              text TYPE string,
@@ -1555,7 +1555,7 @@ CLASS lcl_diff IMPLEMENTATION.
 
       IF lv_i <= lv_n AND lv_j <= lv_m
          AND line( it_tab = it_old iv_idx = lv_i ) = line( it_tab = it_new iv_idx = lv_j ).
-        APPEND VALUE ty_row( tag  = ' '
+        APPEND VALUE ty_row( tag  = '='
                              old  = lv_i
                              new  = lv_j
                              text = line( it_tab = it_old iv_idx = lv_i ) ) TO lt_raw.
@@ -1640,7 +1640,7 @@ CLASS lcl_diff IMPLEMENTATION.
       APPEND abap_false TO lt_keep.
     ENDDO.
     LOOP AT lt_raw INTO DATA(ls_r).
-      IF ls_r-tag = ' '.
+      IF ls_r-tag = '='.
         CONTINUE.
       ENDIF.
       DATA(lv_from) = sy-tabix - iv_ctx.
@@ -2207,6 +2207,32 @@ CLASS lcl_importer IMPLEMENTATION.
             IN lv_new WITH cl_abap_char_utilities=>newline.
     SPLIT lv_new AT cl_abap_char_utilities=>newline INTO TABLE lt_new.
 
+*   Der Kopf des Dokuments meldet eine Kuerzung erst seit Version 1.1 -
+*   aeltere Dokumente wissen nichts davon. Am Objekt steht sie immer:
+*   der Export haengt an einen abgeschnittenen Quelltext eine Zeile
+*   "* ... gekuerzt bei n von m" an. Ohne diese Pruefung meldet der
+*   Vergleich den fehlenden Rest als geloescht - bei 300 von 508 Zeilen
+*   also 208 Loeschungen, die es nicht gibt.
+    DATA lv_last TYPE string.
+    DATA lv_idx  TYPE i.
+    lv_idx = lines( lt_new ).
+    WHILE lv_idx > 0.
+      READ TABLE lt_new INDEX lv_idx INTO lv_last.
+      IF lv_last IS NOT INITIAL.
+        EXIT.
+      ENDIF.
+      lv_idx = lv_idx - 1.
+    ENDWHILE.
+    IF lv_last CP '* ...*'.
+      log( iv_kind   = is_work-kind
+           iv_name   = is_work-name
+           iv_action = lcl_t=>ui( d = `kein Vergleich` e = `no comparison` )
+           iv_text   = lcl_t=>ui(
+             d = `Quelltext im Dokument gekuerzt - ohne Zeilengrenze exportieren.`
+             e = `Source truncated in the document - export without the line limit to compare.` ) ).
+      RETURN.
+    ENDIF.
+
     DATA lt_rows TYPE lcl_diff=>ty_rows.
     DATA lv_add  TYPE i.
     DATA lv_del  TYPE i.
@@ -2235,12 +2261,13 @@ CLASS lcl_importer IMPLEMENTATION.
     LOOP AT lt_rows INTO DATA(ls_d).
       DATA(lv_no) = COND string( WHEN ls_d-tag = '+' THEN |{ ls_d-new WIDTH = 6 ALIGN = RIGHT }|
                                  WHEN ls_d-tag = '-' THEN |{ ls_d-old WIDTH = 6 ALIGN = RIGHT }|
-                                 WHEN ls_d-tag = ' ' THEN |{ ls_d-new WIDTH = 6 ALIGN = RIGHT }|
+                                 WHEN ls_d-tag = '=' THEN |{ ls_d-new WIDTH = 6 ALIGN = RIGHT }|
                                  ELSE `      ` ).
+      DATA(lv_sign) = COND string( WHEN ls_d-tag = '=' THEN ` ` ELSE ls_d-tag ).
       log( iv_kind   = ``
            iv_name   = ``
            iv_action = ``
-           iv_text   = |{ lv_no } { ls_d-tag } { ls_d-text }|
+           iv_text   = |{ lv_no } { lv_sign } { ls_d-text }|
            iv_tag    = ls_d-tag ).
     ENDLOOP.
 
@@ -13646,7 +13673,9 @@ FORM import.
   DATA lv_cact  TYPE c LENGTH 24.
   LOOP AT lo_imp->get_log( ) INTO DATA(ls_log).
 *   Zeilen aus einem Quelltextvergleich stehen eingerueckt und farbig:
-*   neu gruen, entfallen rot, Umgebung und Luecken unauffaellig. Sie
+*   neu gruen, entfallen rot, Umgebung und Luecken unauffaellig. Ein
+*   Leerzeichen als Kennzeichen ginge nicht: das ist in ABAP initial
+*   und die Zeile liefe in die normale Spaltenausgabe. Sie
 *   zaehlen nicht als Protokollzeilen - gezaehlt wird, was am Objekt
 *   geschehen ist.
     IF ls_log-tag IS NOT INITIAL.

@@ -237,6 +237,10 @@ TYPES: BEGIN OF ty_implog_row,
          name   TYPE string,
          action TYPE string,
          text   TYPE string,
+*        Zeile aus einem Quelltextvergleich: '+' neu, '-' alt,
+*        ' ' Umgebung, '.' Luecke. Leer bei einer normalen
+*        Protokollzeile.
+         tag    TYPE c LENGTH 1,
        END OF ty_implog_row.
 TYPES ty_implog TYPE STANDARD TABLE OF ty_implog_row WITH EMPTY KEY.
 
@@ -1468,6 +1472,212 @@ ENDCLASS.
 * programs. A table whose data elements do not exist yet cannot be
 * activated, and sorting the work is cheaper than retrying it.
 *----------------------------------------------------------------------*
+
+*&---------------------------------------------------------------------*
+*& CLASS lcl_diff - Zeilenvergleich alt gegen neu
+*&---------------------------------------------------------------------*
+* Vergleicht zwei Quelltexte zeilenweise und liefert die Zeilen, die
+* dazukommen (+), wegfallen (-) und als Umgebung dazwischen stehen.
+*
+* Das Verfahren ist ein Abgleich mit Fenster: gleiche Zeilen laufen
+* parallel; an einer Abweichung wird in beiden Richtungen bis zu
+* gc_win Zeilen vorausgeschaut, ob sich die Seiten wieder treffen -
+* vorne eingefuegte Zeilen oder geloeschte Zeilen also. Findet sich
+* kein Treffer, gilt die Zeile als ersetzt.
+*
+* Das ist nicht immer die kuerzest moegliche Folge von Aenderungen -
+* dafuer braeuchte es einen Myers-Vergleich mit entsprechendem Aufwand
+* in Code und Speicher. Am Inhalt aendert das nichts: jede Zeile
+* erscheint genau einmal, und wer die - Zeilen weglaesst und die +
+* Zeilen einsetzt, erhaelt genau den neuen Quelltext. Bei einem
+* vollstaendig umgeschriebenen Block wird die Gruppierung groeber,
+* nicht falsch.
+*----------------------------------------------------------------------*
+CLASS lcl_diff DEFINITION.
+  PUBLIC SECTION.
+    TYPES: BEGIN OF ty_row,
+             tag  TYPE c LENGTH 1,   " '+' neu, '-' alt, ' ' Umgebung, '.' Lücke
+             old  TYPE i,
+             new  TYPE i,
+             text TYPE string,
+           END OF ty_row.
+    TYPES ty_rows TYPE STANDARD TABLE OF ty_row WITH EMPTY KEY.
+
+*   it_old/it_new: die beiden Quelltexte. iv_ctx: Zeilen Umgebung um
+*   jede Aenderung. iv_max: Hoechstzahl ausgegebener Zeilen, damit ein
+*   neu geschriebener Report das Protokoll nicht flutet.
+    CLASS-METHODS compare
+      IMPORTING it_old  TYPE string_table
+                it_new  TYPE string_table
+                iv_ctx  TYPE i DEFAULT 2
+                iv_max  TYPE i DEFAULT 200
+      EXPORTING et_rows TYPE ty_rows
+                ev_add  TYPE i
+                ev_del  TYPE i
+                ev_cut  TYPE abap_bool.
+
+  PRIVATE SECTION.
+    CONSTANTS gc_win TYPE i VALUE 60.
+*   Vergleicht ohne Ruecksicht auf fuehrende/folgende Leerzeichen und
+*   Gross/Kleinschreibung nicht - ABAP-Quelltext kommt aus demselben
+*   Editor, und eine geaenderte Einrueckung ist eine Aenderung.
+    CLASS-METHODS line
+      IMPORTING it_tab         TYPE string_table
+                iv_idx         TYPE i
+      RETURNING VALUE(rv_line) TYPE string.
+ENDCLASS.
+
+CLASS lcl_diff IMPLEMENTATION.
+
+  METHOD line.
+    READ TABLE it_tab INDEX iv_idx INTO rv_line.
+    IF sy-subrc <> 0.
+      CLEAR rv_line.
+    ENDIF.
+  ENDMETHOD.
+
+  METHOD compare.
+
+    DATA lt_raw TYPE ty_rows.
+    DATA lv_i   TYPE i VALUE 1.
+    DATA lv_j   TYPE i VALUE 1.
+    DATA lv_n   TYPE i.
+    DATA lv_m   TYPE i.
+    DATA lv_k   TYPE i.
+    DATA lv_del TYPE i.
+    DATA lv_ins TYPE i.
+
+    CLEAR: et_rows, ev_add, ev_del, ev_cut.
+    lv_n = lines( it_old ).
+    lv_m = lines( it_new ).
+
+    WHILE lv_i <= lv_n OR lv_j <= lv_m.
+
+      IF lv_i <= lv_n AND lv_j <= lv_m
+         AND line( it_tab = it_old iv_idx = lv_i ) = line( it_tab = it_new iv_idx = lv_j ).
+        APPEND VALUE ty_row( tag  = ' '
+                             old  = lv_i
+                             new  = lv_j
+                             text = line( it_tab = it_old iv_idx = lv_i ) ) TO lt_raw.
+        lv_i = lv_i + 1.
+        lv_j = lv_j + 1.
+        CONTINUE.
+      ENDIF.
+
+*     Eine Seite ist zu Ende: der Rest der anderen ist komplett neu
+*     bzw. komplett weg.
+      IF lv_i > lv_n.
+        APPEND VALUE ty_row( tag = '+' new = lv_j
+                             text = line( it_tab = it_new iv_idx = lv_j ) ) TO lt_raw.
+        lv_j = lv_j + 1.
+        CONTINUE.
+      ENDIF.
+      IF lv_j > lv_m.
+        APPEND VALUE ty_row( tag = '-' old = lv_i
+                             text = line( it_tab = it_old iv_idx = lv_i ) ) TO lt_raw.
+        lv_i = lv_i + 1.
+        CONTINUE.
+      ENDIF.
+
+*     Abweichung: wie weit ist es bis zum naechsten gemeinsamen Halt?
+      CLEAR: lv_del, lv_ins.
+      DATA(lv_cur_new) = line( it_tab = it_new iv_idx = lv_j ).
+      DATA(lv_cur_old) = line( it_tab = it_old iv_idx = lv_i ).
+      lv_k = 1.
+      WHILE lv_k <= gc_win AND lv_del = 0 AND lv_ins = 0.
+        IF lv_i + lv_k <= lv_n
+           AND line( it_tab = it_old iv_idx = lv_i + lv_k ) = lv_cur_new.
+          lv_del = lv_k.
+        ENDIF.
+        IF lv_j + lv_k <= lv_m
+           AND line( it_tab = it_new iv_idx = lv_j + lv_k ) = lv_cur_old.
+          lv_ins = lv_k.
+        ENDIF.
+        lv_k = lv_k + 1.
+      ENDWHILE.
+
+      IF lv_del > 0 AND ( lv_ins = 0 OR lv_del <= lv_ins ).
+        DO lv_del TIMES.
+          APPEND VALUE ty_row( tag = '-' old = lv_i
+                               text = line( it_tab = it_old iv_idx = lv_i ) ) TO lt_raw.
+          lv_i = lv_i + 1.
+        ENDDO.
+      ELSEIF lv_ins > 0.
+        DO lv_ins TIMES.
+          APPEND VALUE ty_row( tag = '+' new = lv_j
+                               text = line( it_tab = it_new iv_idx = lv_j ) ) TO lt_raw.
+          lv_j = lv_j + 1.
+        ENDDO.
+      ELSE.
+*       Kein Wiedersehen im Fenster: die Zeile gilt als ersetzt.
+        APPEND VALUE ty_row( tag = '-' old = lv_i
+                             text = line( it_tab = it_old iv_idx = lv_i ) ) TO lt_raw.
+        APPEND VALUE ty_row( tag = '+' new = lv_j
+                             text = line( it_tab = it_new iv_idx = lv_j ) ) TO lt_raw.
+        lv_i = lv_i + 1.
+        lv_j = lv_j + 1.
+      ENDIF.
+
+    ENDWHILE.
+
+    LOOP AT lt_raw INTO DATA(ls_c).
+      CASE ls_c-tag.
+        WHEN '+'. ev_add = ev_add + 1.
+        WHEN '-'. ev_del = ev_del + 1.
+      ENDCASE.
+    ENDLOOP.
+
+    IF ev_add = 0 AND ev_del = 0.
+      RETURN.
+    ENDIF.
+
+*   Nur die Umgebung der Aenderungen ausgeben. Unveraenderte Strecken
+*   dazwischen werden zu einer Zeile mit der Zahl der uebersprungenen
+*   Zeilen - sonst steht der halbe Report im Protokoll.
+    DATA lt_keep TYPE STANDARD TABLE OF abap_bool WITH EMPTY KEY.
+    DATA(lv_cnt) = lines( lt_raw ).
+    DO lv_cnt TIMES.
+      APPEND abap_false TO lt_keep.
+    ENDDO.
+    LOOP AT lt_raw INTO DATA(ls_r).
+      IF ls_r-tag = ' '.
+        CONTINUE.
+      ENDIF.
+      DATA(lv_from) = sy-tabix - iv_ctx.
+      DATA(lv_to)   = sy-tabix + iv_ctx.
+      IF lv_from < 1.       lv_from = 1.       ENDIF.
+      IF lv_to   > lv_cnt.  lv_to   = lv_cnt.  ENDIF.
+      lv_k = lv_from.
+      WHILE lv_k <= lv_to.
+        MODIFY lt_keep INDEX lv_k FROM abap_true.
+        lv_k = lv_k + 1.
+      ENDWHILE.
+    ENDLOOP.
+
+    DATA lv_gap TYPE i.
+    LOOP AT lt_raw INTO DATA(ls_o).
+      READ TABLE lt_keep INDEX sy-tabix INTO DATA(lv_keep).
+      IF lv_keep = abap_false.
+        lv_gap = lv_gap + 1.
+        CONTINUE.
+      ENDIF.
+      IF lv_gap > 0.
+        APPEND VALUE ty_row( tag  = '.'
+                             text = |... { lv_gap } { lcl_t=>ui(
+                               d = `Zeilen unveraendert` e = `lines unchanged` ) }| ) TO et_rows.
+        CLEAR lv_gap.
+      ENDIF.
+      IF lines( et_rows ) >= iv_max.
+        ev_cut = abap_true.
+        EXIT.
+      ENDIF.
+      APPEND ls_o TO et_rows.
+    ENDLOOP.
+
+  ENDMETHOD.
+
+ENDCLASS.
+
 CLASS lcl_importer DEFINITION.
   PUBLIC SECTION.
     METHODS constructor
@@ -1521,7 +1731,20 @@ CLASS lcl_importer DEFINITION.
       IMPORTING iv_kind   TYPE string
                 iv_name   TYPE string
                 iv_action TYPE string
-                iv_text   TYPE string OPTIONAL.
+                iv_text   TYPE string OPTIONAL
+                iv_tag    TYPE c      OPTIONAL.
+*   Quelltext des Objekts, wie es jetzt im Zielsystem steht - in
+*   derselben Zusammenstellung, die der Export erzeugt (source_lines im
+*   Collector). Leer, wenn es das Objekt nicht gibt oder die Art keinen
+*   Quelltext hat.
+    METHODS src_now
+      IMPORTING iv_kind        TYPE string
+                iv_name        TYPE string
+      RETURNING VALUE(rt_src)  TYPE string_table.
+*   Stellt im Testlauf alten und neuen Quelltext gegenueber und schreibt
+*   das Ergebnis als Protokollzeilen mit Kennzeichen.
+    METHODS diff_log
+      IMPORTING is_work TYPE ty_impwork_row.
     METHODS last_message RETURNING VALUE(rv_text) TYPE string.
     METHODS act_reason
       IMPORTING iv_kind        TYPE string
@@ -1868,7 +2091,168 @@ CLASS lcl_importer IMPLEMENTATION.
     APPEND VALUE ty_implog_row( kind   = iv_kind
                                 name   = iv_name
                                 action = iv_action
-                                text   = iv_text ) TO mt_log.
+                                text   = iv_text
+                                tag    = iv_tag ) TO mt_log.
+  ENDMETHOD.
+
+  METHOD src_now.
+
+    DATA lt_incl TYPE STANDARD TABLE OF progname.
+    DATA lv_prog TYPE syrepid.
+    DATA lt_rep  TYPE STANDARD TABLE OF string.
+    DATA lv_src  TYPE string.
+
+    CASE iv_kind.
+
+      WHEN 'PROG'.
+        lv_prog = iv_name.
+        READ REPORT lv_prog INTO rt_src.
+
+      WHEN 'FUGR'.
+*       Rahmenprogramm und Includes in derselben Reihenfolge und mit
+*       derselben Trennzeile wie der Export - sonst zeigte der
+*       Vergleich eine Verschiebung, wo keine ist.
+        lv_prog = |SAPL{ iv_name }|.
+        CALL FUNCTION 'RS_GET_ALL_INCLUDES'
+          EXPORTING  program      = lv_prog
+          TABLES     includetab   = lt_incl
+          EXCEPTIONS not_existent = 1
+                     no_program   = 2
+                     OTHERS       = 3.
+        READ REPORT lv_prog INTO rt_src.
+        LOOP AT lt_incl INTO DATA(lv_incl).
+          CLEAR lt_rep.
+          READ REPORT lv_incl INTO lt_rep.
+          IF sy-subrc <> 0.
+            CONTINUE.
+          ENDIF.
+          IF lines( rt_src ) > 0.
+            APPEND |* ---------- { lv_incl } ----------| TO rt_src.
+          ENDIF.
+          APPEND LINES OF lt_rep TO rt_src.
+        ENDLOOP.
+
+      WHEN 'CLAS' OR 'INTF'.
+*       Die quelltextbasierte Fassung von CL_OO_FACTORY - dieselbe
+*       Quelle, die der Export ablegt und der Import zurueckschreibt.
+        DATA lt_cs TYPE rswsourcet.
+        TRY.
+            DATA lo_fac  TYPE REF TO object.
+            DATA lo_cs   TYPE REF TO object.
+            DATA lv_clif TYPE seoclsname.
+            lv_clif = iv_name.
+            CALL METHOD ('CL_OO_FACTORY')=>('CREATE_INSTANCE')
+              RECEIVING result = lo_fac.
+            CALL METHOD lo_fac->('IF_OO_CLIF_SOURCE_FACTORY~CREATE_CLIF_SOURCE')
+              EXPORTING clif_name = lv_clif
+                        version   = 'A'
+              RECEIVING result    = lo_cs.
+            CALL METHOD lo_cs->('IF_OO_CLIF_SOURCE~GET_SOURCE')
+              IMPORTING source = lt_cs.
+          CATCH cx_root.
+            RETURN.
+        ENDTRY.
+        LOOP AT lt_cs INTO DATA(lv_cl).
+          APPEND lv_cl TO rt_src.
+        ENDLOOP.
+
+      WHEN 'DDLS'.
+        DATA lv_ddl TYPE ddddlsrc-ddlname.
+        lv_ddl = iv_name.
+        SELECT SINGLE source FROM ddddlsrc
+          WHERE ddlname = @lv_ddl AND as4local = 'A'
+          INTO @DATA(lv_cds).
+        IF sy-subrc = 0 AND lv_cds IS NOT INITIAL.
+          lv_src = lv_cds.
+        ENDIF.
+
+      WHEN 'BDEF' OR 'SRVD' OR 'DDLX'.
+        DATA(lo_sdm) = lcl_wb=>read( iv_type = CONV trobjtype( iv_kind )
+                                     iv_name = iv_name ).
+        IF lo_sdm IS BOUND.
+          lv_src = lcl_wb=>content( lo_sdm ).
+        ENDIF.
+
+    ENDCASE.
+
+    IF lv_src IS NOT INITIAL.
+      REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf
+              IN lv_src WITH cl_abap_char_utilities=>newline.
+      SPLIT lv_src AT cl_abap_char_utilities=>newline INTO TABLE rt_src.
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD diff_log.
+
+    DATA lt_new TYPE string_table.
+
+    DATA(lv_new) = is_work-chapter->get_source( ).
+    IF lv_new IS INITIAL.
+      RETURN.
+    ENDIF.
+
+*   Ein Objekt, das es noch nicht gibt, hat nichts, womit sich
+*   vergleichen liesse - da sagt die Zeile "wird angelegt" alles.
+    IF exists( iv_kind = is_work-kind iv_name = is_work-name ) = abap_false.
+      RETURN.
+    ENDIF.
+
+    DATA(lt_old) = src_now( iv_kind = is_work-kind iv_name = is_work-name ).
+    IF lt_old IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    REPLACE ALL OCCURRENCES OF cl_abap_char_utilities=>cr_lf
+            IN lv_new WITH cl_abap_char_utilities=>newline.
+    SPLIT lv_new AT cl_abap_char_utilities=>newline INTO TABLE lt_new.
+
+    DATA lt_rows TYPE lcl_diff=>ty_rows.
+    DATA lv_add  TYPE i.
+    DATA lv_del  TYPE i.
+    DATA lv_cut  TYPE abap_bool.
+    lcl_diff=>compare( EXPORTING it_old  = lt_old
+                                 it_new  = lt_new
+                       IMPORTING et_rows = lt_rows
+                                 ev_add  = lv_add
+                                 ev_del  = lv_del
+                                 ev_cut  = lv_cut ).
+
+    IF lv_add = 0 AND lv_del = 0.
+      log( iv_kind   = is_work-kind
+           iv_name   = is_work-name
+           iv_action = lcl_t=>ui( d = `Quelltext gleich` e = `source identical` )
+           iv_text   = |{ lines( lt_old ) } { lcl_t=>ui( d = `Zeilen` e = `lines` ) }| ).
+      RETURN.
+    ENDIF.
+
+    log( iv_kind   = is_work-kind
+         iv_name   = is_work-name
+         iv_action = lcl_t=>ui( d = `Quelltext anders` e = `source differs` )
+         iv_text   = |+{ lv_add } / -{ lv_del } | &&
+                     |{ lcl_t=>ui( d = `Zeilen` e = `lines` ) }| ).
+
+    LOOP AT lt_rows INTO DATA(ls_d).
+      DATA(lv_no) = COND string( WHEN ls_d-tag = '+' THEN |{ ls_d-new WIDTH = 6 ALIGN = RIGHT }|
+                                 WHEN ls_d-tag = '-' THEN |{ ls_d-old WIDTH = 6 ALIGN = RIGHT }|
+                                 WHEN ls_d-tag = ' ' THEN |{ ls_d-new WIDTH = 6 ALIGN = RIGHT }|
+                                 ELSE `      ` ).
+      log( iv_kind   = ``
+           iv_name   = ``
+           iv_action = ``
+           iv_text   = |{ lv_no } { ls_d-tag } { ls_d-text }|
+           iv_tag    = ls_d-tag ).
+    ENDLOOP.
+
+    IF lv_cut = abap_true.
+      log( iv_kind   = ``
+           iv_name   = ``
+           iv_action = ``
+           iv_text   = lcl_t=>ui( d = `... weitere Unterschiede nicht ausgegeben`
+                                  e = `... further differences not shown` )
+           iv_tag    = '.' ).
+    ENDIF.
+
   ENDMETHOD.
 
   METHOD run.
@@ -1915,7 +2299,25 @@ CLASS lcl_importer IMPLEMENTATION.
 *   Domains before data elements before tables before programs.
     SORT lt_work BY seq name.
 
+*   Im Testlauf steht vor jedem Objekt, was sich am Quelltext aendern
+*   wuerde. Wurde beim Export die Zeilengrenze erreicht, ist der
+*   Quelltext im Dokument abgeschnitten - ein Vergleich wuerde den
+*   fehlenden Rest als geloescht ausweisen. Dann lieber nichts zeigen
+*   und sagen, warum.
+    DATA(lv_difftrunc) = io_document->get_meta( )-src_trunc.
+    IF mv_test = abap_true AND lv_difftrunc = abap_true.
+      log( iv_kind   = ''
+           iv_name   = ''
+           iv_action = lcl_t=>ui( d = `kein Vergleich` e = `no comparison` )
+           iv_text   = lcl_t=>ui(
+             d = `Quelltexte im Dokument gekuerzt - fuer den Vergleich ohne Zeilengrenze exportieren.`
+             e = `Sources in the document are truncated - export without the line limit to compare.` ) ).
+    ENDIF.
+
     LOOP AT lt_work INTO DATA(ls_work).
+      IF mv_test = abap_true AND lv_difftrunc = abap_false.
+        diff_log( ls_work ).
+      ENDIF.
       set_pack( ls_work-chapter ).
       CASE ls_work-kind.
         WHEN 'DOMA'. put_doma( io_chapter = ls_work-chapter iv_name = ls_work-name ).
@@ -13243,6 +13645,19 @@ FORM import.
   DATA lv_cname TYPE c LENGTH 40.
   DATA lv_cact  TYPE c LENGTH 24.
   LOOP AT lo_imp->get_log( ) INTO DATA(ls_log).
+*   Zeilen aus einem Quelltextvergleich stehen eingerueckt und farbig:
+*   neu gruen, entfallen rot, Umgebung und Luecken unauffaellig. Sie
+*   zaehlen nicht als Protokollzeilen - gezaehlt wird, was am Objekt
+*   geschehen ist.
+    IF ls_log-tag IS NOT INITIAL.
+      CASE ls_log-tag.
+        WHEN '+'. WRITE: /6 ls_log-text COLOR COL_POSITIVE.
+        WHEN '-'. WRITE: /6 ls_log-text COLOR COL_NEGATIVE.
+        WHEN '.'. WRITE: /6 ls_log-text COLOR COL_GROUP.
+        WHEN OTHERS. WRITE: /6 ls_log-text COLOR COL_NORMAL.
+      ENDCASE.
+      CONTINUE.
+    ENDIF.
     lv_n = lv_n + 1.
     lv_ckind = ls_log-kind.
     lv_cname = ls_log-name.

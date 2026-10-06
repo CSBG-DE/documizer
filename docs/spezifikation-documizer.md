@@ -1420,6 +1420,95 @@ Zwei Dinge hängen daran:
 
 Gemeldet wird eine Zeile je Regel, nicht je Objekt.
 
+### 5.8 Umbenennen und Abwählen beim Import
+
+`P_IREN` schaltet vor dem Import eine Liste dazwischen — ein editierbares ALV-Grid auf einem
+eigenen Selektionsbild (2000), aufgebaut über einen Docking-Container, also ohne Objekt im
+Screen Painter. Eine Zeile je importierbarem Objekt, vorbelegt aus derselben Arbeitsliste, die
+der Import danach abarbeitet (`lcl_importer->plan( )`):
+
+| Spalte | Vorbelegung | Bedeutung |
+|---|---|---|
+| Übergehen | aus | Zeile ganz aus dem Lauf nehmen |
+| Objektart, Originalname, Quellpaket | aus dem Dokument | nicht änderbar |
+| Zielname | Originalname | Name im Zielsystem |
+| Zielpaket | `P_IPACK` | gewinnt vor den Paketregeln aus 5.7 |
+
+**Umbenennen** wirkt auf die ganze Payload, nicht nur auf den Objektnamen: `ren_apply` ersetzt
+wortgenau und ohne Rücksicht auf Groß-/Kleinschreibung (`\b…\b`, `IGNORING CASE`) im XML-Text,
+bevor er erneut geparst wird. Damit trifft es auch Verwendungen im Quelltext (`SELECT FROM alt`,
+`TYPE REF TO alt`). Die Wortgrenze verhindert Teiltreffer — `ZKUNDE` lässt `ZKUNDE2` in Ruhe.
+`ren_validate` besteht auf einem Zielnamen im Kundennamensraum (`Y`, `Z`, `/`) und auf
+Eindeutigkeit je Objektart; so lässt sich auch ein SAP-Objekt unter einem Z-Namen hereinholen,
+ohne das Original zu überschreiben.
+
+**Abwählen** nimmt die Zeile ganz heraus. Der Filter sitzt in `run( )` zwischen dem Einsammeln
+der Arbeitsliste und dem ersten Schreibzugriff — abgewählte Objekte werden damit weder angelegt
+noch geändert und auch nicht von `verify( )` nachgeprüft. Zwei Nebenbedingungen:
+
+- Eine abgewählte Zeile braucht **keinen** Zielnamen und wird **nicht** umbenannt. Sonst liefe
+  die Ersetzung über ein Objekt, das gar nicht kommt — und benannte Verwendungen in Objekten um,
+  die bleiben.
+- Jede abgewählte Zeile bekommt eine Protokollzeile (*übergangen — abgewählt*), und der Kopf der
+  Liste nennt sie vorweg. Ein Weglassen ohne Vermerk wäre eine stillschweigende Lücke, und davon
+  lebt dieses Werkzeug nicht.
+
+**Abhängigkeiten werden nicht erzwungen.** Wer eine Domäne abwählt, deren Datenelement importiert
+wird, bekommt den bekannten Aktivierungsfehler, und das Protokoll nennt das fehlende Objekt. Der
+Report warnt davor, verbietet es aber nicht: häufig ist das abgewählte Objekt im Zielsystem schon
+vorhanden und soll gerade nicht angefasst werden.
+
+Nur im Dialog. Im Hintergrund gibt es kein Grid; der Lauf meldet das und importiert ohne Liste.
+
+### 5.9 Quelltextvergleich im Testlauf
+
+Ein Testlauf, der nur *würde geändert* sagt, verschweigt das Wesentliche. Deshalb stellt der
+Testlauf (`P_ITEST`) je Objekt den Quelltext gegenüber, das es im Zielsystem schon gibt:
+
+```
+CLAS  ZCL_MAILER   Quelltext anders   +12 / -3 Zeilen
+        12   DATA lv_a TYPE i.
+        13 - lv_a = 1.
+        13 + DATA lv_b TYPE i.
+        14 + lv_a = 2.
+        15   WRITE lv_a.
+       ... 240 Zeilen unveraendert
+```
+
+Neue Zeilen grün (`COL_POSITIVE`), entfallende rot (`COL_NEGATIVE`), zwei Zeilen Umgebung,
+unveränderte Strecken zusammengefasst, höchstens 200 Zeilen je Objekt. Die Zahl links ist die
+Zeilennummer der Seite, zu der die Zeile gehört. Ist nichts anders, steht *Quelltext gleich* mit
+der Zeilenzahl.
+
+**Der alte Stand kommt aus dem Zielsystem in derselben Zusammenstellung, die der Export
+erzeugt** (`src_now( )` spiegelt `source_lines( )`): `PROG` über `READ REPORT`, `FUGR` mit
+Rahmenprogramm und Includes in Exportreihenfolge samt Trennzeile, `CLAS`/`INTF` als
+quelltextbasierte Fassung von `CL_OO_FACTORY`, `DDLS` aus `DDDDLSRC`, `BDEF`/`SRVD`/`DDLX` über
+den Workbench-Operator. Jede andere Zusammenstellung erzeugte Unterschiede, die keine sind.
+
+**Das Verfahren** ist ein Abgleich mit Fenster (`lcl_diff`): gleiche Zeilen laufen parallel, an
+einer Abweichung wird bis zu 60 Zeilen vorausgeschaut, ob sich die Seiten wieder treffen. Das ist
+nicht immer die kürzeste Folge von Änderungen — dafür bräuchte es einen Myers-Vergleich mit
+entsprechendem Aufwand in Code und Speicher —, am Inhalt ändert das nichts: jede Zeile erscheint
+genau einmal, und das Ergebnis lässt sich in beide Richtungen zurückspielen. Bei einem vollständig
+umgeschriebenen Block wird die Gruppierung gröber, nicht falsch.
+
+**Zwei Fälle, in denen der Vergleich entfällt** — jeweils mit Begründung im Protokoll:
+
+- Das Objekt gibt es im Zielsystem noch nicht. Dann sagt *wird angelegt* schon alles.
+- Der Quelltext im Dokument ist gekürzt. Erkannt wird das am Kopfkennzeichen `src_truncated`
+  **und** an der Markierungszeile, die der Export an einen abgeschnittenen Quelltext hängt
+  (`* ... gekürzt bei n von m`). Die zweite Prüfung ist nötig, weil Dokumente vor Version 1.1 das
+  Kopfkennzeichen nicht tragen: ohne sie meldet der Vergleich den fehlenden Rest als gelöscht —
+  bei 300 von 508 Zeilen also über zweihundert Löschungen, die es nicht gibt.
+
+Vergleichszeilen tragen im Protokoll ein Kennzeichen (`+`, `-`, `=` für Umgebung, `.` für eine
+Lücke) und zählen nicht als Protokollzeilen. Für Umgebungszeilen **kein Leerzeichen**: das ist in
+ABAP `IS INITIAL`, die Zeile liefe damit in die normale Spaltenausgabe.
+
+Objekte ohne zusammenhängenden Quelltext — DDIC-Objekte, IDoc, UI5 — bleiben vorerst beim
+bisherigen *würde geändert*; ein Strukturvergleich für sie steht in 9.
+
 ---
 
 ## 6. HTML-Ausgabe
@@ -1557,6 +1646,8 @@ Hinzugekommen sind zwei Zugriffe je Objekt: die Feldverwendungen sind ein zweite
 | 7q | Verwendungsnachweis: Feldverwendungen, `P_USEALL` | erledigt |
 | 7r | CDS-/RAP-Schicht: Kurztexte, Quelltext, Feldlisten; Klassenbeziehungen, lokale Klassen | erledigt |
 | 7s | Textelemente und Objektdokumentation je Sprache übertragen; gelöschte Katalogeinträge übergehen | erledigt |
+| 7t | Import: Objekte umbenennen und abwaehlen (`P_IREN`, Spalte Uebergehen) | erledigt |
+| 7u | Testlauf: Quelltextvergleich alt/neu, farbig im Protokoll | erledigt |
 | 8 | Markdown-Renderer | offen |
 | 9 | Anzeigen ohne Anlegen | offen |
 | 10 | BAL-Protokoll, `S_DEVELOP` | offen |
@@ -1605,3 +1696,16 @@ Hinzugekommen sind zwei Zugriffe je Objekt: die Feldverwendungen sind ein zweite
     zwei `SMIM`-Objekten und drei Gateway-Einträgen.
 16. **Berechtigungsvorschlagswerte (`SUSH`)** — stehen als Objekt im Dokument, aber ohne Inhalt
     und ohne Weg ins Zielsystem. Gepflegt werden sie in SU22/SU24.
+17. **Strukturvergleich im Testlauf** — verglichen wird bisher Quelltext. Für DDIC-Objekte wäre
+    der Vergleich der Felder die eigentliche Auskunft: *Feld X: Datenelement alt → neu*, *Feld Y
+    neu*, *Feld Z entfällt*, Schlüsseländerungen getrennt. Eine geänderte Schlüsseldefinition ist
+    etwas anderes als ein neuer Beschreibungstext, und *würde geändert* sagt das nicht.
+18. **Gelöschte Objekte beim Sender erkennen** — der Kopf des Dokuments trägt System, Mandant,
+    Benutzer, Zeit, Sprache und die Kürzungskennzeichen, aber **nicht den Startpunkt**. Der Import
+    sieht deshalb eine Objektliste, ohne zu wissen, dass sie *Paket ZXY, vollständig* bedeutet.
+    Mit Startpunkt, Unterpaket-Kennzeichen und einem Kennzeichen für aktive Filter im Kopf ließe
+    sich beim Import das Zielpaket gegen das Dokument halten und auflisten, was es dort gibt, im
+    Dokument aber nicht. Drei Einschränkungen gehören dazu: im Zielsystem eigenständig entstandene
+    Objekte sehen genauso aus wie gelöschte, bei Umbenennung oder Paketumlenkung stimmen die Namen
+    nicht mehr überein, und ältere Dokumente tragen die Angaben nicht. Anzeigen ja, automatisch
+    löschen nein.

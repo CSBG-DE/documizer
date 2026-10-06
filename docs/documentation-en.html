@@ -1522,6 +1522,77 @@ IDOC_INPUT_MATMAS01   inbound, message type MATMAS, object type BUS1001</code></
               set. A documentation tool must not replace a table silently.</li>
         </ul>
 
+        <h3>Picking and renaming</h3>
+        <p>
+          <em>Rename or skip objects</em> puts a list in front of the import: one row per object in
+          the document, prefilled from exactly the worklist the import will work through. Two
+          columns can be changed — <b>target name</b> and <b>target package</b> — plus a tick
+          column <b>Skip</b>.
+        </p>
+        <p>
+          <b>Renaming</b> applies to the whole document, not just to the object name: the new name
+          replaces the old one in the source code as well, word for word and regardless of case, in
+          <code>SELECT FROM old</code> as much as in <code>TYPE REF TO old</code>. The word
+          boundary prevents partial hits — <code>ZKUNDE</code> leaves <code>ZKUNDE2</code> alone.
+          The target name has to be in the customer namespace and unique per object type; that way
+          even an SAP object can be brought in under a Z name without overwriting the original.
+        </p>
+        <p>
+          <b>Skip</b> takes the row out of the run entirely. The object is neither created nor
+          changed, and it is not verified afterwards — the filter sits before the first write. A
+          skipped row needs no target name and is not renamed; otherwise the replacement would run
+          over an object that never arrives. Every skipped row is named up front in the header of
+          the list and gets a log line, so that leaving it out is documented rather than looking
+          like a failure.
+        </p>
+        <div class="note">
+          <p><b>Dependencies are not enforced.</b> Skip a domain whose data element is imported and
+          you get the familiar activation error — the log names the missing object. The report warns
+          about it but does not forbid it: often the skipped object exists in the target system
+          already and is precisely what should not be touched. The list is available in dialog only;
+          in the background the run says so and imports without it.</p>
+        </div>
+
+        <h3>What would change</h3>
+        <p>
+          A test run that only says <em>would be changed</em> withholds the essential part. For
+          every object that already exists in the target system, the test run therefore compares the
+          source:
+        </p>
+<pre><code>CLAS  ZCL_MAILER   source differs   +12 / -3 lines
+        12   DATA lv_a TYPE i.
+        13 - lv_a = 1.
+        13 + DATA lv_b TYPE i.
+        14 + lv_a = 2.
+        15   WRITE lv_a.
+       ... 240 lines unchanged</code></pre>
+        <p>
+          New lines in green, dropped ones in red, two lines of context, unchanged stretches
+          summarised. The number on the left is the line number of the side the line belongs to. If
+          nothing differs, the log says <em>source identical</em> with the line count — that is an
+          answer too.
+        </p>
+        <p>
+          The old state is read from the target system <b>in the same composition the export
+          produces</b>: programs through <code>READ REPORT</code>, function groups with the frame
+          program and the includes in export order, classes and interfaces as the source-based form,
+          CDS sources from the DDL table, behavior and service definitions through the workbench
+          operator. Any other composition would produce differences that are none.
+        </p>
+        <p>
+          The comparison is a windowed match: identical lines run in parallel, and at a difference
+          it looks ahead up to sixty lines for the sides to meet again. The grouping is therefore
+          not always the tightest — the content always is: every line appears exactly once, and the
+          result can be replayed in both directions.
+        </p>
+        <p>
+          Two cases stay without a comparison, each with its reason: an object that does not exist
+          in the target system yet — there <em>will be created</em> says everything — and a source
+          that was cut at the line limit during export, which would otherwise report the missing
+          remainder as deleted. Objects without one continuous source — DDIC objects, IDoc, UI5 —
+          stay with <em>would be changed</em> for now.
+        </p>
+
         <h3>Order</h3>
         <p>
           The report sets the order itself: domains, data elements, tables and structures, views,

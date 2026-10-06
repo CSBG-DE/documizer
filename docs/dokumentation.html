@@ -1173,6 +1173,81 @@
           Fehler, nicht möglich — und warum.
         </p>
 
+        <h3>Auswählen und umbenennen</h3>
+        <p>
+          Der Haken <em>Objekte umbenennen/abwählen</em> schiebt vor den Import eine Liste: eine
+          Zeile je Objekt, das im Dokument steht, vorbelegt aus genau der Arbeitsliste, die der
+          Import danach abarbeitet. Zwei Spalten sind änderbar — <b>Zielname</b> und
+          <b>Zielpaket</b> —, dazu eine Ankreuzspalte <b>Übergehen</b>.
+        </p>
+        <p>
+          <b>Umbenennen</b> wirkt auf das ganze Dokument, nicht nur auf den Objektnamen: der neue
+          Name wird wortgenau und unabhängig von Groß- und Kleinschreibung auch in den Quelltexten
+          ersetzt, also in <code>SELECT FROM alt</code> genauso wie in <code>TYPE REF TO alt</code>.
+          Die Wortgrenze verhindert Teiltreffer — <code>ZKUNDE</code> lässt <code>ZKUNDE2</code> in
+          Ruhe. Der Zielname muss im Kundennamensraum liegen und je Objektart eindeutig sein; so
+          lässt sich auch ein SAP-Objekt unter einem Z-Namen hereinholen, ohne das Original zu
+          überschreiben.
+        </p>
+        <p>
+          <b>Übergehen</b> nimmt die Zeile ganz aus dem Lauf. Das Objekt wird weder angelegt noch
+          geändert und auch nicht nachgeprüft — der Filter sitzt vor dem ersten Schreibzugriff.
+          Eine abgewählte Zeile braucht keinen Zielnamen und wird nicht umbenannt; sonst liefe die
+          Ersetzung über ein Objekt, das gar nicht kommt. Jede abgewählte Zeile steht vorweg im
+          Kopf der Liste und bekommt eine Protokollzeile, damit das Weglassen dokumentiert ist und
+          nicht wie ein Fehler aussieht.
+        </p>
+        <div class="note">
+          <p><b>Abhängigkeiten werden nicht erzwungen.</b> Wer eine Domäne abwählt, deren
+          Datenelement importiert wird, bekommt den bekannten Aktivierungsfehler — das Protokoll
+          nennt das fehlende Objekt. Der Report warnt davor, verbietet es aber nicht: oft ist das
+          abgewählte Objekt im Zielsystem längst vorhanden und soll gerade nicht angefasst werden.
+          Die Liste gibt es nur im Dialog; im Hintergrund meldet der Lauf das und importiert ohne
+          sie.</p>
+        </div>
+
+        <h3>Was sich ändern würde</h3>
+        <p>
+          Ein Testlauf, der nur <em>würde geändert</em> sagt, verschweigt das Wesentliche. Zu jedem
+          Objekt, das es im Zielsystem schon gibt, stellt der Testlauf deshalb den Quelltext
+          gegenüber:
+        </p>
+<pre><code>CLAS  ZCL_MAILER   Quelltext anders   +12 / -3 Zeilen
+        12   DATA lv_a TYPE i.
+        13 - lv_a = 1.
+        13 + DATA lv_b TYPE i.
+        14 + lv_a = 2.
+        15   WRITE lv_a.
+       ... 240 Zeilen unveraendert</code></pre>
+        <p>
+          Neue Zeilen grün, entfallende rot, zwei Zeilen Umgebung, unveränderte Strecken
+          zusammengefasst. Die Zahl links ist die Zeilennummer der Seite, zu der die Zeile gehört.
+          Ist nichts anders, steht <em>Quelltext gleich</em> mit der Zeilenzahl — auch das ist eine
+          Auskunft.
+        </p>
+        <p>
+          Den alten Stand liest der Report aus dem Zielsystem <b>in derselben Zusammenstellung, die
+          der Export erzeugt</b>: Programme über <code>READ REPORT</code>, Funktionsgruppen mit
+          Rahmenprogramm und Includes in Exportreihenfolge, Klassen und Interfaces als
+          quelltextbasierte Fassung, CDS-Quellen aus der DDL-Tabelle, Verhaltens- und
+          Service-Definitionen über den Workbench-Operator. Jede andere Zusammenstellung erzeugte
+          Unterschiede, die keine sind.
+        </p>
+        <p>
+          Verglichen wird mit einem Abgleich mit Fenster: gleiche Zeilen laufen parallel, an einer
+          Abweichung wird bis zu sechzig Zeilen vorausgeschaut, ob sich die Seiten wieder treffen.
+          Die Gruppierung ist damit nicht immer die knappste — der Inhalt aber immer richtig: jede
+          Zeile erscheint genau einmal, und das Ergebnis lässt sich in beide Richtungen
+          zurückspielen.
+        </p>
+        <p>
+          Zwei Fälle bleiben ohne Vergleich, jeweils mit Begründung: ein Objekt, das es im
+          Zielsystem noch nicht gibt — da sagt <em>wird angelegt</em> schon alles —, und ein
+          Quelltext, der beim Export an der Zeilengrenze abgeschnitten wurde. Sonst meldete der
+          Vergleich den fehlenden Rest als gelöscht. Objekte ohne zusammenhängenden Quelltext,
+          also DDIC-Objekte, IDoc und UI5, bleiben vorerst beim <em>würde geändert</em>.
+        </p>
+
         <h3>Der GUI-Status</h3>
         <p>
           Menüs, Funktionstasten, Drucktastenleiste und Titel sind ein <b>eigener

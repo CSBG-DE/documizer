@@ -426,6 +426,32 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'legt nichts an. Wer schreiben will, nimmt den Haken heraus.' ).
     a( iv_f = 'B1' iv_t = 'Ein Objekt, das es hier schon gibt, bleibt unangetastet, solange' ).
     a( iv_f = '=' iv_t = 'Bestehende Objekte ueberschreiben nicht gesetzt ist.' ).
+    a( iv_f = 'B1' iv_t = 'Im Testlauf steht je Objekt, das es hier schon gibt, was sich am' ).
+    a( iv_f = '=' iv_t = 'Quelltext aendern wuerde: neue Zeilen gruen mit +, entfallende rot' ).
+    a( iv_f = '=' iv_t = 'mit -, zwei Zeilen Umgebung, unveraenderte Strecken zusammengefasst.' ).
+    a( iv_f = '=' iv_t = 'Ist nichts anders, steht Quelltext gleich. Verglichen wird, was im' ).
+    a( iv_f = '=' iv_t = 'Dokument steht, mit dem Stand hier - gelesen in derselben' ).
+    a( iv_f = '=' iv_t = 'Zusammenstellung, die der Export erzeugt.' ).
+    a( iv_f = 'B1' iv_t = 'Kein Vergleich bei einem Objekt, das es hier noch nicht gibt, und' ).
+    a( iv_f = '=' iv_t = 'bei einem Quelltext, der beim Export an der Zeilengrenze' ).
+    a( iv_f = '=' iv_t = 'abgeschnitten wurde - sonst gaelte der fehlende Rest als geloescht.' ).
+    a( iv_f = '=' iv_t = 'Beides sagt das Protokoll. Objekte ohne zusammenhaengenden' ).
+    a( iv_f = '=' iv_t = 'Quelltext bleiben beim bisherigen wuerde geaendert.' ).
+    a( iv_f = 'B1' iv_t = 'Objekte umbenennen/abwaehlen schiebt vor den Import eine Liste:' ).
+    a( iv_f = '=' iv_t = 'eine Zeile je Objekt im Dokument, mit Zielname, Zielpaket und' ).
+    a( iv_f = '=' iv_t = 'Uebergehen. Nur im Dialog - im Hintergrund entfaellt sie.' ).
+    a( iv_f = 'B1' iv_t = 'Ein neuer Zielname gilt im ganzen Dokument, auch im Quelltext:' ).
+    a( iv_f = '=' iv_t = 'wortgenau, ohne Ruecksicht auf Gross- und Kleinschreibung, aber nur' ).
+    a( iv_f = '=' iv_t = 'als ganzes Wort - ZKUNDE laesst ZKUNDE2 in Ruhe. Der Zielname muss' ).
+    a( iv_f = '=' iv_t = 'im Kundennamensraum liegen und je Objektart eindeutig sein.' ).
+    a( iv_f = 'B1' iv_t = 'Uebergehen nimmt die Zeile ganz aus dem Lauf: weder angelegt noch' ).
+    a( iv_f = '=' iv_t = 'geaendert, auch nicht geprueft. Die abgewaehlten Objekte stehen vor' ).
+    a( iv_f = '=' iv_t = 'dem Lauf und noch einmal im Protokoll, damit das Weglassen' ).
+    a( iv_f = '=' iv_t = 'dokumentiert ist.' ).
+    a( iv_f = 'B1' iv_t = 'Abhaengigkeiten werden dabei nicht erzwungen: wer eine Domaene' ).
+    a( iv_f = '=' iv_t = 'abwaehlt, deren Datenelement kommt, bekommt den Aktivierungsfehler.' ).
+    a( iv_f = '=' iv_t = 'Der Report warnt, verbietet es aber nicht - oft ist das Objekt hier' ).
+    a( iv_f = '=' iv_t = 'laengst vorhanden und soll gerade nicht angefasst werden.' ).
     a( iv_f = 'B1' iv_t = 'Die Reihenfolge legt der Report fest: Domaenen, Datenelemente,' ).
     a( iv_f = '=' iv_t = 'Tabellen, Views, CDS-Quellen, Programme, Interfaces, Klassen,' ).
     a( iv_f = '=' iv_t = 'Funktionsgruppen, zuletzt View-Cluster und Transaktionen. Eine' ).

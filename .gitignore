@@ -5,6 +5,10 @@ documizer_*.html
 documizer_*.xml
 documizer_*.md
 
+# Interne Konzept-Dokumente. Sie gehoeren nicht ins Repository.
+docs/Konzept_Documizer_Formular-Import_v1.0.docx
+docs/Konzept_Documizer_Formularunterstuetzung_v1.0.docx
+
 # Oertliche Startskripte
 startclaude_*.bat
 

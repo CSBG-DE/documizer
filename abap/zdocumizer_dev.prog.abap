@@ -20,10 +20,13 @@ REPORT zdocumizer_dev.
 *   DOCU_GET                                           object documentation
 *   DD03L, SEOCOMPO, FUPARAREF                         detail information
 *
-* Autor     Christian Gathmann, consiness GmbH & Co. KG
-*           gathmann@consiness.de
+* Author    Christian Gathmann
+*           gathmann@csbg.de
+*           Designed, specified and validated by Christian Gathmann;
+*           code generated with AI assistance.
+* Source    https://github.com/csbg-de/documizer
 *
-* Copyright 2026 consiness GmbH & Co. KG
+* Copyright 2026 C. Gathmann Computer-System-Beratung GmbH (CSBG)
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -12780,6 +12783,10 @@ FORM stype_list CHANGING ct_list TYPE ty_stypes.
       ( code = 'SF' text = 'Smart Form' )
       ( code = 'AF' text = 'Adobe Form (Formular)' )
       ( code = 'AI' text = 'Adobe Form (Schnittstelle)' )
+*     Auch kein einzelnes Objekt: die Objektliste eines
+*     Transportauftrags oder einer Aufgabe. Im Namensfeld steht die
+*     Auftragsnummer.
+      ( code = 'TR' text = 'Transportauftrag / Aufgabe' )
 *     Kein Objekt, sondern eine Liste davon: die Fehlliste, die der
 *     IMG-Report im Zielsystem geschrieben hat. Der Startpunkt steht
 *     dann in der Datei, nicht im Namensfeld.
@@ -12806,6 +12813,7 @@ FORM stype_list CHANGING ct_list TYPE ty_stypes.
       ( code = 'SF' text = 'Smart Form' )
       ( code = 'AF' text = 'Adobe Form' )
       ( code = 'AI' text = 'Adobe Form interface' )
+      ( code = 'TR' text = 'Transport request / task' )
       ( code = 'AL' text = 'Work list from request list' ) ).
   ENDIF.
 
@@ -12902,6 +12910,20 @@ FORM f4_sval.
           ON t~funcname = f~funcname AND t~spras = @sy-langu
         WHERE f~funcname LIKE @lv_like
         ORDER BY f~funcname
+        INTO CORRESPONDING FIELDS OF TABLE @lt_hit
+        UP TO 300 ROWS.
+
+    WHEN 'TR'.
+*     Die eigenen Auftraege und Aufgaben, die neuesten zuerst - wer
+*     einen Transport dokumentieren will, meint fast immer einen der
+*     letzten. Fremde stehen nicht drin; wer eine Nummer kennt, kann
+*     sie eintippen.
+      SELECT e~trkorr AS name, t~as4text AS text
+        FROM e070 AS e
+        LEFT OUTER JOIN e07t AS t
+          ON t~trkorr = e~trkorr AND t~langu = @sy-langu
+        WHERE e~trkorr LIKE @lv_like AND e~as4user = @sy-uname
+        ORDER BY e~trkorr DESCENDING
         INTO CORRESPONDING FIELDS OF TABLE @lt_hit
         UP TO 300 ROWS.
 
@@ -13793,6 +13815,239 @@ CLASS lcl_request IMPLEMENTATION.
 ENDCLASS.
 
 *----------------------------------------------------------------------*
+* lcl_transport - die Objektliste eines Transportauftrags
+*----------------------------------------------------------------------*
+* Ein Auftrag ist nichts anderes als eine Liste aus Objekttyp und Name -
+* genau das, was der Startpunkt "Arbeitsliste" schon verarbeitet. Diese
+* Klasse holt sie aus dem Korrektursystem, statt aus einer Datei.
+*
+* Drei Dinge machen die Arbeit aus:
+*
+*   - Die Objekte haengen bei einem Auftrag an seinen Aufgaben, nicht am
+*     Auftrag selbst. Gelesen werden deshalb beide Ebenen.
+*   - E071 mischt ganze Objekte (R3TR) mit Teilen davon (LIMU): eine
+*     Methode, ein Include, eine Tabellendefinition. Dokumentiert wird
+*     das Objekt, zu dem der Teil gehoert, und jedes nur einmal.
+*   - Customizing-Eintraege sind Tabellenschluessel, keine
+*     Repository-Objekte. Sie gehoeren in den IMG-Report; hier werden
+*     sie nur genannt, damit niemand sie im Dokument sucht.
+*
+* Gelesen wird ausschliesslich. TR_CHECK_TYPE uebersetzt nur den
+* Schluessel - trotz seines Kurztexts legt es nichts an.
+*----------------------------------------------------------------------*
+CLASS lcl_transport DEFINITION.
+  PUBLIC SECTION.
+    TYPES: BEGIN OF ty_head,
+             trkorr TYPE trkorr,
+             parent TYPE trkorr,
+             func   TYPE string,
+             status TYPE string,
+             target TYPE string,
+             owner  TYPE string,
+             date   TYPE string,
+             text   TYPE string,
+             tasks  TYPE i,
+             closed TYPE abap_bool,
+           END OF ty_head.
+*   Alles, was im Auftrag steht, aber nicht als Objekt dokumentiert
+*   wird - mit dem Grund.
+    TYPES: BEGIN OF ty_rest,
+             kind TYPE string,
+             name TYPE string,
+             note TYPE string,
+           END OF ty_rest.
+    TYPES ty_rests TYPE STANDARD TABLE OF ty_rest WITH EMPTY KEY.
+
+    CLASS-METHODS read
+      IMPORTING iv_trkorr TYPE clike
+      EXPORTING es_head   TYPE ty_head
+                et_objs   TYPE ty_objrefs
+                et_rest   TYPE ty_rests
+                ev_error  TYPE string.
+
+  PRIVATE SECTION.
+    CLASS-METHODS func_text
+      IMPORTING iv_func        TYPE clike
+      RETURNING VALUE(rv_text) TYPE string.
+    CLASS-METHODS stat_text
+      IMPORTING iv_stat        TYPE clike
+      RETURNING VALUE(rv_text) TYPE string.
+ENDCLASS.
+
+CLASS lcl_transport IMPLEMENTATION.
+
+  METHOD func_text.
+    CASE iv_func.
+      WHEN 'K'. rv_text = lcl_t=>ui( d = `Workbench-Auftrag` e = `workbench request` ).
+      WHEN 'W'. rv_text = lcl_t=>ui( d = `Customizing-Auftrag` e = `customizing request` ).
+      WHEN 'T'. rv_text = lcl_t=>ui( d = `Transport of Copies` e = `transport of copies` ).
+      WHEN 'C'. rv_text = lcl_t=>ui( d = `Umzugsauftrag` e = `relocation request` ).
+      WHEN 'S'. rv_text = lcl_t=>ui( d = `Entwicklungsaufgabe` e = `development task` ).
+      WHEN 'R'. rv_text = lcl_t=>ui( d = `Reparaturaufgabe` e = `repair task` ).
+      WHEN 'Q'. rv_text = lcl_t=>ui( d = `Customizing-Aufgabe` e = `customizing task` ).
+      WHEN 'X'. rv_text = lcl_t=>ui( d = `Unklassifizierte Aufgabe` e = `unclassified task` ).
+      WHEN OTHERS. rv_text = |{ iv_func }|.
+    ENDCASE.
+  ENDMETHOD.
+
+  METHOD stat_text.
+    CASE iv_stat.
+      WHEN 'D'. rv_text = lcl_t=>ui( d = `aenderbar` e = `modifiable` ).
+      WHEN 'L'. rv_text = lcl_t=>ui( d = `aenderbar, geschuetzt` e = `modifiable, protected` ).
+      WHEN 'O'. rv_text = lcl_t=>ui( d = `Freigabe gestartet` e = `release started` ).
+      WHEN 'R'. rv_text = lcl_t=>ui( d = `freigegeben` e = `released` ).
+      WHEN 'N'. rv_text = lcl_t=>ui( d = `freigegeben, Importfehler` e = `released, import error` ).
+      WHEN OTHERS. rv_text = |{ iv_stat }|.
+    ENDCASE.
+  ENDMETHOD.
+
+  METHOD read.
+
+    DATA lv_tr   TYPE trkorr.
+    DATA lt_tr   TYPE STANDARD TABLE OF trkorr WITH EMPTY KEY.
+    DATA ls_e071 TYPE e071.
+    DATA ls_tadir TYPE tadir.
+    DATA lv_res  TYPE trpari-s_checked.
+    DATA lv_kind TYPE string.
+
+    CLEAR: es_head, et_objs, et_rest, ev_error.
+    lv_tr = to_upper( condense( CONV string( iv_trkorr ) ) ).
+
+    SELECT SINGLE trkorr, trfunction, trstatus, tarsystem, as4user, as4date, strkorr
+      FROM e070 WHERE trkorr = @lv_tr
+      INTO @DATA(ls_e070).
+    IF sy-subrc <> 0.
+      ev_error = |{ lcl_t=>ui( d = `Auftrag oder Aufgabe nicht gefunden:`
+                               e = `Request or task not found:` ) } { lv_tr }|.
+      RETURN.
+    ENDIF.
+
+    es_head-trkorr = ls_e070-trkorr.
+    es_head-parent = ls_e070-strkorr.
+    es_head-func   = func_text( ls_e070-trfunction ).
+    es_head-status = stat_text( ls_e070-trstatus ).
+    es_head-target = ls_e070-tarsystem.
+    es_head-owner  = ls_e070-as4user.
+    es_head-date   = |{ ls_e070-as4date DATE = ISO }|.
+    es_head-closed = boolc( ls_e070-trstatus = 'R' OR ls_e070-trstatus = 'N' ).
+
+    SELECT SINGLE as4text FROM e07t
+      WHERE trkorr = @lv_tr AND langu = @sy-langu
+      INTO @DATA(lv_text).
+    IF sy-subrc <> 0.
+      SELECT SINGLE as4text FROM e07t WHERE trkorr = @lv_tr INTO @lv_text.
+    ENDIF.
+    es_head-text = lv_text.
+
+    APPEND lv_tr TO lt_tr.
+    SELECT trkorr FROM e070 WHERE strkorr = @lv_tr
+      INTO TABLE @DATA(lt_task).
+    LOOP AT lt_task INTO DATA(ls_task).
+      APPEND ls_task-trkorr TO lt_tr.
+    ENDLOOP.
+    es_head-tasks = lines( lt_task ).
+
+    SELECT trkorr, pgmid, object, obj_name, objfunc
+      FROM e071
+      FOR ALL ENTRIES IN @lt_tr
+      WHERE trkorr = @lt_tr-table_line
+      INTO TABLE @DATA(lt_e071).
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+    SORT lt_e071 BY pgmid object obj_name.
+
+    LOOP AT lt_e071 INTO DATA(ls_e).
+
+      lv_kind = condense( |{ ls_e-pgmid } { ls_e-object }| ).
+
+*     Eine Loeschzeile dokumentiert nichts - das Objekt soll im
+*     Zielsystem gerade verschwinden. Nur 'D' heisst geloescht: 'K'
+*     steht laut Domaene fuer "Objektschluessel gemaess Eintraegen in
+*     der Schluesselliste" und ist der Normalfall jedes
+*     Customizing-Eintrags, 'M' fuer "Loeschen und Neuanlegen auf der
+*     Datenbank" - das Objekt reist also mit.
+      IF ls_e-objfunc = 'D'.
+        APPEND VALUE ty_rest( kind = lv_kind
+                              name = ls_e-obj_name
+                              note = lcl_t=>ui( d = `Loeschung`
+                                                e = `deletion` ) ) TO et_rest.
+        CONTINUE.
+      ENDIF.
+
+*     Customizing: Tabellenschluessel, kein Repository-Objekt.
+      IF ls_e-object = 'TABU' OR ls_e-object = 'CDAT' OR ls_e-object = 'TDAT'
+        OR ls_e-object = 'VDAT' OR ls_e-object = 'TLOGO'.
+*       Die Schluessel stehen in E071K unter dem Tabellennamen. Bei
+*       einem Sammeleintrag wie CDAT ist das nicht der Name aus E071 -
+*       dort tragen die Schluesselzeilen die einzelnen Tabellen und
+*       verweisen ueber MASTERNAME auf den Sammeleintrag. Ohne die
+*       zweite Bedingung meldete APPL_LOG null Schluessel und haette
+*       doch vier.
+        SELECT COUNT(*) FROM e071k
+          WHERE trkorr = @ls_e-trkorr
+            AND ( objname = @ls_e-obj_name OR mastername = @ls_e-obj_name ).
+        APPEND VALUE ty_rest(
+          kind = lv_kind
+          name = ls_e-obj_name
+          note = |{ lcl_t=>ui( d = `Customizing, ` e = `customizing, ` ) }| &&
+                 |{ sy-dbcnt } { lcl_t=>ui( d = `Schluessel - siehe IMG-Report`
+                                            e = `keys - see the IMG report` ) }| ) TO et_rest.
+        CONTINUE.
+      ENDIF.
+
+*     LIMU-Zeilen zeigen auf einen Teil eines Objekts. TR_CHECK_TYPE
+*     liefert den Katalogschluessel des Ganzen - dieselbe Uebersetzung,
+*     die das Korrektursystem selbst benutzt.
+      CLEAR: ls_e071, ls_tadir, lv_res.
+      ls_e071-pgmid    = ls_e-pgmid.
+      ls_e071-object   = ls_e-object.
+      ls_e071-obj_name = ls_e-obj_name.
+      CALL FUNCTION 'TR_CHECK_TYPE'
+        EXPORTING wi_e071   = ls_e071
+        IMPORTING pe_result = lv_res
+                  we_tadir  = ls_tadir.
+
+      IF ls_tadir-object IS INITIAL OR ls_tadir-obj_name IS INITIAL.
+        APPEND VALUE ty_rest( kind = lv_kind
+                              name = ls_e-obj_name
+                              note = lcl_t=>ui( d = `kein Katalogobjekt`
+                                                e = `no catalog object` ) ) TO et_rest.
+        CONTINUE.
+      ENDIF.
+
+*     Ein Eintrag kann auf ein Objekt zeigen, das es nicht mehr gibt -
+*     geloescht, oder nie angelegt, weil der Auftrag aus einem anderen
+*     System stammt. Das gehoert vermerkt, nicht uebergangen.
+      SELECT COUNT(*) FROM tadir
+        WHERE pgmid = 'R3TR' AND object = @ls_tadir-object
+          AND obj_name = @ls_tadir-obj_name AND delflag = @abap_false.
+      IF sy-subrc <> 0.
+        APPEND VALUE ty_rest(
+          kind = condense( |R3TR { ls_tadir-object }| )
+          name = ls_tadir-obj_name
+          note = lcl_t=>ui( d = `im System nicht vorhanden`
+                            e = `not present in this system` ) ) TO et_rest.
+        CONTINUE.
+      ENDIF.
+
+      READ TABLE et_objs TRANSPORTING NO FIELDS
+           WITH KEY type = ls_tadir-object name = ls_tadir-obj_name.
+      IF sy-subrc <> 0.
+        APPEND VALUE ty_objref( type = ls_tadir-object
+                                name = ls_tadir-obj_name ) TO et_objs.
+      ENDIF.
+
+    ENDLOOP.
+
+    SORT et_rest BY kind name note.
+    DELETE ADJACENT DUPLICATES FROM et_rest COMPARING kind name note.
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+*----------------------------------------------------------------------*
 * Fehlliste einlesen
 *----------------------------------------------------------------------*
 FORM read_request CHANGING ct_objs   TYPE ty_objrefs
@@ -13902,6 +14157,65 @@ START-OF-SELECTION.
     SKIP.
   ENDIF.
 
+* Beim Startpunkt-Typ TR kommen die Objekte aus dem Korrektursystem.
+* Was im Auftrag steht, aber kein dokumentierbares Objekt ist, wird
+* vorweg genannt - sonst sucht es jemand spaeter im Dokument.
+  DATA ls_trhead TYPE lcl_transport=>ty_head.
+  DATA lt_trrest TYPE lcl_transport=>ty_rests.
+  IF p_stype = 'TR'.
+    DATA lv_trerr TYPE string.
+    lcl_transport=>read( EXPORTING iv_trkorr = p_sval
+                         IMPORTING es_head   = ls_trhead
+                                   et_objs   = lt_start
+                                   et_rest   = lt_trrest
+                                   ev_error  = lv_trerr ).
+    WRITE: / lcl_t=>ui( d = `Documizer - Entwicklerdokumentation` e = `Documizer - developer documentation` ).
+    ULINE.
+    IF lv_trerr IS NOT INITIAL.
+      WRITE: / lv_trerr.
+      RETURN.
+    ENDIF.
+    WRITE: / lcl_t=>ui( d = `Auftrag                          :` e = `Request                          :` ),
+             ls_trhead-trkorr, ls_trhead-func, '/', ls_trhead-status.
+    IF ls_trhead-parent IS NOT INITIAL.
+      WRITE: / lcl_t=>ui( d = `Aufgabe zu Auftrag               :` e = `Task of request                  :` ), ls_trhead-parent.
+    ENDIF.
+    IF ls_trhead-text IS NOT INITIAL.
+      WRITE: / lcl_t=>ui( d = `Kurztext                         :` e = `Short text                       :` ), ls_trhead-text.
+    ENDIF.
+    WRITE: / lcl_t=>ui( d = `Eigentuemer, Datum               :` e = `Owner, date                      :` ),
+             ls_trhead-owner, ls_trhead-date.
+    IF ls_trhead-target IS NOT INITIAL.
+      WRITE: / lcl_t=>ui( d = `Zielsystem                       :` e = `Target system                    :` ), ls_trhead-target.
+    ENDIF.
+    IF ls_trhead-tasks > 0.
+      WRITE: / lcl_t=>ui( d = `Aufgaben darunter                :` e = `Tasks below it                   :` ), ls_trhead-tasks.
+    ENDIF.
+*   Ein freigegebener Auftrag dokumentiert, was drin war; ein
+*   aenderbarer, was gerade drin ist. Beides liest sich sonst gleich.
+    IF ls_trhead-closed = abap_false.
+      WRITE: / lcl_t=>ui(
+        d = `Der Auftrag ist noch aenderbar - dokumentiert wird sein Stand von jetzt.`
+        e = `The request is still modifiable - this documents its content as of now.` ).
+    ENDIF.
+    WRITE: / lcl_t=>ui( d = `Objekte im Auftrag               :` e = `Objects in the request           :` ), lines( lt_start ).
+    IF lt_trrest IS NOT INITIAL.
+      SKIP.
+      WRITE: / lcl_t=>ui( d = `Nicht als Objekt dokumentiert:`
+                          e = `Not documented as an object:` ).
+      LOOP AT lt_trrest INTO DATA(ls_rest).
+        WRITE: /4 ls_rest-kind, ls_rest-name, ls_rest-note.
+      ENDLOOP.
+    ENDIF.
+    IF lt_start IS INITIAL.
+      SKIP.
+      WRITE: / lcl_t=>ui( d = `Keine dokumentierbaren Objekte im Auftrag.`
+                          e = `No documentable objects in the request.` ).
+      RETURN.
+    ENDIF.
+    SKIP.
+  ENDIF.
+
   DATA(lo_collector) = NEW lcl_collector_dev( iv_stype  = p_stype
                                               iv_sval   = CONV string( p_sval )
                                               iv_rdep   = p_rdep
@@ -13941,7 +14255,7 @@ START-OF-SELECTION.
 
   DATA(ls_docmeta) = lo_doc->get_meta( ).
 
-  IF p_stype <> 'AL'.
+  IF p_stype <> 'AL' AND p_stype <> 'TR'.
     WRITE: / lcl_t=>ui( d = `Documizer - Entwicklerdokumentation` e = `Documizer - developer documentation` ).
     ULINE.
   ENDIF.

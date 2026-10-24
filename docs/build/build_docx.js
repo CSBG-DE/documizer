@@ -9,10 +9,12 @@ const {
 } = require('docx');
 
 const OUT = process.argv[2];
-const LOGO = fs.readFileSync(path.join(__dirname, 'consiness_logo.png'));
+const LOGO = fs.readFileSync(path.join(__dirname, 'csbg_logo.png'));
 
-const RED = 'D71920', GREY = '808285', INK = '2B2B2B', MUTED = '5F6062';
-const FILL = 'F4F4F5', REDFILL = 'FCEDEE', RULE = 'D9D9DB';
+// Akzent ist das Markenblau aus dem CSBG-Logo (#0063A6), ACCFILL sein heller
+// Anstrich fuer die Kaesten, CODE ein dunkleres Blau fuer Inline-Code.
+const ACC = '0063A6', GREY = '808285', INK = '2B2B2B', MUTED = '5F6062';
+const FILL = 'F4F4F5', ACCFILL = 'E9F2F8', RULE = 'D9D9DB', CODE = '0A4D80';
 const FONT = 'Arial', MONO = 'Consolas';
 const W = 9638; // Satzspiegel A4 bei 2 cm Rand
 
@@ -25,7 +27,7 @@ function runs(text, base = {}) {
     else if (part.startsWith('*')) out.push(new TextRun({ ...base, text: part.slice(1, -1), italics: true }));
     else if (part.startsWith('`')) out.push(new TextRun({
       ...base, text: part.slice(1, -1), font: MONO, size: Math.max((base.size || 21) - 2, 15),
-      color: base.color === 'FFFFFF' ? 'FFFFFF' : '8C1117',
+      color: base.color === 'FFFFFF' ? 'FFFFFF' : CODE,
     }));
     else out.push(new TextRun({ ...base, text: part }));
   }
@@ -49,7 +51,7 @@ function table(headers, rows, widths) {
   const sum = widths.reduce((a, b) => a + b, 0);
   const cell = (t, w, head, alt) => new TableCell({
     width: { size: w, type: WidthType.DXA },
-    shading: head ? { type: ShadingType.CLEAR, color: 'auto', fill: RED }
+    shading: head ? { type: ShadingType.CLEAR, color: 'auto', fill: ACC }
                   : alt ? { type: ShadingType.CLEAR, color: 'auto', fill: 'FAFAFA' } : undefined,
     margins: { top: 70, bottom: 70, left: 110, right: 110 },
     verticalAlign: VerticalAlign.TOP,
@@ -71,15 +73,15 @@ function table(headers, rows, widths) {
 
 // ---------- Nutzen-Kasten ----------
 function callout(title, lines) {
-  const kids = [new Paragraph({ children: [new TextRun({ text: title, bold: true, color: RED, size: 20 })], spacing: { after: 60 } })];
+  const kids = [new Paragraph({ children: [new TextRun({ text: title, bold: true, color: ACC, size: 20 })], spacing: { after: 60 } })];
   for (const l of [].concat(lines)) kids.push(new Paragraph({ children: runs(l, { size: 20 }), spacing: { after: 60, line: 276 } }));
   return [new Table({
     width: { size: W, type: WidthType.DXA }, columnWidths: [W],
     borders: { top: NOB, bottom: NOB, right: NOB, insideHorizontal: NOB, insideVertical: NOB,
-               left: { style: BorderStyle.SINGLE, size: 24, color: RED } },
+               left: { style: BorderStyle.SINGLE, size: 24, color: ACC } },
     rows: [new TableRow({ cantSplit: true, children: [new TableCell({
       width: { size: W, type: WidthType.DXA },
-      shading: { type: ShadingType.CLEAR, color: 'auto', fill: REDFILL },
+      shading: { type: ShadingType.CLEAR, color: 'auto', fill: ACCFILL },
       margins: { top: 140, bottom: 100, left: 220, right: 220 }, children: kids })] })],
   }), SP(180)];
 }
@@ -106,12 +108,12 @@ function kpis(items) {
   const widths = items.map((_, i) => i === items.length - 1 ? W - w * (items.length - 1) : w);
   return [new Table({
     width: { size: W, type: WidthType.DXA }, columnWidths: widths,
-    borders: { ...NOBORDERS, top: { style: BorderStyle.SINGLE, size: 18, color: RED } },
+    borders: { ...NOBORDERS, top: { style: BorderStyle.SINGLE, size: 18, color: ACC } },
     rows: [new TableRow({ children: items.map(([num, label], i) => new TableCell({
       width: { size: widths[i], type: WidthType.DXA },
       margins: { top: 160, bottom: 80, left: 60, right: 160 },
       children: [
-        new Paragraph({ children: [new TextRun({ text: num, bold: true, size: 44, color: RED })], spacing: { after: 40 } }),
+        new Paragraph({ children: [new TextRun({ text: num, bold: true, size: 44, color: ACC })], spacing: { after: 40 } }),
         new Paragraph({ children: runs(label, { size: 17, color: MUTED }), spacing: { after: 0, line: 252 } }),
       ] })) })],
   }), SP(240)];
@@ -128,9 +130,9 @@ function cards(items) {
       width: { size: w, type: WidthType.DXA },
       shading: { type: ShadingType.CLEAR, color: 'auto', fill: FILL },
       margins: { top: 180, bottom: 160, left: 180, right: 180 },
-      borders: { top: { style: BorderStyle.SINGLE, size: 18, color: RED }, bottom: NOB, left: NOB, right: NOB },
+      borders: { top: { style: BorderStyle.SINGLE, size: 18, color: ACC }, bottom: NOB, left: NOB, right: NOB },
       children: [
-        new Paragraph({ children: [new TextRun({ text: rep, font: MONO, size: 16, color: RED })], spacing: { after: 60 } }),
+        new Paragraph({ children: [new TextRun({ text: rep, font: MONO, size: 16, color: ACC })], spacing: { after: 60 } }),
         new Paragraph({ children: [new TextRun({ text: title, bold: true, size: 22 })], spacing: { after: 80 } }),
         new Paragraph({ children: runs(text, { size: 18, color: MUTED }), spacing: { after: 0, line: 264 } }),
       ] }));
@@ -162,12 +164,12 @@ function scenario(title, task, delivers, benefit) {
 // =====================================================================
 const cover = [
   new Paragraph({ alignment: AlignmentType.RIGHT, spacing: { after: 2200 },
-    children: [new ImageRun({ type: 'png', data: LOGO, transformation: { width: 190, height: 61 } })] }),
-  new Paragraph({ children: [new TextRun({ text: 'SAP S/4HANA UND SAP ERP · ON-PREMISE · KLASSISCHES ABAP', size: 18, color: RED, bold: true, characterSpacing: 40 })], spacing: { after: 240 } }),
+    children: [new ImageRun({ type: 'png', data: LOGO, transformation: { width: 190, height: 66 } })] }),
+  new Paragraph({ children: [new TextRun({ text: 'SAP S/4HANA UND SAP ERP · ON-PREMISE · KLASSISCHES ABAP', size: 18, color: ACC, bold: true, characterSpacing: 40 })], spacing: { after: 240 } }),
   new Paragraph({ children: [new TextRun({ text: 'Documizer', bold: true, size: 112, color: INK })], spacing: { after: 120 } }),
   new Paragraph({ children: [new TextRun({ text: 'Dokumentation, Transfer und KI-Analyse', size: 40, color: GREY })], spacing: { after: 40 } }),
   new Paragraph({ children: [new TextRun({ text: 'für SAP-Entwicklungen und Customizing', size: 40, color: GREY })],
-    border: { bottom: { style: BorderStyle.SINGLE, size: 24, color: RED, space: 18 } }, spacing: { after: 480 } }),
+    border: { bottom: { style: BorderStyle.SINGLE, size: 24, color: ACC, space: 18 } }, spacing: { after: 480 } }),
   new Paragraph({ children: runs('Ein einziger ABAP-Report, in Sekunden installiert. Er dokumentiert, was Ihr System **wirklich** enthält — und bringt es auf Wunsch in ein anderes System. Ohne Transport, ohne abapGit, ohne zusätzliche Repository-Objekte.', { size: 26, color: INK }),
     spacing: { after: 2400, line: 336 } }),
   ...kpis([
@@ -202,7 +204,7 @@ const glance = [
   B('**Sicher im Kundensystem.** Die Berechtigungsprüfungen von SAP bleiben eingeschaltet. Customizing wird nie direkt geschrieben, sondern als BC-Set zur Prüfung angeboten.'),
   B('**Offen.** Apache-2.0-Lizenz, Quellen auf GitHub — siehe Kapitel 12.'),
   new Paragraph({ children: [new PageBreak()] }),
-  new Paragraph({ children: [new TextRun({ text: 'Inhalt', bold: true, size: 36, color: RED })], spacing: { after: 240 } }),
+  new Paragraph({ children: [new TextRun({ text: 'Inhalt', bold: true, size: 36, color: ACC })], spacing: { after: 240 } }),
   new TableOfContents('Inhalt', { hyperlink: true, headingStyleRange: '1-1' }),
 ];
 
@@ -612,10 +614,10 @@ const contact = [
   H1('13  Kontakt'),
   LEAD('Sie möchten den Documizer in Ihrem System einsetzen, eine Anwendung dokumentieren oder Entwicklungen übertragen?'),
   new Paragraph({ children: [new TextRun({ text: 'Christian Gathmann', bold: true, size: 28 })], spacing: { before: 240, after: 60 } }),
-  new Paragraph({ children: [new TextRun({ text: 'gathmann@csbg.de', size: 24, color: RED })], spacing: { after: 60 } }),
+  new Paragraph({ children: [new TextRun({ text: 'gathmann@csbg.de', size: 24, color: ACC })], spacing: { after: 60 } }),
   new Paragraph({ children: [new TextRun({ text: 'C. Gathmann Computer-System-Beratung GmbH (CSBG), Bremen', size: 22, color: MUTED })], spacing: { after: 240 } }),
   new Paragraph({ children: [new TextRun({ text: 'github.com/csbg-de/documizer', size: 20, color: MUTED })], spacing: { after: 600 } }),
-  new Paragraph({ children: [new ImageRun({ type: 'png', data: LOGO, transformation: { width: 150, height: 48 } })] }),
+  new Paragraph({ children: [new ImageRun({ type: 'png', data: LOGO, transformation: { width: 150, height: 52 } })] }),
 ];
 
 // =====================================================================
@@ -624,10 +626,10 @@ const contact = [
 const header = new Header({ children: [new Paragraph({
   border: { bottom: { style: BorderStyle.SINGLE, size: 4, color: RULE, space: 6 } },
   children: [
-    new TextRun({ text: 'Documizer', bold: true, size: 16, color: RED }),
+    new TextRun({ text: 'Documizer', bold: true, size: 16, color: ACC }),
     new TextRun({ text: '  ·  Produktdokumentation', size: 16, color: GREY }),
     new TextRun({ children: [new PositionalTab({ alignment: PositionalTabAlignment.RIGHT, relativeTo: PositionalTabRelativeTo.MARGIN, leader: PositionalTabLeader.NONE })] }),
-    new ImageRun({ type: 'png', data: LOGO, transformation: { width: 68, height: 22 } }),
+    new ImageRun({ type: 'png', data: LOGO, transformation: { width: 68, height: 24 } }),
   ] })] });
 const footer = new Footer({ children: [new Paragraph({
   border: { top: { style: BorderStyle.SINGLE, size: 4, color: RULE, space: 6 } },
@@ -647,7 +649,7 @@ const doc = new Document({
     default: { document: { run: { font: FONT, size: 21, color: INK } } },
     paragraphStyles: [
       { id: 'Heading1', name: 'Heading 1', basedOn: 'Normal', next: 'Normal', quickFormat: true,
-        run: { size: 40, bold: true, color: RED, font: FONT },
+        run: { size: 40, bold: true, color: ACC, font: FONT },
         paragraph: { spacing: { before: 0, after: 200 }, outlineLevel: 0 } },
       { id: 'Heading2', name: 'Heading 2', basedOn: 'Normal', next: 'Normal', quickFormat: true,
         run: { size: 27, bold: true, color: INK, font: FONT },
@@ -659,9 +661,9 @@ const doc = new Document({
   },
   numbering: { config: [
     { reference: 'bul', levels: [{ level: 0, format: LevelFormat.BULLET, text: '■', alignment: AlignmentType.LEFT,
-      style: { run: { color: RED, size: 14 }, paragraph: { indent: { left: 400, hanging: 280 } } } }] },
+      style: { run: { color: ACC, size: 14 }, paragraph: { indent: { left: 400, hanging: 280 } } } }] },
     { reference: 'num', levels: [{ level: 0, format: LevelFormat.DECIMAL, text: '%1.', alignment: AlignmentType.LEFT,
-      style: { run: { color: RED, bold: true }, paragraph: { indent: { left: 400, hanging: 340 } } } }] },
+      style: { run: { color: ACC, bold: true }, paragraph: { indent: { left: 400, hanging: 340 } } } }] },
   ] },
   sections: [
     { properties: { page }, children: cover },

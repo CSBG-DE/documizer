@@ -163,7 +163,7 @@ function scenario(title, task, delivers, benefit) {
 const cover = [
   new Paragraph({ alignment: AlignmentType.RIGHT, spacing: { after: 2200 },
     children: [new ImageRun({ type: 'png', data: LOGO, transformation: { width: 190, height: 61 } })] }),
-  new Paragraph({ children: [new TextRun({ text: 'SAP S/4HANA · ON-PREMISE · KLASSISCHES ABAP', size: 18, color: RED, bold: true, characterSpacing: 40 })], spacing: { after: 240 } }),
+  new Paragraph({ children: [new TextRun({ text: 'SAP S/4HANA UND SAP ERP · ON-PREMISE · KLASSISCHES ABAP', size: 18, color: RED, bold: true, characterSpacing: 40 })], spacing: { after: 240 } }),
   new Paragraph({ children: [new TextRun({ text: 'Documizer', bold: true, size: 112, color: INK })], spacing: { after: 120 } }),
   new Paragraph({ children: [new TextRun({ text: 'Dokumentation, Transfer und KI-Analyse', size: 40, color: GREY })], spacing: { after: 40 } }),
   new Paragraph({ children: [new TextRun({ text: 'für SAP-Entwicklungen und Customizing', size: 40, color: GREY })],
@@ -177,8 +177,8 @@ const cover = [
     ['0', 'Transporte, Installationen oder Zusatzobjekte'],
   ]),
   new Paragraph({ spacing: { before: 600, after: 40 }, children: [new TextRun({ text: 'Produktdokumentation · Stand Oktober 2026', size: 18, color: MUTED })] }),
-  new Paragraph({ spacing: { after: 40 }, children: [new TextRun({ text: 'Christian Gathmann · gathmann@consiness.de', size: 18, color: MUTED })] }),
-  new Paragraph({ children: [new TextRun({ text: 'consiness GmbH & Co. KG', size: 18, bold: true, color: INK })] }),
+  new Paragraph({ spacing: { after: 40 }, children: [new TextRun({ text: 'Christian Gathmann · gathmann@csbg.de', size: 18, color: MUTED })] }),
+  new Paragraph({ children: [new TextRun({ text: 'C. Gathmann Computer-System-Beratung GmbH (CSBG), Bremen', size: 18, bold: true, color: INK })] }),
 ];
 
 // =====================================================================
@@ -197,6 +197,7 @@ const glance = [
   B('**Ein Format für alles.** Das XML ist vollständig, versioniert und lässt sich verlustfrei wieder einlesen. Das HTML ist in sich geschlossen und öffnet sich auch in Jahren noch ohne Nacharbeit.'),
   B('**Dokumentation, die zurück ins System kann.** Der Development-Report legt aus demselben Dokument Tabellen, Klassen, CDS-Views, RAP-Objekte, IDoc-Typen, UI5-Apps und Adobe-Formulare in einem anderen System an.'),
   B('**Auch ein Transport ist eine Quelle.** Auftragsnummer eintragen, und das Dokument beschreibt genau das, was dieser Transport enthält — mit Quelltext und Verwendungen.'),
+  B('**Nicht nur S/4HANA.** Dieselbe Quelle läuft im alten ERP — geprüft bis hinunter zu SAP_BASIS 7.40. Was es dort nicht gibt, sucht der Report dynamisch und lässt es leer, statt abzubrechen.'),
   B('**Nie stillschweigend unvollständig.** Greift eine Mengengrenze, steht das im Dokument. Jeder Lauf kann sich selbst prüfen: serialisieren, einlesen, vergleichen.'),
   B('**Sicher im Kundensystem.** Die Berechtigungsprüfungen von SAP bleiben eingeschaltet. Customizing wird nie direkt geschrieben, sondern als BC-Set zur Prüfung angeboten.'),
   B('**Offen.** Apache-2.0-Lizenz, Quellen auf GitHub — siehe Kapitel 12.'),
@@ -296,7 +297,7 @@ const install = [
   P('Der Hilfsreport `ZDOCUMIZER_DOCU` schreibt die SAP-Reportdokumentation für die drei Reports — sichtbar in SE38 unter *Dokumentation* und über das Info-Symbol des Selektionsbilds. Für die Funktion wird er nicht gebraucht; sinnvoll ist er, wenn im System weitere Kollegen mit dem Documizer arbeiten.'),
   H2('Systemvoraussetzungen'),
   ...table(['Punkt', 'Anforderung'], [
-    ['Plattform', 'SAP S/4HANA On-Premise oder ERP, klassisches ABAP'],
+    ['Plattform', 'SAP S/4HANA On-Premise **und** SAP ERP (R/3), klassisches ABAP'],
     ['Release', 'Verifiziert auf SAP_BASIS 758 (S/4HANA 2023). Für ältere Stände umgebaut: POSIX-`REGEX` statt `PCRE`, keine Konstruktoren, die erst ab 7.55 gelten — der IMG-Report läuft nachweislich auf einem Kundensystem mit SAP_BASIS 7.40'],
     ['Berechtigung Dokumentation', 'Lesender Zugriff auf das Repository; für Customizing-Inhalte `S_TABU_NAM`'],
     ['Berechtigung Import', '`S_DEVELOP` für die anzulegenden Objekte und Pakete — die SAP-Prüfungen bleiben eingeschaltet'],
@@ -611,8 +612,8 @@ const contact = [
   H1('13  Kontakt'),
   LEAD('Sie möchten den Documizer in Ihrem System einsetzen, eine Anwendung dokumentieren oder Entwicklungen übertragen?'),
   new Paragraph({ children: [new TextRun({ text: 'Christian Gathmann', bold: true, size: 28 })], spacing: { before: 240, after: 60 } }),
-  new Paragraph({ children: [new TextRun({ text: 'gathmann@consiness.de', size: 24, color: RED })], spacing: { after: 60 } }),
-  new Paragraph({ children: [new TextRun({ text: 'consiness GmbH & Co. KG', size: 22, color: MUTED })], spacing: { after: 240 } }),
+  new Paragraph({ children: [new TextRun({ text: 'gathmann@csbg.de', size: 24, color: RED })], spacing: { after: 60 } }),
+  new Paragraph({ children: [new TextRun({ text: 'C. Gathmann Computer-System-Beratung GmbH (CSBG), Bremen', size: 22, color: MUTED })], spacing: { after: 240 } }),
   new Paragraph({ children: [new TextRun({ text: 'github.com/csbg-de/documizer', size: 20, color: MUTED })], spacing: { after: 600 } }),
   new Paragraph({ children: [new ImageRun({ type: 'png', data: LOGO, transformation: { width: 150, height: 48 } })] }),
 ];
@@ -631,7 +632,7 @@ const header = new Header({ children: [new Paragraph({
 const footer = new Footer({ children: [new Paragraph({
   border: { top: { style: BorderStyle.SINGLE, size: 4, color: RULE, space: 6 } },
   children: [
-    new TextRun({ text: 'Documizer · Christian Gathmann · gathmann@consiness.de', size: 15, color: GREY }),
+    new TextRun({ text: 'Documizer · Christian Gathmann · gathmann@csbg.de', size: 15, color: GREY }),
     new TextRun({ children: [new PositionalTab({ alignment: PositionalTabAlignment.RIGHT, relativeTo: PositionalTabRelativeTo.MARGIN, leader: PositionalTabLeader.NONE })] }),
     new TextRun({ children: ['Seite ', PageNumber.CURRENT], size: 15, color: GREY }),
   ] })] });
@@ -641,7 +642,7 @@ const page = { size: { width: 11906, height: 16838 }, margin: { top: 1418, botto
 const doc = new Document({
   creator: 'Christian Gathmann',
   title: 'Documizer – Produktdokumentation',
-  description: 'Dokumentation, Transfer und KI-Analyse für SAP S/4HANA',
+  description: 'Dokumentation, Transfer und KI-Analyse für SAP S/4HANA und SAP ERP',
   styles: {
     default: { document: { run: { font: FONT, size: 21, color: INK } } },
     paragraphStyles: [

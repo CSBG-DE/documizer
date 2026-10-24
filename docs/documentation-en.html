@@ -889,6 +889,7 @@ XML file (PC | app server) ▶ parser ▶ model with &lt;definition&gt; ▶ impo
               <tr><td><code>V</code></td><td>View</td><td><code>IT</code></td><td>IDoc basic type</td></tr>
               <tr><td><code>D</code></td><td>Data element</td><td><code>U5</code></td><td>UI5 application</td></tr>
               <tr><td><code>DO</code></td><td>Domain</td><td><code>AL</code></td><td>Request list from a file</td></tr>
+              <tr><td><code>TR</code></td><td>Transport request / task</td><td colspan="2">also <code>SF</code>, <code>AF</code>, <code>AI</code> for forms</td></tr>
             </tbody>
           </table>
         </div>
@@ -901,12 +902,44 @@ XML file (PC | app server) ▶ parser ▶ model with &lt;definition&gt; ▶ impo
           its include.
         </p>
         <p>
-          <code>AL</code> names no object but a <b>list</b> of them — the request list the IMG
-          report wrote in the target system (section 05). The start point then comes from a file,
-          and every object in the list becomes a chapter of its own. With <em>n</em> start objects
-          the chapters are 1 to <em>n</em>, then <em>n+1</em> for used and <em>n+2</em> for using
+          Two codes name no object but a <b>list</b> of them. <code>AL</code> means the request
+          list the IMG report wrote in the target system (section 05); the start point then comes
+          from a file. <code>TR</code> means a transport request — more on that below. Either way
+          every object in the list becomes a chapter of its own. With <em>n</em> start objects the
+          chapters are 1 to <em>n</em>, then <em>n+1</em> for used and <em>n+2</em> for using
           objects.
         </p>
+
+        <h3>Documenting a transport request</h3>
+        <p>
+          With <code>TR</code> the name field takes a request or task number; the value help shows
+          your own requests, the most recent first. What comes out is a document about exactly
+          what this transport contains — with details, source code and where-used lists, like any
+          other start point. The header names the kind and status of the request, its short text,
+          owner, date, target system and the tasks below it.
+        </p>
+        <p>
+          <b>The objects hang off the tasks, not the request.</b> A request's own object list is
+          regularly empty — what travels sits in the tasks below it, so both levels are read. Give
+          a task instead and you get that task alone, with the request named in the header.
+        </p>
+        <p>
+          <b>Parts are rolled up to their object.</b> Besides whole objects a request also lists
+          single methods, includes and table definitions. What gets documented is the object the
+          part belongs to, and each one only once — the translation comes from the same function
+          module the correction system uses for it.
+        </p>
+        <p>
+          <b>Whatever is not a documentable object is named up front</b> rather than silently
+          dropped: customizing entries with their table and number of keys and a pointer to the IMG
+          report, deletions, entries without a catalog object, and objects that no longer exist in
+          the system.
+        </p>
+        <div class="note">
+          <p><b>Released or modifiable.</b> A released request documents what <em>was</em> in it; a
+          modifiable one, what <em>is</em> in it right now. The second case says so in the header —
+          otherwise the two read the same.</p>
+        </div>
 
         <div class="screen">
           <div class="legend"><span>Start point</span><span>ZDOCUMIZER_DEV</span></div>

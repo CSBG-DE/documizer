@@ -413,10 +413,15 @@ Der Einstieg ist ein Paar aus **Typ und Wert**, wie im Object Navigator:
 F4 auf beiden Feldern; der Klartext zum Code steht daneben. Bei `C` entscheidet der Katalog, ob
 es eine Klasse oder ein Interface ist — ein Feld für beides, wie in SE80.
 
-Ein Code fällt aus der Reihe: **`AL` — Arbeitsliste aus Fehlliste.** Er benennt kein Objekt,
-sondern eine Liste davon. Der Startpunkt steht dann in einer Datei (`P_AFILE`, wahlweise vom
-Applikationsserver über `P_ASRV`), nicht im Namensfeld; jedes Objekt der Liste wird ein
-eigenes Kapitel. Woher die Datei kommt, steht in 3.9.
+Zwei Codes fallen aus der Reihe, weil sie kein Objekt benennen, sondern eine Liste davon:
+
+**`AL` — Arbeitsliste aus Fehlliste.** Der Startpunkt steht dann in einer Datei (`P_AFILE`,
+wahlweise vom Applikationsserver über `P_ASRV`), nicht im Namensfeld; jedes Objekt der Liste
+wird ein eigenes Kapitel. Woher die Datei kommt, steht in 3.9.
+
+**`TR` — Transportauftrag oder Aufgabe.** Im Namensfeld steht die Auftragsnummer; die
+Wertehilfe zeigt die eigenen Aufträge, die neuesten zuerst. Die Objektliste kommt dann aus dem
+Korrektursystem statt aus einer Datei — siehe 4.1a.
 
 Der Kapitelaufbau ist deshalb nicht mehr fest verdrahtet: bei einem Einzelobjekt bleibt es bei
 Kapitel 1 für das Objekt, 2 für die verwendeten und 3 für die Verwender; bei einer Arbeitsliste
@@ -425,6 +430,50 @@ mit *n* Objekten sind es die Kapitel 1 bis *n*, danach *n+1* und *n+2*.
 Ein **Funktionsbaustein** hat keinen eigenen `TADIR`-Satz und läuft deshalb unter dem
 Pseudotyp `FUNC`: Kurztext aus `TFTIT`, Doku über Dokuklasse `FU`, Schnittstelle aus
 `FUPARAREF`, Quelltext aus seinem Include.
+
+### 4.1a Einen Transportauftrag dokumentieren (`TR`)
+
+Ein Auftrag ist nichts anderes als eine Liste aus Objekttyp und Name — genau das, was `AL`
+schon verarbeitet. Neu ist nur das Lesen; Kapitelmodell, Collector und Ausgabe bleiben
+unberührt. Der Kopf der Liste nennt Art und Status des Auftrags, Kurztext, Eigentümer, Datum,
+Zielsystem und die Zahl der Aufgaben darunter.
+
+Drei Eigenheiten des Korrektursystems machen die Arbeit aus:
+
+**Die Objekte hängen an den Aufgaben, nicht am Auftrag.** `E071` zum Auftrag selbst ist
+regelmäßig leer; was transportiert wird, steht in den Aufgaben darunter (`E070-STRKORR`).
+Gelesen werden deshalb beide Ebenen. Wird eine Aufgabe als Startpunkt angegeben, bleibt es bei
+ihr, und der Kopf nennt den Auftrag darüber.
+
+**`E071` mischt ganze Objekte mit Teilen davon.** Neben `R3TR` stehen `LIMU`-Zeilen für eine
+Methode, ein Include, eine Tabellendefinition. Dokumentiert wird das Objekt, zu dem der Teil
+gehört; `TR_CHECK_TYPE` liefert dessen Katalogschlüssel — dieselbe Übersetzung, die das
+Korrektursystem selbst benutzt. Entdoppelt wird danach, sonst stünde dieselbe Klasse mehrfach
+im Dokument. Trotz seines Kurztexts *„generate TADIR and TLOCK"* legt der Baustein nichts an:
+seine Quelle enthält keinen einzigen schreibenden Zugriff.
+
+**Nicht alles im Auftrag ist ein dokumentierbares Objekt.** Vier Fälle werden vorweg genannt
+statt stillschweigend übergangen:
+
+| Fall | Erkannt an | Vermerk |
+|---|---|---|
+| Customizing | Objekttyp `TABU`, `CDAT`, `TDAT`, `VDAT`, `TLOGO` | Tabelle und Zahl der Schlüssel, Verweis auf den IMG-Report |
+| Löschung | `E071-OBJFUNC = 'D'` | *Löschung* |
+| kein Katalogobjekt | `TR_CHECK_TYPE` liefert keinen `TADIR`-Schlüssel | *kein Katalogobjekt* |
+| Objekt fehlt | kein aktiver `TADIR`-Satz | *im System nicht vorhanden* |
+
+Zwei Fallen stecken in `OBJFUNC` und `E071K`, beide an echten Aufträgen aufgefallen:
+
+- **`OBJFUNC = 'K'` ist keine Löschung**, sondern laut Domäne *„Objektschlüssel gemäß
+  Einträgen in der Schlüsselliste"* — der Normalfall jedes Customizing-Eintrags. Nur `'D'`
+  heißt gelöscht, `'M'` heißt *löschen und neu anlegen* und reist mit.
+- **Die Schlüssel stehen in `E071K` unter dem Tabellennamen.** Bei einem Sammeleintrag wie
+  `CDAT APPL_LOG` sind das die einzelnen Tabellen (`BALOBJ`, `BALSUB` …), die über
+  `MASTERNAME` auf den Sammeleintrag zeigen. Wer nur über `OBJNAME` zählt, meldet null
+  Schlüssel, wo vier sind.
+
+Ein freigegebener Auftrag dokumentiert, was drin **war**; ein änderbarer, was gerade drin
+**ist**. Letzteres steht als Hinweis im Kopf — sonst liest sich beides gleich.
 
 ### 4.2 Selektionsbild
 
@@ -1648,6 +1697,7 @@ Hinzugekommen sind zwei Zugriffe je Objekt: die Feldverwendungen sind ein zweite
 | 7s | Textelemente und Objektdokumentation je Sprache übertragen; gelöschte Katalogeinträge übergehen | erledigt |
 | 7t | Import: Objekte umbenennen und abwaehlen (`P_IREN`, Spalte Uebergehen) | erledigt |
 | 7u | Testlauf: Quelltextvergleich alt/neu, farbig im Protokoll | erledigt |
+| 7v | Startpunkt TR: Objektliste eines Transportauftrags samt Aufgaben | erledigt |
 | 8 | Markdown-Renderer | offen |
 | 9 | Anzeigen ohne Anlegen | offen |
 | 10 | BAL-Protokoll, `S_DEVELOP` | offen |

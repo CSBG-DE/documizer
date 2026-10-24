@@ -667,18 +667,20 @@
               <tr><td><code>C</code></td><td>Klasse / Interface</td><td><code>D</code></td><td>Datenelement</td></tr>
               <tr><td><code>FF</code></td><td>Funktionsbaustein</td><td><code>DO</code></td><td>Domäne</td></tr>
               <tr><td><code>F</code></td><td>Funktionsgruppe</td><td><code>W</code></td><td>CDS View</td></tr>
-              <tr><td><code>AL</code></td><td>Arbeitsliste aus Fehlliste</td><td colspan="2">weitere: <code>MX</code>, <code>BD</code>, <code>SD</code>, <code>SB</code>, <code>IS</code>, <code>IT</code>, <code>U5</code></td></tr>
+              <tr><td><code>TR</code></td><td>Transportauftrag / Aufgabe</td><td><code>AL</code></td><td>Arbeitsliste aus Fehlliste</td></tr>
+              <tr><td colspan="4">weitere: <code>MX</code>, <code>BD</code>, <code>SD</code>, <code>SB</code>, <code>IS</code>, <code>IT</code>, <code>U5</code>, <code>SF</code>, <code>AF</code>, <code>AI</code></td></tr>
             </tbody>
           </table>
         </div>
         <p>
-          Ein Code fällt aus der Reihe: <code>AL</code> benennt kein Objekt, sondern eine
-          <b>Liste</b> davon — die Fehlliste, die der IMG-Report im Zielsystem geschrieben hat
-          (siehe <a href="#bcset">BC-Sets &amp; Fehlliste</a>). Der Startpunkt steht dann in
-          einer Datei, nicht im Namensfeld; jedes Objekt der Liste wird ein eigenes Kapitel.
-          Der Kapitelaufbau ist deshalb nicht mehr fest verdrahtet: bei <em>n</em> Startobjekten
-          sind es die Kapitel 1 bis <em>n</em>, danach <em>n+1</em> für die verwendeten und
-          <em>n+2</em> für die verwendenden Objekte.
+          Zwei Codes fallen aus der Reihe, weil sie kein Objekt benennen, sondern eine
+          <b>Liste</b> davon. <code>AL</code> meint die Fehlliste, die der IMG-Report im
+          Zielsystem geschrieben hat (siehe <a href="#bcset">BC-Sets &amp; Fehlliste</a>); der
+          Startpunkt steht dann in einer Datei, nicht im Namensfeld. <code>TR</code> meint einen
+          Transportauftrag — dazu gleich mehr. In beiden Fällen wird jedes Objekt der Liste ein
+          eigenes Kapitel. Der Kapitelaufbau ist deshalb nicht mehr fest verdrahtet: bei
+          <em>n</em> Startobjekten sind es die Kapitel 1 bis <em>n</em>, danach <em>n+1</em> für
+          die verwendeten und <em>n+2</em> für die verwendenden Objekte.
         </p>
         <p>
           F4 auf beiden Feldern; der Klartext zum Code steht daneben. Bei <code>C</code>
@@ -688,6 +690,38 @@
           <code>TFTIT</code>, Doku über Dokuklasse <code>FU</code>, Schnittstelle aus
           <code>FUPARAREF</code>, Quelltext aus seinem Include.
         </p>
+
+        <h3>Einen Transportauftrag dokumentieren</h3>
+        <p>
+          Mit <code>TR</code> steht im Namensfeld eine Auftrags- oder Aufgabennummer; die
+          Wertehilfe zeigt die eigenen Aufträge, die neuesten zuerst. Was dabei herauskommt, ist
+          ein Dokument über genau das, was dieser Transport enthält — mit Details, Quelltext und
+          Verwendungen, so wie bei jedem anderen Startpunkt. Der Kopf nennt Art und Status des
+          Auftrags, Kurztext, Eigentümer, Datum, Zielsystem und die Aufgaben darunter.
+        </p>
+        <p>
+          <b>Die Objekte hängen an den Aufgaben, nicht am Auftrag.</b> Die Objektliste eines
+          Auftrags ist regelmäßig leer — transportiert wird, was in den Aufgaben darunter steht.
+          Gelesen werden deshalb beide Ebenen. Wer eine Aufgabe angibt, bekommt sie allein, und
+          der Kopf nennt den Auftrag darüber.
+        </p>
+        <p>
+          <b>Teile werden auf ihr Objekt zurückgeführt.</b> Ein Auftrag führt neben ganzen
+          Objekten auch einzelne Methoden, Includes und Tabellendefinitionen auf. Dokumentiert
+          wird das Objekt, zu dem der Teil gehört, und jedes nur einmal — die Übersetzung
+          übernimmt derselbe Baustein, den das Korrektursystem dafür benutzt.
+        </p>
+        <p>
+          <b>Was kein dokumentierbares Objekt ist, wird vorweg genannt</b> statt stillschweigend
+          übergangen: Customizing-Einträge mit Tabelle und Zahl der Schlüssel und dem Verweis auf
+          den IMG-Report, Löschungen, Einträge ohne Katalogobjekt und Objekte, die es im System
+          nicht mehr gibt.
+        </p>
+        <div class="note">
+          <p><b>Freigegeben oder änderbar.</b> Ein freigegebener Auftrag dokumentiert, was drin
+          <em>war</em>; ein änderbarer, was gerade drin <em>ist</em>. Im zweiten Fall steht das
+          als Hinweis im Kopf — sonst liest sich beides gleich.</p>
+        </div>
 
         <div class="tablewrap">
           <table>

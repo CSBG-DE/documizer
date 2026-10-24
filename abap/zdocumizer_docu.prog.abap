@@ -11,7 +11,13 @@ REPORT zdocumizer_docu.
 * Nach dem Lauf erscheint der Text in SE38 unter Dokumentation und ueber
 * die Sprungmarke im Selektionsbild.
 *
-* Copyright 2026 consiness GmbH
+* Author    Christian Gathmann
+*           gathmann@csbg.de
+*           Designed, specified and validated by Christian Gathmann;
+*           code generated with AI assistance.
+* Source    https://github.com/csbg-de/documizer
+*
+* Copyright 2026 C. Gathmann Computer-System-Beratung GmbH (CSBG)
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -220,7 +226,8 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'F Funktionsgruppe, T Tabelle, V View, D Datenelement, DO Domaene,' ).
     a( iv_f = '=' iv_t = 'W CDS View, MX Metadata Extension, BD Verhaltensdefinition,' ).
     a( iv_f = '=' iv_t = 'SD Service-Definition, SB Service-Binding, IS IDoc-Segmenttyp,' ).
-    a( iv_f = '=' iv_t = 'IT IDoc-Basistyp, U5 UI5-Anwendung, AL Arbeitsliste aus' ).
+    a( iv_f = '=' iv_t = 'IT IDoc-Basistyp, U5 UI5-Anwendung, SF Smart Form, AF Adobe Form,' ).
+    a( iv_f = '=' iv_t = 'AI Formularschnittstelle, TR Transportauftrag, AL Arbeitsliste aus' ).
     a( iv_f = '=' iv_t = 'Fehlliste. Beide Felder haben eine Wertehilfe.' ).
     a( iv_f = 'B1' iv_t = 'Bei einem Paket entsteht die Gliederung Paket, Objekttyp, Objekt. Bei' ).
     a( iv_f = '=' iv_t = 'einem Einzelobjekt steht dieses in Kapitel eins, die verwendeten' ).
@@ -236,6 +243,22 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'Liste wird ein eigenes Kapitel.' ).
     a( iv_f = '=' iv_t = 'Liegt die Fehlliste auf dem Applikationsserver, wird das eigens' ).
     a( iv_f = '=' iv_t = 'angekreuzt; das Kennzeichen gehoert zur Fehlliste, nicht zum Import.' ).
+    a( iv_f = 'B1' iv_t = 'Transportauftrag (Typ TR): im Namensfeld steht die Auftrags- oder' ).
+    a( iv_f = '=' iv_t = 'Aufgabennummer, die Wertehilfe zeigt die eigenen Auftraege. Jedes' ).
+    a( iv_f = '=' iv_t = 'Objekt des Auftrags wird ein eigenes Kapitel; der Kopf nennt Art,' ).
+    a( iv_f = '=' iv_t = 'Status, Kurztext, Eigentuemer, Datum und Zielsystem.' ).
+    a( iv_f = 'B1' iv_t = 'Die Objekte haengen an den Aufgaben, nicht am Auftrag - gelesen' ).
+    a( iv_f = '=' iv_t = 'werden deshalb beide Ebenen. Wer eine Aufgabe angibt, bekommt sie' ).
+    a( iv_f = '=' iv_t = 'allein, und der Kopf nennt den Auftrag darueber.' ).
+    a( iv_f = 'B1' iv_t = 'Ein Auftrag fuehrt neben ganzen Objekten auch Teile davon auf -' ).
+    a( iv_f = '=' iv_t = 'eine Methode, ein Include, eine Tabellendefinition. Dokumentiert' ).
+    a( iv_f = '=' iv_t = 'wird das Objekt, zu dem der Teil gehoert, und jedes nur einmal.' ).
+    a( iv_f = 'B1' iv_t = 'Was kein dokumentierbares Objekt ist, steht vor dem Lauf:' ).
+    a( iv_f = '=' iv_t = 'Customizing-Eintraege mit Tabelle und Zahl der Schluessel - dafuer' ).
+    a( iv_f = '=' iv_t = 'ist der IMG-Report da -, Loeschungen, Eintraege ohne Katalogobjekt' ).
+    a( iv_f = '=' iv_t = 'und Objekte, die es im System nicht mehr gibt.' ).
+    a( iv_f = 'B1' iv_t = 'Ein freigegebener Auftrag dokumentiert, was drin war, ein' ).
+    a( iv_f = '=' iv_t = 'aenderbarer, was gerade drin ist. Im zweiten Fall steht das im Kopf.' ).
 
     a( iv_f = 'AS' iv_t = 'Umfang' ).
     a( iv_f = 'B1' iv_t = 'Objekttyp und Objektname grenzen die Objektliste ein.' ).

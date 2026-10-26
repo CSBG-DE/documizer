@@ -162,6 +162,30 @@ TYPES: BEGIN OF ty_objref,
 TYPES ty_objrefs TYPE STANDARD TABLE OF ty_objref WITH EMPTY KEY.
 TYPES ty_names   TYPE STANDARD TABLE OF sobj_name WITH EMPTY KEY.
 
+* Der Kopf eines Transportauftrags und alles, was darin steht, aber
+* nicht als Objekt dokumentiert wird. Gelesen wird beides von
+* lcl_transport; der Collector traegt es als erstes Kapitel ins
+* Dokument. Deshalb stehen die Typen hier oben und nicht bei der
+* Klasse - der Collector steht im Quelltext vor ihr.
+TYPES: BEGIN OF ty_trhead,
+         trkorr TYPE trkorr,
+         parent TYPE trkorr,
+         func   TYPE string,
+         status TYPE string,
+         target TYPE string,
+         owner  TYPE string,
+         date   TYPE string,
+         text   TYPE string,
+         tasks  TYPE i,
+         closed TYPE abap_bool,
+       END OF ty_trhead.
+TYPES: BEGIN OF ty_trrest,
+         kind TYPE string,
+         name TYPE string,
+         note TYPE string,
+       END OF ty_trrest.
+TYPES ty_trrests TYPE STANDARD TABLE OF ty_trrest WITH EMPTY KEY.
+
 * A line of source at a place of use. With the full-source option every
 * line is collected and HIT marks the ones the object appears in;
 * otherwise only the hits are collected and HIT is always set.
@@ -6616,6 +6640,33 @@ CLASS lcl_renderer_html IMPLEMENTATION.
         CONTINUE.
       ENDIF.
 
+*     Zwei Spalten statt drei: ein Merkmal und sein Wert. So stehen der
+*     Kopf eines Transportauftrags und die Liste dessen, was darin kein
+*     dokumentierbares Objekt ist, im Dokument - eine Feldliste mit
+*     Spalte "Typ / Datenelement" waere dafuer die falsche Tabelle.
+      IF lo_obj->get_type( ) = 'ATTR' OR lo_obj->get_type( ) = 'LIST'.
+        IF lv_cnt = 0.
+          CONTINUE.
+        ENDIF.
+        DATA(lv_c1) = COND string( WHEN lo_obj->get_type( ) = 'ATTR'
+                                   THEN lcl_t=>t( d = 'Merkmal' e = 'Item' )
+                                   ELSE lcl_t=>t( d = 'Eintrag' e = 'Entry' ) ).
+        DATA(lv_c2) = COND string( WHEN lo_obj->get_type( ) = 'ATTR'
+                                   THEN lcl_t=>t( d = 'Wert' e = 'Value' )
+                                   ELSE lcl_t=>t( d = 'Vermerk' e = 'Note' ) ).
+        lv_fold = open_block( iv_label = lo_obj->get_note( )
+                              iv_count = lv_cnt
+                              iv_unit  = lcl_t=>t( d = 'Einträge' e = 'entries' ) ).
+        add( |<table><tr><th>{ esc( lv_c1 ) }</th><th>{ esc( lv_c2 ) }</th></tr>| ).
+        LOOP AT lo_obj->get_fields( ) INTO DATA(ls_at).
+          add( |<tr><td>{ esc( ls_at-name ) }</td>| &&
+               |<td>{ esc( ls_at-rollname ) }</td></tr>| ).
+        ENDLOOP.
+        add( '</table>' ).
+        close_block( lv_fold ).
+        CONTINUE.
+      ENDIF.
+
       IF lv_cnt > 0.
         lv_fold = open_block( iv_label = lo_obj->get_note( )
                               iv_count = lv_cnt
@@ -6676,7 +6727,12 @@ CLASS lcl_collector_dev DEFINITION.
 *               Mehrere Startobjekte statt eines: die Fehlliste aus dem
 *               Zielsystem. Ist die Tabelle gefuellt, tritt sie an die
 *               Stelle von iv_stype/iv_sval.
-                it_start  TYPE ty_objrefs OPTIONAL.
+                it_start  TYPE ty_objrefs OPTIONAL
+*               Beim Startpunkt TR: Kopf des Auftrags und alles, was
+*               darin steht, aber kein dokumentierbares Objekt ist.
+*               Daraus entsteht das erste Kapitel.
+                is_trhead TYPE ty_trhead  OPTIONAL
+                it_trrest TYPE ty_trrests OPTIONAL.
     METHODS get_stat_packages RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_objects  RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_total    RETURNING VALUE(rv) TYPE i.
@@ -6725,6 +6781,11 @@ CLASS lcl_collector_dev DEFINITION.
     DATA mv_def    TYPE abap_bool.
     DATA mv_n_def  TYPE i.
     DATA mt_start  TYPE ty_objrefs.
+    DATA ms_trhead TYPE ty_trhead.
+    DATA mt_trrest TYPE ty_trrests.
+*   Das Auftragskapitel als Kapitel 1 - die Startobjekte beginnen
+*   dann bei 2.
+    METHODS transport_chapter RETURNING VALUE(ro_chapter) TYPE REF TO lcl_chapter.
 
 *   Definition data for the reimport. One method per object type, all of
 *   them reading exactly the structures that the matching DDIF_*_PUT
@@ -7042,6 +7103,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     mv_flang  = iv_flang.
     mv_def    = iv_def.
     mt_start  = it_start.
+    ms_trhead = is_trhead.
+    mt_trrest = it_trrest.
   ENDMETHOD.
 
   METHOD build_title.
@@ -12164,6 +12227,97 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
   ENDMETHOD.
 
+  METHOD transport_chapter.
+
+*   Kapitel 1 beim Startpunkt TR: der Auftrag selbst. Erst damit traegt
+*   das Dokument, woher seine Objekte stammen - Nummer, Art, Status,
+*   Kurztext, Eigentuemer, Zielsystem. Und die Liste dessen, was im
+*   Auftrag steht, aber kein dokumentierbares Objekt ist: sonst sucht
+*   sie jemand spaeter in den Kapiteln.
+*
+*   Das Kapitel traegt keine Definitionsdaten. Ein Import geht darueber
+*   hinweg - er arbeitet die Kapitel ab, die eine Definition haben.
+    DATA lv_title TYPE string.
+
+    lv_title = |{ lcl_t=>t( d = 'Transportauftrag' e = 'Transport request' ) } | &&
+               |{ ms_trhead-trkorr }|.
+    IF ms_trhead-text IS NOT INITIAL.
+      lv_title = |{ lv_title } - { ms_trhead-text }|.
+    ENDIF.
+
+    ro_chapter = NEW lcl_chapter( iv_id    = '1'
+                                  iv_level = 1
+                                  iv_type  = 'TRANSPORT'
+                                  iv_title = lv_title ).
+
+    DATA(lo_head) = NEW lcl_object( iv_type = 'ATTR'
+                                    iv_name = CONV string( ms_trhead-trkorr ) ).
+    lo_head->set_note( lcl_t=>t( d = 'Auftrag' e = 'Request' ) ).
+
+    lo_head->add_field( VALUE ty_field(
+      name     = lcl_t=>t( d = 'Auftrag / Aufgabe' e = 'Request / task' )
+      rollname = CONV string( ms_trhead-trkorr ) ) ).
+    IF ms_trhead-parent IS NOT INITIAL.
+      lo_head->add_field( VALUE ty_field(
+        name     = lcl_t=>t( d = 'Aufgabe zu Auftrag' e = 'Task of request' )
+        rollname = CONV string( ms_trhead-parent ) ) ).
+    ENDIF.
+    lo_head->add_field( VALUE ty_field(
+      name     = lcl_t=>t( d = 'Art' e = 'Kind' )
+      rollname = ms_trhead-func ) ).
+    lo_head->add_field( VALUE ty_field(
+      name     = lcl_t=>t( d = 'Status' e = 'Status' )
+      rollname = ms_trhead-status ) ).
+    IF ms_trhead-text IS NOT INITIAL.
+      lo_head->add_field( VALUE ty_field(
+        name     = lcl_t=>t( d = 'Kurztext' e = 'Short text' )
+        rollname = ms_trhead-text ) ).
+    ENDIF.
+    lo_head->add_field( VALUE ty_field(
+      name     = lcl_t=>t( d = 'Eigentuemer' e = 'Owner' )
+      rollname = ms_trhead-owner ) ).
+    lo_head->add_field( VALUE ty_field(
+      name     = lcl_t=>t( d = 'Datum' e = 'Date' )
+      rollname = ms_trhead-date ) ).
+    IF ms_trhead-target IS NOT INITIAL.
+      lo_head->add_field( VALUE ty_field(
+        name     = lcl_t=>t( d = 'Zielsystem' e = 'Target system' )
+        rollname = CONV string( ms_trhead-target ) ) ).
+    ENDIF.
+    IF ms_trhead-tasks > 0.
+      lo_head->add_field( VALUE ty_field(
+        name     = lcl_t=>t( d = 'Aufgaben darunter' e = 'Tasks below it' )
+        rollname = |{ ms_trhead-tasks }| ) ).
+    ENDIF.
+*   Ein freigegebener Auftrag dokumentiert, was drin war; ein
+*   aenderbarer, was gerade drin ist. Das gehoert ins Dokument, nicht
+*   nur in die Listausgabe des Laufs.
+    lo_head->add_field( VALUE ty_field(
+      name     = lcl_t=>t( d = 'Dokumentierter Stand' e = 'Documented state' )
+      rollname = COND string(
+        WHEN ms_trhead-closed = abap_true
+        THEN lcl_t=>t( d = 'freigegeben - Inhalt zum Zeitpunkt der Freigabe'
+                       e = 'released - content as of the release' )
+        ELSE lcl_t=>t( d = 'aenderbar - Inhalt zum Zeitpunkt dieses Laufs'
+                       e = 'modifiable - content as of this run' ) ) ) ).
+    ro_chapter->add_object( lo_head ).
+
+    IF mt_trrest IS NOT INITIAL.
+      DATA(lo_rest) = NEW lcl_object( iv_type = 'LIST'
+                                      iv_name = CONV string( ms_trhead-trkorr ) ).
+      lo_rest->set_note( lcl_t=>t( d = 'Nicht als Objekt dokumentiert'
+                                   e = 'Not documented as an object' ) ).
+      LOOP AT mt_trrest INTO DATA(ls_rest).
+        lo_rest->add_field( VALUE ty_field(
+          name     = condense( |{ ls_rest-kind } { ls_rest-name }| )
+          rollname = ls_rest-note ) ).
+      ENDLOOP.
+      lo_rest->set_row_count( lines( mt_trrest ) ).
+      ro_chapter->add_object( lo_rest ).
+    ENDIF.
+
+  ENDMETHOD.
+
   METHOD collect_single.
 
 *   Die ersten Kapitel sind die Objekte, nach denen gefragt wurde -
@@ -12188,6 +12342,14 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     DATA lt_open  TYPE ty_objrefs.
     DATA lv_depth TYPE i.
     DATA lv_sno   TYPE i.
+
+*   Beim Startpunkt TR steht der Auftrag selbst in Kapitel 1: ohne ihn
+*   waere das Dokument eine Liste von Objekten, der man nicht ansieht,
+*   woher sie stammt. Die Startobjekte beginnen dann bei 2.
+    IF ms_trhead-trkorr IS NOT INITIAL.
+      co_document->add_chapter( transport_chapter( ) ).
+      lv_sno = 1.
+    ENDIF.
 
     LOOP AT lt_start INTO DATA(ls_start).
 
@@ -12219,7 +12381,11 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
     ENDLOOP.
 
-    IF lv_sno = 0.
+*   Ohne Startobjekt gibt es nichts zu gruppieren. Beim Startpunkt TR
+*   steht die 1 schon fuer den Auftrag - dann zaehlt erst ab 2 ein
+*   Objekt.
+    IF ( ms_trhead-trkorr IS INITIAL AND lv_sno = 0 )
+      OR ( ms_trhead-trkorr IS NOT INITIAL AND lv_sno <= 1 ).
       RETURN.
     ENDIF.
 
@@ -13837,32 +14003,13 @@ ENDCLASS.
 *----------------------------------------------------------------------*
 CLASS lcl_transport DEFINITION.
   PUBLIC SECTION.
-    TYPES: BEGIN OF ty_head,
-             trkorr TYPE trkorr,
-             parent TYPE trkorr,
-             func   TYPE string,
-             status TYPE string,
-             target TYPE string,
-             owner  TYPE string,
-             date   TYPE string,
-             text   TYPE string,
-             tasks  TYPE i,
-             closed TYPE abap_bool,
-           END OF ty_head.
-*   Alles, was im Auftrag steht, aber nicht als Objekt dokumentiert
-*   wird - mit dem Grund.
-    TYPES: BEGIN OF ty_rest,
-             kind TYPE string,
-             name TYPE string,
-             note TYPE string,
-           END OF ty_rest.
-    TYPES ty_rests TYPE STANDARD TABLE OF ty_rest WITH EMPTY KEY.
-
+*   Kopf und Nicht-Objekte stehen als ty_trhead / ty_trrests oben bei
+*   den globalen Typen - der Collector braucht sie ebenfalls.
     CLASS-METHODS read
       IMPORTING iv_trkorr TYPE clike
-      EXPORTING es_head   TYPE ty_head
+      EXPORTING es_head   TYPE ty_trhead
                 et_objs   TYPE ty_objrefs
-                et_rest   TYPE ty_rests
+                et_rest   TYPE ty_trrests
                 ev_error  TYPE string.
 
   PRIVATE SECTION.
@@ -13968,7 +14115,7 @@ CLASS lcl_transport IMPLEMENTATION.
 *     Customizing-Eintrags, 'M' fuer "Loeschen und Neuanlegen auf der
 *     Datenbank" - das Objekt reist also mit.
       IF ls_e-objfunc = 'D'.
-        APPEND VALUE ty_rest( kind = lv_kind
+        APPEND VALUE ty_trrest( kind = lv_kind
                               name = ls_e-obj_name
                               note = lcl_t=>ui( d = `Loeschung`
                                                 e = `deletion` ) ) TO et_rest.
@@ -13987,7 +14134,7 @@ CLASS lcl_transport IMPLEMENTATION.
         SELECT COUNT(*) FROM e071k
           WHERE trkorr = @ls_e-trkorr
             AND ( objname = @ls_e-obj_name OR mastername = @ls_e-obj_name ).
-        APPEND VALUE ty_rest(
+        APPEND VALUE ty_trrest(
           kind = lv_kind
           name = ls_e-obj_name
           note = |{ lcl_t=>ui( d = `Customizing, ` e = `customizing, ` ) }| &&
@@ -14009,7 +14156,7 @@ CLASS lcl_transport IMPLEMENTATION.
                   we_tadir  = ls_tadir.
 
       IF ls_tadir-object IS INITIAL OR ls_tadir-obj_name IS INITIAL.
-        APPEND VALUE ty_rest( kind = lv_kind
+        APPEND VALUE ty_trrest( kind = lv_kind
                               name = ls_e-obj_name
                               note = lcl_t=>ui( d = `kein Katalogobjekt`
                                                 e = `no catalog object` ) ) TO et_rest.
@@ -14023,7 +14170,7 @@ CLASS lcl_transport IMPLEMENTATION.
         WHERE pgmid = 'R3TR' AND object = @ls_tadir-object
           AND obj_name = @ls_tadir-obj_name AND delflag = @abap_false.
       IF sy-subrc <> 0.
-        APPEND VALUE ty_rest(
+        APPEND VALUE ty_trrest(
           kind = condense( |R3TR { ls_tadir-object }| )
           name = ls_tadir-obj_name
           note = lcl_t=>ui( d = `im System nicht vorhanden`
@@ -14160,8 +14307,8 @@ START-OF-SELECTION.
 * Beim Startpunkt-Typ TR kommen die Objekte aus dem Korrektursystem.
 * Was im Auftrag steht, aber kein dokumentierbares Objekt ist, wird
 * vorweg genannt - sonst sucht es jemand spaeter im Dokument.
-  DATA ls_trhead TYPE lcl_transport=>ty_head.
-  DATA lt_trrest TYPE lcl_transport=>ty_rests.
+  DATA ls_trhead TYPE ty_trhead.
+  DATA lt_trrest TYPE ty_trrests.
   IF p_stype = 'TR'.
     DATA lv_trerr TYPE string.
     lcl_transport=>read( EXPORTING iv_trkorr = p_sval
@@ -14238,7 +14385,9 @@ START-OF-SELECTION.
                                               iv_fsrc   = p_fsrc
                                               iv_udep   = p_udep
                                               iv_def    = p_def
-                                              it_start  = lt_start ).
+                                              it_start  = lt_start
+                                              is_trhead = ls_trhead
+                                              it_trrest = lt_trrest ).
 
   DATA lo_coll TYPE REF TO lif_docu_collector.
   lo_coll = lo_collector.

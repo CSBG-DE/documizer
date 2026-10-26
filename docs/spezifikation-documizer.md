@@ -433,6 +433,18 @@ Pseudotyp `FUNC`: Kurztext aus `TFTIT`, Doku über Dokuklasse `FU`, Schnittstell
 
 ### 4.1a Einen Transportauftrag dokumentieren (`TR`)
 
+**Der Auftrag steht in Kapitel 1**, die Startobjekte beginnen bei 2. Das Kapitel trägt zwei
+Tabellen: den Kopf des Auftrags — Nummer, übergeordneter Auftrag, Art, Status, Kurztext,
+Eigentümer, Datum, Zielsystem, Zahl der Aufgaben und die Angabe, ob der dokumentierte Stand der
+freigegebene oder der von jetzt ist — und die Liste dessen, was im Auftrag steht, aber kein
+dokumentierbares Objekt ist. Ohne dieses Kapitel wäre das Dokument eine Liste von Objekten,
+der man nicht ansieht, woher sie stammt.
+
+Das Kapitel trägt **keine** Definitionsdaten; ein Import geht darüber hinweg, weil er die
+Kapitel abarbeitet, die eine Definition haben. Für die beiden zweispaltigen Tabellen kennt der
+HTML-Renderer die Objektarten `ATTR` (Merkmal / Wert) und `LIST` (Eintrag / Vermerk) — eine
+Feldliste mit der Spalte *Typ / Datenelement* wäre dafür die falsche Tabelle.
+
 Ein Auftrag ist nichts anderes als eine Liste aus Objekttyp und Name — genau das, was `AL`
 schon verarbeitet. Neu ist nur das Lesen; Kapitelmodell, Collector und Ausgabe bleiben
 unberührt. Der Kopf der Liste nennt Art und Status des Auftrags, Kurztext, Eigentümer, Datum,

@@ -392,7 +392,7 @@ const dev = [
   ], [900, 3919, 900, 3919]),
   P('Zwei Codes benennen kein Objekt, sondern eine Liste davon: `AL` die Fehlliste aus dem Zielsystem und `TR` einen Transportauftrag. Jedes Objekt der Liste wird ein eigenes Kapitel.'),
   H2('Einen Transportauftrag dokumentieren'),
-  P('Mit `TR` steht im Namensfeld eine Auftrags- oder Aufgabennummer; die Wertehilfe zeigt die eigenen Aufträge, die neuesten zuerst. Der Kopf des Laufs nennt Art und Status, Kurztext, Eigentümer, Datum, Zielsystem und die Aufgaben darunter. Drei Eigenheiten des Korrektursystems nimmt der Report Ihnen ab:'),
+  P('Mit `TR` steht im Namensfeld eine Auftrags- oder Aufgabennummer; die Wertehilfe zeigt die eigenen Aufträge, die neuesten zuerst. **Der Auftrag selbst steht in Kapitel 1** — mit Nummer, Art, Status, Kurztext, Eigentümer, Datum, Zielsystem und der Zahl der Aufgaben; die Objekte beginnen bei 2. Drei Eigenheiten des Korrektursystems nimmt der Report Ihnen ab:'),
   B('**Die Objekte hängen an den Aufgaben, nicht am Auftrag.** Die Objektliste eines Auftrags ist regelmäßig leer — transportiert wird, was in den Aufgaben darunter steht. Gelesen werden beide Ebenen.'),
   B('**Teile werden auf ihr Objekt zurückgeführt.** Ein Auftrag führt neben ganzen Objekten auch einzelne Methoden, Includes und Tabellendefinitionen auf. Dokumentiert wird das Objekt, zu dem der Teil gehört, und jedes nur einmal.'),
   B('**Was kein dokumentierbares Objekt ist, wird vorweg genannt:** Customizing-Einträge mit Tabelle und Zahl der Schlüssel samt Verweis auf den IMG-Report, Löschungen, Einträge ohne Katalogobjekt und Objekte, die es im System nicht mehr gibt.'),

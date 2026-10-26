@@ -915,8 +915,14 @@ XML file (PC | app server) ▶ parser ▶ model with &lt;definition&gt; ▶ impo
           With <code>TR</code> the name field takes a request or task number; the value help shows
           your own requests, the most recent first. What comes out is a document about exactly
           what this transport contains — with details, source code and where-used lists, like any
-          other start point. The header names the kind and status of the request, its short text,
-          owner, date, target system and the tasks below it.
+          other start point.
+        </p>
+        <p>
+          <b>The request itself is chapter 1</b>, the objects start at 2. It carries the number,
+          kind, status, short text, owner, date, target system and the number of tasks — and below
+          that the list of what is in the request but is not a documentable object. Without that
+          chapter the document would be a list of objects with no sign of where it came from. An
+          import passes over the chapter: it carries no definition data.
         </p>
         <p>
           <b>The objects hang off the tasks, not the request.</b> A request's own object list is

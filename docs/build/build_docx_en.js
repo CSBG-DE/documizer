@@ -393,7 +393,7 @@ const dev = [
   ], [900, 3919, 900, 3919]),
   P('Two codes name no object but a list of them: `AL` the list of gaps from the target system and `TR` a transport request. Every object in the list becomes a chapter of its own.'),
   H2('Documenting a transport request'),
-  P('With `TR` the name field takes a request or task number; the value help shows your own requests, the most recent first. The header of the run names kind and status, short text, owner, date, target system and the tasks below it. Three peculiarities of the correction system are taken off your hands:'),
+  P('With `TR` the name field takes a request or task number; the value help shows your own requests, the most recent first. **The request itself is chapter 1** — with its number, kind, status, short text, owner, date, target system and the number of tasks; the objects start at 2. Three peculiarities of the correction system are taken off your hands:'),
   B('**The objects hang off the tasks, not the request.** A request’s own object list is regularly empty — what travels sits in the tasks below it. Both levels are read.'),
   B('**Parts are rolled up to their object.** Besides whole objects a request also lists single methods, includes and table definitions. What gets documented is the object the part belongs to, and each one only once.'),
   B('**Whatever is not a documentable object is named up front:** customizing entries with their table and number of keys plus a pointer to the IMG report, deletions, entries without a catalog object, and objects that no longer exist in the system.'),

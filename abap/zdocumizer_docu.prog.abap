@@ -245,8 +245,13 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'angekreuzt; das Kennzeichen gehoert zur Fehlliste, nicht zum Import.' ).
     a( iv_f = 'B1' iv_t = 'Transportauftrag (Typ TR): im Namensfeld steht die Auftrags- oder' ).
     a( iv_f = '=' iv_t = 'Aufgabennummer, die Wertehilfe zeigt die eigenen Auftraege. Jedes' ).
-    a( iv_f = '=' iv_t = 'Objekt des Auftrags wird ein eigenes Kapitel; der Kopf nennt Art,' ).
-    a( iv_f = '=' iv_t = 'Status, Kurztext, Eigentuemer, Datum und Zielsystem.' ).
+    a( iv_f = '=' iv_t = 'Objekt des Auftrags wird ein eigenes Kapitel.' ).
+    a( iv_f = 'B1' iv_t = 'Der Auftrag selbst steht in Kapitel 1, die Objekte beginnen bei 2.' ).
+    a( iv_f = '=' iv_t = 'Dort stehen Nummer, Art, Status, Kurztext, Eigentuemer, Datum,' ).
+    a( iv_f = '=' iv_t = 'Zielsystem und die Zahl der Aufgaben - und darunter die Liste dessen,' ).
+    a( iv_f = '=' iv_t = 'was im Auftrag steht, aber kein dokumentierbares Objekt ist. Ein' ).
+    a( iv_f = '=' iv_t = 'Import geht darueber hinweg: das Kapitel traegt keine' ).
+    a( iv_f = '=' iv_t = 'Definitionsdaten.' ).
     a( iv_f = 'B1' iv_t = 'Die Objekte haengen an den Aufgaben, nicht am Auftrag - gelesen' ).
     a( iv_f = '=' iv_t = 'werden deshalb beide Ebenen. Wer eine Aufgabe angibt, bekommt sie' ).
     a( iv_f = '=' iv_t = 'allein, und der Kopf nennt den Auftrag darueber.' ).

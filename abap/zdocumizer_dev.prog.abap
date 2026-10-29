@@ -7050,6 +7050,10 @@ CLASS lcl_collector_dev DEFINITION.
     DATA mt_trkorr TYPE ty_trkorrs.
     DATA mv_trver  TYPE abap_bool.
     DATA mv_n_ver  TYPE i.
+*   Was beim Versionsvergleich je Teil herauskam - auch wenn es nichts
+*   zu vergleichen gab. Ein Objekt ohne Vergleich soll nicht
+*   stillschweigend fehlen, sondern den Grund nennen.
+    DATA mt_versum TYPE ty_trrests.
 *   Haengt an das Kapitel eines Objekts die Aenderungen gegenueber der
 *   Vorgaengerversion - Teil fuer Teil.
     METHODS version_diff
@@ -12517,12 +12521,28 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     DATA lt_new TYPE string_table.
     DATA lv_ref TYPE string.
 
-    LOOP AT lcl_version=>parts( iv_type = iv_type iv_name = iv_name ) INTO DATA(ls_part).
+    DATA(lt_parts) = lcl_version=>parts( iv_type = iv_type iv_name = iv_name ).
+    IF lt_parts IS INITIAL.
+      APPEND VALUE ty_trrest(
+        kind = CONV string( iv_type )
+        name = CONV string( iv_name )
+        note = lcl_t=>ui( d = `Objektart ohne Versionsverwaltung`
+                          e = `object type without version management` ) ) TO mt_versum.
+      RETURN.
+    ENDIF.
+
+    LOOP AT lt_parts INTO DATA(ls_part).
 
       CLEAR: lt_old, lt_new, lv_ref.
       DATA(lt_vers) = lcl_version=>list( iv_objtype = ls_part-objtype
                                          iv_objname = ls_part-objname ).
+      DATA(lv_what) = condense( |{ iv_name } { ls_part-label }| ).
       IF lt_vers IS INITIAL.
+        APPEND VALUE ty_trrest(
+          kind = CONV string( ls_part-objtype )
+          name = lv_what
+          note = lcl_t=>ui( d = `keine Versionen vorhanden`
+                            e = `no versions present` ) ) TO mt_versum.
         CONTINUE.
       ENDIF.
 
@@ -12576,6 +12596,11 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       ENDIF.
       IF ls_prev-versno IS INITIAL.
 *       Davor gab es nichts - der erste Transport dieses Teils.
+        APPEND VALUE ty_trrest(
+          kind = CONV string( ls_part-objtype )
+          name = lv_what
+          note = lcl_t=>ui( d = `keine abgelegte Vorgaengerversion`
+                            e = `no stored predecessor version` ) ) TO mt_versum.
         CONTINUE.
       ENDIF.
 
@@ -12583,6 +12608,11 @@ CLASS lcl_collector_dev IMPLEMENTATION.
                                     iv_objname = ls_part-objname
                                     iv_versno  = ls_prev-versno ).
       IF lt_old IS INITIAL AND lt_new IS INITIAL.
+        APPEND VALUE ty_trrest(
+          kind = CONV string( ls_part-objtype )
+          name = lv_what
+          note = lcl_t=>ui( d = `Inhalt nicht lesbar`
+                            e = `content cannot be read` ) ) TO mt_versum.
         CONTINUE.
       ENDIF.
 
@@ -12597,6 +12627,12 @@ CLASS lcl_collector_dev IMPLEMENTATION.
                                    ev_del  = lv_del
                                    ev_cut  = lv_cut ).
       IF lv_add = 0 AND lv_del = 0.
+        APPEND VALUE ty_trrest(
+          kind = CONV string( ls_part-objtype )
+          name = lv_what
+          note = |{ lcl_t=>ui( d = `unveraendert gegenueber` e = `unchanged against` ) } | &&
+                 |{ COND string( WHEN ls_prev-korrnum IS NOT INITIAL THEN ls_prev-korrnum
+                                 ELSE lcl_t=>ui( d = `der Vorversion` e = `the previous version` ) ) }| ) TO mt_versum.
         CONTINUE.
       ENDIF.
 
@@ -12636,6 +12672,12 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       ENDIF.
       io_chapter->add_object( lo_diff ).
       mv_n_ver = mv_n_ver + 1.
+      APPEND VALUE ty_trrest(
+        kind = CONV string( ls_part-objtype )
+        name = lv_what
+        note = |+{ lv_add } / -{ lv_del } { lcl_t=>ui( d = `Zeilen gegenueber` e = `lines against` ) } | &&
+               |{ COND string( WHEN ls_prev-korrnum IS NOT INITIAL THEN ls_prev-korrnum
+                               ELSE lcl_t=>ui( d = `der Vorversion` e = `the previous version` ) ) }| ) TO mt_versum.
 
     ENDLOOP.
 
@@ -12760,8 +12802,10 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *   Beim Startpunkt TR steht der Auftrag selbst in Kapitel 1: ohne ihn
 *   waere das Dokument eine Liste von Objekten, der man nicht ansieht,
 *   woher sie stammt. Die Startobjekte beginnen dann bei 2.
+    DATA lo_trchap TYPE REF TO lcl_chapter.
     IF ms_trhead-trkorr IS NOT INITIAL.
-      co_document->add_chapter( transport_chapter( ) ).
+      lo_trchap = transport_chapter( ).
+      co_document->add_chapter( lo_trchap ).
       lv_sno = 1.
     ENDIF.
 
@@ -12802,6 +12846,24 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       ENDIF.
 
     ENDLOOP.
+
+*   Der Versionsvergleich bekommt eine Uebersicht im Kapitel des
+*   Auftrags: je Teil eine Zeile, auch wenn es nichts zu vergleichen
+*   gab. Sonst sucht man einen Block, den es aus gutem Grund nicht
+*   gibt - und weiss nicht, welcher Grund das ist.
+    IF lo_trchap IS BOUND AND mt_versum IS NOT INITIAL.
+      DATA(lo_vsum) = NEW lcl_object( iv_type = 'LIST'
+                                      iv_name = CONV string( ms_trhead-trkorr ) ).
+      lo_vsum->set_note( lcl_t=>t( d = 'Vergleich mit der Vorgaengerversion'
+                                   e = 'Comparison with the previous version' ) ).
+      SORT mt_versum BY name.
+      LOOP AT mt_versum INTO DATA(ls_vs).
+        lo_vsum->add_field( VALUE ty_field( name     = ls_vs-name
+                                            rollname = ls_vs-note ) ).
+      ENDLOOP.
+      lo_vsum->set_row_count( lines( mt_versum ) ).
+      lo_trchap->add_object( lo_vsum ).
+    ENDIF.
 
 *   Ohne Startobjekt gibt es nichts zu gruppieren. Beim Startpunkt TR
 *   steht die 1 schon fuer den Auftrag - dann zaehlt erst ab 2 ein

@@ -6320,7 +6320,7 @@ INITIALIZATION.
     gv_tasrv = 'Fehlliste liegt auf Appl.-Server'.
     gv_trec  = 'Unterpakete rekursiv (Paket)'.
     gv_tloc  = 'lokale Pakete einbeziehen'.
-    gv_tvers = 'Aenderungen zur Vorversion (TR)'.
+    gv_tvers = 'Aenderungen zur Vorversion'.
     gv_tlang = 'Ausgabesprache'.
     gv_tfalb = 'Ersatzsprache verwenden'.
     gv_tflng = 'Ersatzsprache'.
@@ -6382,7 +6382,7 @@ INITIALIZATION.
     gv_tasrv = 'Request list is on the app server'.
     gv_trec  = 'Include subpackages (package)'.
     gv_tloc  = 'Include local packages'.
-    gv_tvers = 'Changes vs. previous version (TR)'.
+    gv_tvers = 'Changes vs. previous version'.
     gv_tlang = 'Output language'.
     gv_tfalb = 'Use fallback language'.
     gv_tflng = 'Fallback'.
@@ -13558,6 +13558,16 @@ FORM screen_mode.
 
   LOOP AT SCREEN.
     CASE screen-name.
+*     Der Versionsvergleich ergibt nur bei einem Transport einen Sinn -
+*     sonst gibt es keinen Vorgaenger, gegen den sich vergleichen
+*     liesse. Statt ihn grau zu zeigen, kommt er ganz weg.
+      WHEN 'P_TRVER' OR 'GV_TVERS'.
+        IF p_imp = abap_false AND p_stype = 'TR'.
+          screen-active = 1.
+        ELSE.
+          screen-active = 0.
+        ENDIF.
+        MODIFY SCREEN.
       WHEN 'P_STYPE' OR 'P_SVAL'.
 *       Only greyed out, never marked required. A required flag is
 *       enforced by the runtime on the next round trip, and the next

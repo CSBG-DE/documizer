@@ -508,12 +508,22 @@ stammt, auch aus einem fremden System.
 - **Die Versionsnummer sagt über das Alter nichts.** `ZDEMODATA_EXCEL_UPLOAD` trägt 00000 vom
   März 2018 und 00001 vom Oktober 2017 — die kleinere Nummer ist die jüngere. Sortiert wird
   nach Datum und Uhrzeit, nie nach Nummer.
-- **Ein Objekt besteht aus mehreren Versionsobjekten.** Eine Klasse aus `CLSD` (Definition),
-  `CPUB`/`CPRO`/`CPRI` (Abschnitte), je Methode einem `METH`-Eintrag und den `CINC`-Includes;
-  eine Funktionsgruppe aus ihren Bausteinen (`FUNC`). Verglichen wird Teil für Teil, jeder mit
-  eigener Überschrift. Welche Teile es gibt, sagt `VRSD` — geraten wird nichts. Bei `METH` und
-  `CINC` steht der auf dreißig Zeichen aufgefüllte Klassenname vorn, danach der Methodenname;
-  darauf prüft der Report, damit `ZCL_A` nicht die Methoden von `ZCL_AB` einsammelt.
+- **Ein Objekt besteht aus mehreren Versionsobjekten.** Eine Klasse aus `CLSD` (Definition), je
+  Methode einem `METH`-Eintrag und den `CINC`-Includes; eine Funktionsgruppe aus ihren Bausteinen
+  (`FUNC`). Verglichen wird Teil für Teil, jeder mit eigener Überschrift. Welche Teile es gibt,
+  sagt `VRSD` — geraten wird nichts. Bei `METH` und `CINC` steht der auf dreißig Zeichen
+  aufgefüllte Klassenname vorn, danach der Methodenname; verglichen werden zwei Zeichenfelder
+  gleicher Länge, nicht Feld gegen Zeichenkette — sonst passt nur ein Klassenname von genau
+  dreißig Zeichen, und bei jedem kürzeren fiele der Vergleich still aus.
+- **Die drei Abschnitte `CPUB`, `CPRO` und `CPRI` bleiben außen vor.** Sie führen in der
+  Versionsverwaltung keinen Text, sondern die Komponenten in SEO-Tabellen — Attribute, Methoden,
+  Ereignisse, Ausnahmen. Eine geänderte Signatur zeigt der Zeilenvergleich deshalb nicht; dafür
+  bräuchte es den Strukturvergleich aus 9.
+- **Die Quelltexttabelle heißt nicht überall gleich.** `REPS`, `METH` und `CINC` liefern sie in
+  `REPOS_TAB`, ein Funktionsbaustein in `UINCL_TAB`, eine Klassendefinition in `PSOURCE`. Weil
+  der Name damit erst zur Laufzeit feststeht, läuft der Aufruf über eine Parametertabelle
+  (`abap_func_parmbind_tab`). Mit festem `REPOS_TAB` für alle kam bei Bausteinen und
+  Klassendefinitionen nichts zurück.
 
 **Die Versionsnummer trennt die beiden Fälle.** Eine Nummer größer null ist eine abgelegte
 Version mit eigenem Inhalt; die Null steht für den **aktiven Stand** im Repository — dort liegt

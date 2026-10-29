@@ -1626,8 +1626,13 @@ CLASS lcl_version IMPLEMENTATION.
 *       Methode.
         DATA lv_like TYPE string.
         lv_like = |{ lv_cls }%|.
+*       Nur die Teile, die Quelltext tragen. Die drei Abschnitte
+*       CPUB, CPRO und CPRI fuehren in der Versionsverwaltung keine
+*       Zeilen, sondern die Komponenten in SEO-Tabellen - Attribute,
+*       Methoden, Ereignisse. Zeilenweise vergleichen laesst sich das
+*       nicht; dafuer braeuchte es den Strukturvergleich.
         SELECT DISTINCT objtype, objname FROM vrsd
-          WHERE objtype IN ( 'CLSD', 'CPUB', 'CPRO', 'CPRI', 'CINC', 'METH' )
+          WHERE objtype IN ( 'CLSD', 'CINC', 'METH' )
             AND objname LIKE @lv_like
           INTO TABLE @DATA(lt_v).
         LOOP AT lt_v INTO DATA(ls_v).
@@ -1663,11 +1668,7 @@ CLASS lcl_version IMPLEMENTATION.
               APPEND VALUE ty_part(
                 objtype = ls_v-objtype
                 objname = ls_v-objname
-                label   = SWITCH string( ls_v-objtype
-                            WHEN 'CLSD' THEN lcl_t=>t( d = 'Definition' e = 'Definition' )
-                            WHEN 'CPUB' THEN lcl_t=>t( d = 'Oeffentlicher Abschnitt' e = 'Public section' )
-                            WHEN 'CPRO' THEN lcl_t=>t( d = 'Geschuetzter Abschnitt' e = 'Protected section' )
-                            ELSE             lcl_t=>t( d = 'Privater Abschnitt' e = 'Private section' ) ) ) TO rt_parts.
+                label   = lcl_t=>t( d = 'Definition' e = 'Definition' ) ) TO rt_parts.
           ENDCASE.
         ENDLOOP.
         SORT rt_parts BY objtype objname.
@@ -1699,26 +1700,55 @@ CLASS lcl_version IMPLEMENTATION.
     DATA lv_fm  TYPE rs38l_fnam.
     DATA lv_nam TYPE vrsd-objname.
     DATA lv_ver TYPE vrsd-versno.
+    DATA lv_tab TYPE abap_parmname.
 
     lv_fm  = |SVRS_GET_VERSION_{ iv_objtype }_40|.
     lv_nam = iv_objname.
     lv_ver = iv_versno.
 
+*   Die Bausteine der Familie haben dieselbe Form, aber nicht denselben
+*   Namen fuer die Quelltexttabelle: ein Report traegt ihn in
+*   REPOS_TAB, ein Funktionsbaustein in UINCL_TAB, eine
+*   Klassendefinition in PSOURCE. Weil der Name damit erst zur Laufzeit
+*   feststeht, laeuft der Aufruf ueber eine Parametertabelle.
+    CASE iv_objtype.
+      WHEN 'FUNC'. lv_tab = 'UINCL_TAB'.
+      WHEN 'CLSD'. lv_tab = 'PSOURCE'.
+      WHEN OTHERS. lv_tab = 'REPOS_TAB'.
+    ENDCASE.
+
+    DATA lt_parm TYPE abap_func_parmbind_tab.
+    DATA ls_parm TYPE abap_func_parmbind.
+    DATA lt_exc  TYPE abap_func_excpbind_tab.
+    DATA ls_exc  TYPE abap_func_excpbind.
+
+    ls_parm-name = 'OBJECT_NAME'.
+    ls_parm-kind = abap_func_exporting.
+    GET REFERENCE OF lv_nam INTO ls_parm-value.
+    INSERT ls_parm INTO TABLE lt_parm.
+    ls_parm-name = 'VERSNO'.
+    ls_parm-kind = abap_func_exporting.
+    GET REFERENCE OF lv_ver INTO ls_parm-value.
+    INSERT ls_parm INTO TABLE lt_parm.
+    ls_parm-name = lv_tab.
+    ls_parm-kind = abap_func_tables.
+    GET REFERENCE OF lt_txt INTO ls_parm-value.
+    INSERT ls_parm INTO TABLE lt_parm.
+
+    ls_exc-name  = 'OTHERS'.
+    ls_exc-value = 4.
+    INSERT ls_exc INTO TABLE lt_exc.
+
     TRY.
         CALL FUNCTION lv_fm
-          EXPORTING  object_name           = lv_nam
-                     versno                = lv_ver
-          TABLES     repos_tab             = lt_txt
-          EXCEPTIONS no_version            = 1
-                     system_failure        = 2
-                     communication_failure = 3
-                     OTHERS                = 4.
+          PARAMETER-TABLE lt_parm
+          EXCEPTION-TABLE lt_exc.
         IF sy-subrc <> 0.
           RETURN.
         ENDIF.
       CATCH cx_root.
-*       Objektart ohne eigenen Baustein - dann gibt es hier nichts zu
-*       vergleichen.
+*       Objektart ohne eigenen Baustein oder ohne diese Tabelle - dann
+*       gibt es hier nichts zu vergleichen.
         RETURN.
     ENDTRY.
 

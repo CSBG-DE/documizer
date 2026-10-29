@@ -185,6 +185,9 @@ TYPES: BEGIN OF ty_trrest,
          note TYPE string,
        END OF ty_trrest.
 TYPES ty_trrests TYPE STANDARD TABLE OF ty_trrest WITH EMPTY KEY.
+* Auftrag und seine Aufgaben - daran erkennt der Versionsvergleich,
+* welche Version dieser Transport bringt.
+TYPES ty_trkorrs TYPE STANDARD TABLE OF trkorr WITH EMPTY KEY.
 
 * A line of source at a place of use. With the full-source option every
 * line is collected and HIT marks the ones the object appears in;
@@ -1520,6 +1523,200 @@ ENDCLASS.
 * vollstaendig umgeschriebenen Block wird die Gruppierung groeber,
 * nicht falsch.
 *----------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*& CLASS lcl_version - die Versionsverwaltung von SAP
+*&---------------------------------------------------------------------*
+* Beim Freigeben eines Auftrags legt SAP je Objekt eine Version an.
+* VRSD fuehrt sie mit der Auftragsnummer, unter der sie entstanden ist.
+* Damit laesst sich zu einem Transport sagen, was sich gegenueber dem
+* vorigen geaendert hat.
+*
+* Zwei Dinge, die man dabei wissen muss:
+*
+*   - Die Versionsnummer sagt ueber das Alter nichts. ZDEMODATA_EXCEL_
+*     UPLOAD traegt 00000 vom Maerz 2018 und 00001 vom Oktober 2017 -
+*     die kleinere Nummer ist die juengere. Sortiert wird nach Datum
+*     und Uhrzeit.
+*   - Ein Objekt besteht aus mehreren Versionsobjekten: eine Klasse aus
+*     Definition, den drei Abschnitten und je Methode einem Eintrag.
+*     Verglichen wird deshalb Teil fuer Teil.
+*
+* Gelesen wird ueber die Bausteinfamilie SVRS_GET_VERSION_<TYP>_40.
+* Alle haben dieselbe Schnittstelle, deshalb genuegt ein dynamischer
+* Aufruf - und ein Typ, den es nicht gibt, bricht den Lauf nicht.
+*----------------------------------------------------------------------*
+CLASS lcl_version DEFINITION.
+  PUBLIC SECTION.
+    TYPES: BEGIN OF ty_ver,
+             objtype TYPE vrsd-objtype,
+             objname TYPE vrsd-objname,
+             versno  TYPE vrsd-versno,
+             korrnum TYPE vrsd-korrnum,
+             datum   TYPE vrsd-datum,
+             zeit    TYPE vrsd-zeit,
+             author  TYPE vrsd-author,
+           END OF ty_ver.
+    TYPES ty_vers TYPE STANDARD TABLE OF ty_ver WITH EMPTY KEY.
+*   Ein Teil eines Objekts in der Versionsverwaltung: Typ, Name und
+*   eine Bezeichnung fuer das Dokument.
+    TYPES: BEGIN OF ty_part,
+             objtype TYPE vrsd-objtype,
+             objname TYPE vrsd-objname,
+             label   TYPE string,
+           END OF ty_part.
+    TYPES ty_parts TYPE STANDARD TABLE OF ty_part WITH EMPTY KEY.
+
+*   Aus welchen Versionsobjekten besteht ein Katalogobjekt?
+    CLASS-METHODS parts
+      IMPORTING iv_type         TYPE clike
+                iv_name         TYPE clike
+      RETURNING VALUE(rt_parts) TYPE ty_parts.
+*   Alle Versionen eines Teils, die juengste zuerst.
+    CLASS-METHODS list
+      IMPORTING iv_objtype     TYPE clike
+                iv_objname     TYPE clike
+      RETURNING VALUE(rt_vers) TYPE ty_vers.
+*   Der Quelltext einer Version.
+    CLASS-METHODS source
+      IMPORTING iv_objtype    TYPE clike
+                iv_objname    TYPE clike
+                iv_versno     TYPE clike
+      RETURNING VALUE(rt_src) TYPE string_table.
+ENDCLASS.
+
+CLASS lcl_version IMPLEMENTATION.
+
+  METHOD parts.
+
+    DATA lv_cls TYPE vrsd-objname.
+    DATA lv_nam TYPE vrsd-objname.
+
+    lv_nam = iv_name.
+
+    CASE iv_type.
+
+      WHEN 'PROG'.
+        APPEND VALUE ty_part( objtype = 'REPS' objname = lv_nam ) TO rt_parts.
+
+      WHEN 'FUGR'.
+*       Eine Funktionsgruppe traegt ihre Versionen je Baustein.
+        DATA lv_pool TYPE progname.
+        lv_pool = |SAPL{ iv_name }|.
+        SELECT funcname FROM tfdir
+          WHERE pname = @lv_pool
+          INTO TABLE @DATA(lt_fb).
+        LOOP AT lt_fb INTO DATA(ls_fb).
+          APPEND VALUE ty_part( objtype = 'FUNC'
+                                objname = ls_fb-funcname
+                                label   = CONV string( ls_fb-funcname ) ) TO rt_parts.
+        ENDLOOP.
+
+      WHEN 'CLAS' OR 'INTF'.
+*       Definition und die drei Abschnitte tragen den Klassennamen,
+*       eine Methode den auf dreissig Zeichen aufgefuellten
+*       Klassennamen und dahinter ihren eigenen. Welche Teile es
+*       wirklich gibt, sagt VRSD - geraten wird nichts.
+        lv_cls = iv_name.
+        DATA lv_like TYPE vrsd-objname.
+        lv_like = |{ lv_cls }%|.
+        SELECT DISTINCT objtype, objname FROM vrsd
+          WHERE objtype IN ( 'CLSD', 'CPUB', 'CPRO', 'CPRI', 'CINC', 'METH' )
+            AND objname LIKE @lv_like
+          INTO TABLE @DATA(lt_v).
+        LOOP AT lt_v INTO DATA(ls_v).
+          CASE ls_v-objtype.
+            WHEN 'METH'.
+*             Nur Methoden genau dieser Klasse: ZCL_A darf ZCL_AB nicht
+*             einsammeln.
+              IF ls_v-objname(30) <> |{ lv_cls WIDTH = 30 }|.
+                CONTINUE.
+              ENDIF.
+              APPEND VALUE ty_part(
+                objtype = ls_v-objtype
+                objname = ls_v-objname
+                label   = |{ lcl_t=>t( d = 'Methode' e = 'Method' ) } | &&
+                          |{ condense( CONV string( ls_v-objname+30 ) ) }| ) TO rt_parts.
+            WHEN 'CINC'.
+              IF ls_v-objname(30) <> |{ lv_cls WIDTH = 30 }|.
+                CONTINUE.
+              ENDIF.
+              APPEND VALUE ty_part( objtype = ls_v-objtype
+                                    objname = ls_v-objname
+                                    label   = CONV string( ls_v-objname+30 ) ) TO rt_parts.
+            WHEN OTHERS.
+              IF ls_v-objname <> lv_cls.
+                CONTINUE.
+              ENDIF.
+              APPEND VALUE ty_part(
+                objtype = ls_v-objtype
+                objname = ls_v-objname
+                label   = SWITCH string( ls_v-objtype
+                            WHEN 'CLSD' THEN lcl_t=>t( d = 'Definition' e = 'Definition' )
+                            WHEN 'CPUB' THEN lcl_t=>t( d = 'Oeffentlicher Abschnitt' e = 'Public section' )
+                            WHEN 'CPRO' THEN lcl_t=>t( d = 'Geschuetzter Abschnitt' e = 'Protected section' )
+                            ELSE             lcl_t=>t( d = 'Privater Abschnitt' e = 'Private section' ) ) ) TO rt_parts.
+          ENDCASE.
+        ENDLOOP.
+        SORT rt_parts BY objtype objname.
+
+    ENDCASE.
+
+  ENDMETHOD.
+
+  METHOD list.
+
+    DATA lv_t TYPE vrsd-objtype.
+    DATA lv_n TYPE vrsd-objname.
+    lv_t = iv_objtype.
+    lv_n = iv_objname.
+
+    SELECT objtype, objname, versno, korrnum, datum, zeit, author
+      FROM vrsd
+      WHERE objtype = @lv_t AND objname = @lv_n AND loekz = @space
+      INTO CORRESPONDING FIELDS OF TABLE @rt_vers.
+
+*   Nach Datum und Uhrzeit, nicht nach Versionsnummer - siehe oben.
+    SORT rt_vers BY datum DESCENDING zeit DESCENDING.
+
+  ENDMETHOD.
+
+  METHOD source.
+
+    DATA lt_txt TYPE STANDARD TABLE OF abaptxt255.
+    DATA lv_fm  TYPE rs38l_fnam.
+    DATA lv_nam TYPE vrsd-objname.
+    DATA lv_ver TYPE vrsd-versno.
+
+    lv_fm  = |SVRS_GET_VERSION_{ iv_objtype }_40|.
+    lv_nam = iv_objname.
+    lv_ver = iv_versno.
+
+    TRY.
+        CALL FUNCTION lv_fm
+          EXPORTING  object_name           = lv_nam
+                     versno                = lv_ver
+          TABLES     repos_tab             = lt_txt
+          EXCEPTIONS no_version            = 1
+                     system_failure        = 2
+                     communication_failure = 3
+                     OTHERS                = 4.
+        IF sy-subrc <> 0.
+          RETURN.
+        ENDIF.
+      CATCH cx_root.
+*       Objektart ohne eigenen Baustein - dann gibt es hier nichts zu
+*       vergleichen.
+        RETURN.
+    ENDTRY.
+
+    LOOP AT lt_txt INTO DATA(ls_txt).
+      APPEND ls_txt-line TO rt_src.
+    ENDLOOP.
+
+  ENDMETHOD.
+
+ENDCLASS.
+
 CLASS lcl_diff DEFINITION.
   PUBLIC SECTION.
     TYPES: BEGIN OF ty_row,
@@ -5879,6 +6076,12 @@ SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE gv_blk1.
     SELECTION-SCREEN COMMENT 1(30) gv_tloc FOR FIELD p_local.
     PARAMETERS p_local AS CHECKBOX.
   SELECTION-SCREEN END OF LINE.
+* Nur beim Startpunkt TR: je Objekt die Aenderungen gegenueber der
+* Vorgaengerversion aus der Versionsverwaltung.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tvers FOR FIELD p_trver.
+    PARAMETERS p_trver AS CHECKBOX.
+  SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b1.
 
 SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE gv_blk2.
@@ -6110,6 +6313,7 @@ INITIALIZATION.
     gv_tasrv = 'Fehlliste liegt auf Appl.-Server'.
     gv_trec  = 'Unterpakete rekursiv (Paket)'.
     gv_tloc  = 'lokale Pakete einbeziehen'.
+    gv_tvers = 'Aenderungen zur Vorversion (TR)'.
     gv_tlang = 'Ausgabesprache'.
     gv_tfalb = 'Ersatzsprache verwenden'.
     gv_tflng = 'Ersatzsprache'.
@@ -6171,6 +6375,7 @@ INITIALIZATION.
     gv_tasrv = 'Request list is on the app server'.
     gv_trec  = 'Include subpackages (package)'.
     gv_tloc  = 'Include local packages'.
+    gv_tvers = 'Changes vs. previous version (TR)'.
     gv_tlang = 'Output language'.
     gv_tfalb = 'Use fallback language'.
     gv_tflng = 'Fallback'.
@@ -6394,6 +6599,15 @@ CLASS lcl_renderer_html IMPLEMENTATION.
     add( 'pre.src{background:#fbfbf5;border:1px solid #ddd;padding:8px;' &&
          'font-family:Consolas,monospace;font-size:11px;overflow-x:auto;' &&
          'white-space:pre}' ).
+*   Der Versionsvergleich: neue Zeilen gruen, entfallene rot, beides
+*   mit zartem Hintergrund, damit es auch im Ausdruck ohne Farbe noch
+*   zu unterscheiden ist.
+    add( 'pre.diff{background:#fbfbf5;border:1px solid #ddd;padding:8px;' &&
+         'font-family:Consolas,monospace;font-size:11px;overflow-x:auto;' &&
+         'white-space:pre}' ).
+    add( 'pre.diff .add{color:#0a6b1f;background:#eefaf0;display:block}' ).
+    add( 'pre.diff .del{color:#a01020;background:#fdeef0;display:block}' ).
+    add( 'pre.diff .gap{color:#999;display:block}' ).
     add( 'details{margin:4px 0}' ).
     add( 'summary{color:#666;font-size:11px;cursor:pointer;' &&
          'padding:2px 0;user-select:none}' ).
@@ -6640,6 +6854,38 @@ CLASS lcl_renderer_html IMPLEMENTATION.
         CONTINUE.
       ENDIF.
 
+*     Der Versionsvergleich: Zeilennummer und Kennzeichen stehen im
+*     Namen, der Text daneben. Eingefaerbt wird nach dem letzten
+*     Zeichen des Namens - das ist das Kennzeichen, das version_diff
+*     dort hingeschrieben hat.
+      IF lo_obj->get_type( ) = 'DIFF'.
+        lv_fold = open_block( iv_label = lo_obj->get_note( )
+                              iv_count = lv_cnt
+                              iv_unit  = lcl_t=>t( d = 'Zeilen' e = 'lines' ) ).
+        add( '<pre class="diff">' ).
+        LOOP AT lo_obj->get_fields( ) INTO DATA(ls_df).
+          DATA(lv_sign) = COND string( WHEN strlen( ls_df-name ) > 0
+                                       THEN substring( val = ls_df-name
+                                                       off = strlen( ls_df-name ) - 1
+                                                       len = 1 )
+                                       ELSE ` ` ).
+          DATA(lv_cls2) = SWITCH string( lv_sign
+                            WHEN '+' THEN 'add'
+                            WHEN '-' THEN 'del'
+                            WHEN '.' THEN 'gap'
+                            ELSE          '' ).
+          IF lv_cls2 IS INITIAL.
+            add( |{ esc( ls_df-name ) } { esc( ls_df-rollname ) }| ).
+          ELSE.
+            add( |<span class="{ lv_cls2 }">{ esc( ls_df-name ) } | &&
+                 |{ esc( ls_df-rollname ) }</span>| ).
+          ENDIF.
+        ENDLOOP.
+        add( '</pre>' ).
+        close_block( lv_fold ).
+        CONTINUE.
+      ENDIF.
+
 *     Zwei Spalten statt drei: ein Merkmal und sein Wert. So stehen der
 *     Kopf eines Transportauftrags und die Liste dessen, was darin kein
 *     dokumentierbares Objekt ist, im Dokument - eine Feldliste mit
@@ -6732,7 +6978,12 @@ CLASS lcl_collector_dev DEFINITION.
 *               darin steht, aber kein dokumentierbares Objekt ist.
 *               Daraus entsteht das erste Kapitel.
                 is_trhead TYPE ty_trhead  OPTIONAL
-                it_trrest TYPE ty_trrests OPTIONAL.
+                it_trrest TYPE ty_trrests OPTIONAL
+*               Versionsvergleich: Auftrag und Aufgaben, aus denen
+*               gelesen wurde, und das Kennzeichen dazu.
+                it_trkorr TYPE ty_trkorrs OPTIONAL
+                iv_trver  TYPE abap_bool  DEFAULT abap_false.
+    METHODS get_stat_versions RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_packages RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_objects  RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_total    RETURNING VALUE(rv) TYPE i.
@@ -6783,6 +7034,15 @@ CLASS lcl_collector_dev DEFINITION.
     DATA mt_start  TYPE ty_objrefs.
     DATA ms_trhead TYPE ty_trhead.
     DATA mt_trrest TYPE ty_trrests.
+    DATA mt_trkorr TYPE ty_trkorrs.
+    DATA mv_trver  TYPE abap_bool.
+    DATA mv_n_ver  TYPE i.
+*   Haengt an das Kapitel eines Objekts die Aenderungen gegenueber der
+*   Vorgaengerversion - Teil fuer Teil.
+    METHODS version_diff
+      IMPORTING iv_type    TYPE clike
+                iv_name    TYPE clike
+                io_chapter TYPE REF TO lcl_chapter.
 *   Das Auftragskapitel als Kapitel 1 - die Startobjekte beginnen
 *   dann bei 2.
     METHODS transport_chapter RETURNING VALUE(ro_chapter) TYPE REF TO lcl_chapter.
@@ -7105,6 +7365,8 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     mt_start  = it_start.
     ms_trhead = is_trhead.
     mt_trrest = it_trrest.
+    mt_trkorr = it_trkorr.
+    mv_trver  = iv_trver.
   ENDMETHOD.
 
   METHOD build_title.
@@ -12227,6 +12489,121 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
   ENDMETHOD.
 
+  METHOD version_diff.
+
+*   Je Teil des Objekts: welche Version bringt dieser Transport, und
+*   welche war davor? Die Version dieses Transports ist die, deren
+*   Auftragsnummer zum Auftrag oder einer seiner Aufgaben gehoert.
+*
+*   Ist der Auftrag noch nicht freigegeben, gibt es fuer ihn noch keine
+*   Version. Dann wird der aktuelle Stand im System gegen die juengste
+*   vorhandene Version gestellt - also das, was dieser Transport
+*   bringen wird, gegen das, was zuletzt transportiert wurde. Vor einer
+*   Abnahme ist genau das die Frage.
+    DATA lt_old TYPE string_table.
+    DATA lt_new TYPE string_table.
+    DATA lv_ref TYPE string.
+
+    LOOP AT lcl_version=>parts( iv_type = iv_type iv_name = iv_name ) INTO DATA(ls_part).
+
+      CLEAR: lt_old, lt_new, lv_ref.
+      DATA(lt_vers) = lcl_version=>list( iv_objtype = ls_part-objtype
+                                         iv_objname = ls_part-objname ).
+      IF lt_vers IS INITIAL.
+        CONTINUE.
+      ENDIF.
+
+      DATA(lv_idx) = 0.
+      LOOP AT lt_vers INTO DATA(ls_v).
+        READ TABLE mt_trkorr TRANSPORTING NO FIELDS
+             WITH KEY table_line = ls_v-korrnum.
+        IF sy-subrc = 0.
+          lv_idx = sy-tabix.
+          EXIT.
+        ENDIF.
+      ENDLOOP.
+
+      IF lv_idx > 0.
+        lt_new = lcl_version=>source( iv_objtype = ls_part-objtype
+                                      iv_objname = ls_part-objname
+                                      iv_versno  = lt_vers[ lv_idx ]-versno ).
+        IF lv_idx >= lines( lt_vers ).
+*         Die aelteste Version ist die dieses Transports - davor war
+*         nichts.
+          CONTINUE.
+        ENDIF.
+        DATA(ls_prev) = lt_vers[ lv_idx + 1 ].
+      ELSE.
+*       Noch nicht freigegeben: aktueller Stand gegen die juengste
+*       Version.
+        lt_new = source_lines( iv_type = CONV trobjtype( iv_type )
+                               iv_name = CONV sobj_name( iv_name ) ).
+        IF ls_part-objtype <> 'REPS' OR iv_type <> 'PROG'.
+*         Nur fuer ein Programm ist der aktuelle Stand dasselbe wie der
+*         Inhalt des Versionsobjekts. Bei einer Klasse waere es die
+*         zusammengesetzte Quelle gegen einen einzelnen Abschnitt - das
+*         verglichen ergaebe Unsinn.
+          CONTINUE.
+        ENDIF.
+        ls_prev = lt_vers[ 1 ].
+      ENDIF.
+
+      lt_old = lcl_version=>source( iv_objtype = ls_part-objtype
+                                    iv_objname = ls_part-objname
+                                    iv_versno  = ls_prev-versno ).
+      IF lt_old IS INITIAL AND lt_new IS INITIAL.
+        CONTINUE.
+      ENDIF.
+
+      DATA lt_rows TYPE lcl_diff=>ty_rows.
+      DATA lv_add  TYPE i.
+      DATA lv_del  TYPE i.
+      DATA lv_cut  TYPE abap_bool.
+      lcl_diff=>compare( EXPORTING it_old  = lt_old
+                                   it_new  = lt_new
+                         IMPORTING et_rows = lt_rows
+                                   ev_add  = lv_add
+                                   ev_del  = lv_del
+                                   ev_cut  = lv_cut ).
+      IF lv_add = 0 AND lv_del = 0.
+        CONTINUE.
+      ENDIF.
+
+      lv_ref = |{ lcl_t=>t( d = 'Aenderungen gegenueber' e = 'Changes against' ) } | &&
+               |{ COND string( WHEN ls_prev-korrnum IS NOT INITIAL
+                               THEN ls_prev-korrnum
+                               ELSE lcl_t=>t( d = 'der Vorversion' e = 'the previous version' ) ) }| &&
+               | { lcl_t=>t( d = 'vom' e = 'of' ) } { ls_prev-datum DATE = ISO }| &&
+               |: +{ lv_add } / -{ lv_del } { lcl_t=>t( d = 'Zeilen' e = 'lines' ) }|.
+      IF ls_part-label IS NOT INITIAL.
+        lv_ref = |{ ls_part-label } - { lv_ref }|.
+      ENDIF.
+
+      DATA(lo_diff) = NEW lcl_object( iv_type = 'DIFF'
+                                      iv_name = CONV string( ls_part-objname ) ).
+      lo_diff->set_note( lv_ref ).
+      LOOP AT lt_rows INTO DATA(ls_d).
+        DATA(lv_no) = COND string(
+          WHEN ls_d-tag = '-' THEN |{ ls_d-old WIDTH = 6 ALIGN = RIGHT }|
+          WHEN ls_d-tag = '.' THEN `      `
+          ELSE                     |{ ls_d-new WIDTH = 6 ALIGN = RIGHT }| ).
+*       Das Kennzeichen steht im Schluesselfeld; die Ausgabe faerbt
+*       danach ein.
+        lo_diff->add_field( VALUE ty_field(
+          name     = |{ lv_no } { COND string( WHEN ls_d-tag = '=' THEN ` ` ELSE ls_d-tag ) }|
+          rollname = ls_d-text
+          keyflag  = boolc( ls_d-tag = '+' OR ls_d-tag = '-' ) ) ).
+      ENDLOOP.
+      IF lv_cut = abap_true.
+        lo_diff->set_truncated( abap_true ).
+      ENDIF.
+      io_chapter->add_object( lo_diff ).
+      mv_n_ver = mv_n_ver + 1.
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
   METHOD transport_chapter.
 
 *   Kapitel 1 beim Startpunkt TR: der Auftrag selbst. Erst damit traegt
@@ -12363,12 +12740,20 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       mv_n_tot = mv_n_tot + 1.
       mv_n_obj = mv_n_obj + 1.
 
-      co_document->add_chapter( document_object( iv_type  = ls_start-type
-                                                 iv_name  = ls_start-name
-                                                 iv_id    = |{ lv_sno }|
-                                                 iv_level = 1
-                                                 iv_calls = abap_true
-                                                 iv_root  = abap_true ) ).
+      DATA(lo_schap) = document_object( iv_type  = ls_start-type
+                                        iv_name  = ls_start-name
+                                        iv_id    = |{ lv_sno }|
+                                        iv_level = 1
+                                        iv_calls = abap_true
+                                        iv_root  = abap_true ).
+*     Beim Startpunkt TR auf Wunsch: was hat sich gegenueber dem
+*     vorigen Transport geaendert?
+      IF mv_trver = abap_true AND mt_trkorr IS NOT INITIAL.
+        version_diff( iv_type    = ls_start-type
+                      iv_name    = ls_start-name
+                      io_chapter = lo_schap ).
+      ENDIF.
+      co_document->add_chapter( lo_schap ).
 
       APPEND VALUE #( type = ls_start-type name = ls_start-name ) TO lt_done.
 
@@ -12885,6 +13270,10 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       src_trunc  = mv_src_trunc
       src_limit  = mv_maxsrc ) ).
 
+  ENDMETHOD.
+
+  METHOD get_stat_versions.
+    rv = mv_n_ver.
   ENDMETHOD.
 
   METHOD get_stat_packages.
@@ -14006,11 +14395,13 @@ CLASS lcl_transport DEFINITION.
 *   Kopf und Nicht-Objekte stehen als ty_trhead / ty_trrests oben bei
 *   den globalen Typen - der Collector braucht sie ebenfalls.
     CLASS-METHODS read
-      IMPORTING iv_trkorr TYPE clike
-      EXPORTING es_head   TYPE ty_trhead
-                et_objs   TYPE ty_objrefs
-                et_rest   TYPE ty_trrests
-                ev_error  TYPE string.
+      IMPORTING iv_trkorr  TYPE clike
+      EXPORTING es_head    TYPE ty_trhead
+                et_objs    TYPE ty_objrefs
+                et_rest    TYPE ty_trrests
+*               Auftrag und Aufgaben, aus denen gelesen wurde
+                et_trkorr  TYPE ty_trkorrs
+                ev_error   TYPE string.
 
   PRIVATE SECTION.
     CLASS-METHODS func_text
@@ -14057,7 +14448,7 @@ CLASS lcl_transport IMPLEMENTATION.
     DATA lv_res  TYPE trpari-s_checked.
     DATA lv_kind TYPE string.
 
-    CLEAR: es_head, et_objs, et_rest, ev_error.
+    CLEAR: es_head, et_objs, et_rest, et_trkorr, ev_error.
     lv_tr = to_upper( condense( CONV string( iv_trkorr ) ) ).
 
     SELECT SINGLE trkorr, trfunction, trstatus, tarsystem, as4user, as4date, strkorr
@@ -14093,6 +14484,7 @@ CLASS lcl_transport IMPLEMENTATION.
       APPEND ls_task-trkorr TO lt_tr.
     ENDLOOP.
     es_head-tasks = lines( lt_task ).
+    et_trkorr = lt_tr.
 
     SELECT trkorr, pgmid, object, obj_name, objfunc
       FROM e071
@@ -14309,12 +14701,14 @@ START-OF-SELECTION.
 * vorweg genannt - sonst sucht es jemand spaeter im Dokument.
   DATA ls_trhead TYPE ty_trhead.
   DATA lt_trrest TYPE ty_trrests.
+  DATA lt_trkorr TYPE ty_trkorrs.
   IF p_stype = 'TR'.
     DATA lv_trerr TYPE string.
     lcl_transport=>read( EXPORTING iv_trkorr = p_sval
                          IMPORTING es_head   = ls_trhead
                                    et_objs   = lt_start
                                    et_rest   = lt_trrest
+                                   et_trkorr = lt_trkorr
                                    ev_error  = lv_trerr ).
     WRITE: / lcl_t=>ui( d = `Documizer - Entwicklerdokumentation` e = `Documizer - developer documentation` ).
     ULINE.
@@ -14387,7 +14781,9 @@ START-OF-SELECTION.
                                               iv_def    = p_def
                                               it_start  = lt_start
                                               is_trhead = ls_trhead
-                                              it_trrest = lt_trrest ).
+                                              it_trrest = lt_trrest
+                                              it_trkorr = lt_trkorr
+                                              iv_trver  = p_trver ).
 
   DATA lo_coll TYPE REF TO lif_docu_collector.
   lo_coll = lo_collector.
@@ -14421,6 +14817,9 @@ START-OF-SELECTION.
   ENDIF.
   IF p_used = abap_true.
     WRITE: / lcl_t=>ui( d = `mit Verwendungsnachweis          :` e = `with where-used list             :` ), lo_collector->get_stat_usage( ).
+  ENDIF.
+  IF p_stype = 'TR' AND p_trver = abap_true.
+    WRITE: / lcl_t=>ui( d = `mit Versionsvergleich            :` e = `with version comparison          :` ), lo_collector->get_stat_versions( ).
   ENDIF.
   IF p_calls = abap_true.
     WRITE: / lcl_t=>ui( d = `mit ausgehenden Aufrufen         :` e = `with outgoing references         :` ), lo_collector->get_stat_calls( ).

@@ -1617,7 +1617,14 @@ CLASS lcl_version IMPLEMENTATION.
 *       Klassennamen und dahinter ihren eigenen. Welche Teile es
 *       wirklich gibt, sagt VRSD - geraten wird nichts.
         lv_cls = iv_name.
-        DATA lv_like TYPE vrsd-objname.
+*       Das Muster gehoert in eine Zeichenkette, nicht in ein Feld der
+*       Laenge 110: bei LIKE zaehlen nachgestellte Leerzeichen mit. Ein
+*       Muster aus einem CHAR-110-Feld traegt hinter dem Prozentzeichen
+*       noch achtzig Leerzeichen und passt dann nur auf Namen, die
+*       ebenso viele am Ende haben - die Definition einer Klasse also,
+*       ihre Methoden aber nicht. Genau daran fehlte der Vergleich je
+*       Methode.
+        DATA lv_like TYPE string.
         lv_like = |{ lv_cls }%|.
         SELECT DISTINCT objtype, objname FROM vrsd
           WHERE objtype IN ( 'CLSD', 'CPUB', 'CPRO', 'CPRI', 'CINC', 'METH' )
@@ -12596,6 +12603,12 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       ENDLOOP.
       IF lv_cut = abap_true.
         lo_diff->set_truncated( abap_true ).
+*       Und sichtbar, nicht nur als Kennzeichen: ein Block, der nach
+*       zweihundert Zeilen endet, sieht sonst vollstaendig aus.
+        lo_diff->add_field( VALUE ty_field(
+          name     = `      .`
+          rollname = lcl_t=>t( d = `... weitere Unterschiede nicht ausgegeben`
+                               e = `... further differences not shown` ) ) ).
       ENDIF.
       io_chapter->add_object( lo_diff ).
       mv_n_ver = mv_n_ver + 1.

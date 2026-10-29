@@ -941,6 +941,37 @@ XML file (PC | app server) ▶ parser ▶ model with &lt;definition&gt; ▶ impo
           report, deletions, entries without a catalog object, and objects that no longer exist in
           the system.
         </p>
+        <h3>What changed against the previous transport</h3>
+        <p>
+          <em>Changes vs. previous version</em> — available with start point <code>TR</code> —
+          puts this transport's version of each object next to the one before it: green, red and
+          with context, exactly like the comparison in the import's test run.
+        </p>
+<pre><code>Changes against EBSK900017 of 2017-10-07: +4 / -1 lines
+     8   PARAMETERS: p_vbeln TYPE vbak-vbeln .
+     9 - PARAMETERS : ordtype TYPE auart DEFAULT 'ZCM'.
+     9 + *{   REPLACE        S4HK901040
+    11 + PARAMETERS : ordtype TYPE auart DEFAULT 'OR'.
+    13   PARAMETERS : fromdate TYPE dats,</code></pre>
+        <p>
+          Both versions come from SAP's <b>version management</b>: on release SAP creates a version
+          per object and records the request number with it. This transport's version is the one
+          carrying its number, the predecessor is the next older one — whatever request it came
+          from, even from another system.
+        </p>
+        <p>
+          <b>An object consists of several version objects</b>, so the comparison runs part by
+          part: a class of its definition, the three sections and one entry per method; a function
+          group of its modules. Each part gets its own heading.
+        </p>
+        <p>
+          <b>If the request has not been released yet</b>, there is no version for it. Then the
+          current state in the system is put against the most recent version — what this transport
+          <em>will</em> deliver against what was last transported. Before an acceptance that is the
+          real question. Object types without versions, UI5 applications and forms among them, stay
+          out of it; how many objects were compared is stated at the end of the run.
+        </p>
+
         <div class="note">
           <p><b>Released or modifiable.</b> A released request documents what <em>was</em> in it; a
           modifiable one, what <em>is</em> in it right now. The second case says so in the header —

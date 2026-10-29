@@ -487,6 +487,43 @@ Zwei Fallen stecken in `OBJFUNC` und `E071K`, beide an echten Aufträgen aufgefa
 Ein freigegebener Auftrag dokumentiert, was drin **war**; ein änderbarer, was gerade drin
 **ist**. Letzteres steht als Hinweis im Kopf — sonst liest sich beides gleich.
 
+### 4.1b Was sich gegenüber dem vorigen Transport geändert hat
+
+`P_TRVER` — nur beim Startpunkt `TR` wirksam — stellt je Objekt die Fassung dieses Transports
+der vorigen gegenüber. Die Darstellung ist dieselbe wie beim Quelltextvergleich im Testlauf des
+Imports (5.9), es ist auch derselbe `lcl_diff`; neu ist nur, woher die beiden Fassungen kommen.
+
+**Die Versionsverwaltung von SAP.** Beim Freigeben legt SAP je Objekt eine Version an. `VRSD`
+führt sie mit `KORRNUM` — der Auftragsnummer, unter der sie entstand —, `DATUM`, `ZEIT` und
+`AUTHOR`. Der Inhalt kommt über die Bausteinfamilie `SVRS_GET_VERSION_<TYP>_40`: alle haben
+dieselbe Schnittstelle (`OBJECT_NAME`, `VERSNO`, Tabelle `REPOS_TAB`), deshalb genügt ein
+dynamischer Aufruf — und eine Objektart ohne eigenen Baustein bricht den Lauf nicht.
+
+Welche Version dieser Transport bringt, ist die, deren `KORRNUM` zum Auftrag oder einer seiner
+Aufgaben gehört; der Vorgänger ist der nächstältere Eintrag — gleich aus welchem Auftrag er
+stammt, auch aus einem fremden System.
+
+**Zwei Eigenheiten, beide an echten Daten aufgefallen:**
+
+- **Die Versionsnummer sagt über das Alter nichts.** `ZDEMODATA_EXCEL_UPLOAD` trägt 00000 vom
+  März 2018 und 00001 vom Oktober 2017 — die kleinere Nummer ist die jüngere. Sortiert wird
+  nach Datum und Uhrzeit, nie nach Nummer.
+- **Ein Objekt besteht aus mehreren Versionsobjekten.** Eine Klasse aus `CLSD` (Definition),
+  `CPUB`/`CPRO`/`CPRI` (Abschnitte), je Methode einem `METH`-Eintrag und den `CINC`-Includes;
+  eine Funktionsgruppe aus ihren Bausteinen (`FUNC`). Verglichen wird Teil für Teil, jeder mit
+  eigener Überschrift. Welche Teile es gibt, sagt `VRSD` — geraten wird nichts. Bei `METH` und
+  `CINC` steht der auf dreißig Zeichen aufgefüllte Klassenname vorn, danach der Methodenname;
+  darauf prüft der Report, damit `ZCL_A` nicht die Methoden von `ZCL_AB` einsammelt.
+
+**Ist der Auftrag noch nicht freigegeben**, gibt es für ihn noch keine Version. Dann steht der
+aktuelle Stand im System gegen die jüngste vorhandene Version — das, was dieser Transport
+bringen *wird*, gegen das, was zuletzt transportiert wurde. Vor einer Abnahme ist das die
+eigentliche Frage. Zusammengesetzte Objekte bleiben dabei außen vor: die Gesamtquelle einer
+Klasse gegen einen einzelnen Abschnitt zu stellen ergäbe Unsinn.
+
+Nicht jede Objektart hat Versionen — UI5-Anwendungen und Formulare etwa nicht. Dort entfällt der
+Vergleich stillschweigend; die Zahl der verglichenen Objekte steht am Ende des Laufs.
+
 ### 4.2 Selektionsbild
 
 **Block: Startpunkt** — `P_STYPE`, `P_SVAL`, `P_AFILE` + `P_ASRV` (nur bei `AL`),
@@ -1710,6 +1747,7 @@ Hinzugekommen sind zwei Zugriffe je Objekt: die Feldverwendungen sind ein zweite
 | 7t | Import: Objekte umbenennen und abwaehlen (`P_IREN`, Spalte Uebergehen) | erledigt |
 | 7u | Testlauf: Quelltextvergleich alt/neu, farbig im Protokoll | erledigt |
 | 7v | Startpunkt TR: Objektliste eines Transportauftrags samt Aufgaben | erledigt |
+| 7w | TR: Aenderungen je Objekt gegenueber dem vorigen Transport (`P_TRVER`) | erledigt |
 | 8 | Markdown-Renderer | offen |
 | 9 | Anzeigen ohne Anlegen | offen |
 | 10 | BAL-Protokoll, `S_DEVELOP` | offen |

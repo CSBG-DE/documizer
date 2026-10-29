@@ -724,6 +724,39 @@
           den IMG-Report, Löschungen, Einträge ohne Katalogobjekt und Objekte, die es im System
           nicht mehr gibt.
         </p>
+        <h3>Was sich gegenüber dem vorigen Transport geändert hat</h3>
+        <p>
+          Der Haken <em>Änderungen zur Vorversion</em> — nur beim Startpunkt <code>TR</code> —
+          stellt je Objekt die Fassung dieses Transports der vorigen gegenüber: grün, rot und mit
+          Umgebung, genau wie der Vergleich im Testlauf des Imports.
+        </p>
+<pre><code>Aenderungen gegenueber EBSK900017 vom 2017-10-07: +4 / -1 Zeilen
+     8   PARAMETERS: p_vbeln TYPE vbak-vbeln .
+     9 - PARAMETERS : ordtype TYPE auart DEFAULT 'ZCM'.
+     9 + *{   REPLACE        S4HK901040
+    11 + PARAMETERS : ordtype TYPE auart DEFAULT 'OR'.
+    13   PARAMETERS : fromdate TYPE dats,</code></pre>
+        <p>
+          Die beiden Fassungen kommen aus der <b>Versionsverwaltung</b>: Beim Freigeben legt SAP
+          je Objekt eine Version an und merkt sich die Auftragsnummer dazu. Die Version dieses
+          Transports ist die mit seiner Nummer, der Vorgänger die nächstältere — gleich aus
+          welchem Auftrag sie stammt, auch aus einem anderen System.
+        </p>
+        <p>
+          <b>Ein Objekt besteht aus mehreren Versionsobjekten</b>, und deshalb wird Teil für Teil
+          verglichen: eine Klasse aus Definition, den drei Abschnitten und je Methode einem
+          Eintrag, eine Funktionsgruppe aus ihren Bausteinen. Jeder Teil bekommt seine eigene
+          Überschrift.
+        </p>
+        <p>
+          <b>Ist der Auftrag noch nicht freigegeben</b>, gibt es für ihn noch keine Version. Dann
+          steht der aktuelle Stand im System gegen die jüngste vorhandene — also das, was dieser
+          Transport bringen <em>wird</em>, gegen das, was zuletzt transportiert wurde. Vor einer
+          Abnahme ist das die eigentliche Frage. Objektarten ohne Versionen, etwa UI5-Anwendungen
+          und Formulare, bleiben außen vor; wie viele Objekte verglichen wurden, steht am Ende des
+          Laufs.
+        </p>
+
         <div class="note">
           <p><b>Freigegeben oder änderbar.</b> Ein freigegebener Auftrag dokumentiert, was drin
           <em>war</em>; ein änderbarer, was gerade drin <em>ist</em>. Im zweiten Fall steht das

@@ -264,6 +264,18 @@ CLASS lcl_docu IMPLEMENTATION.
     a( iv_f = '=' iv_t = 'und Objekte, die es im System nicht mehr gibt.' ).
     a( iv_f = 'B1' iv_t = 'Ein freigegebener Auftrag dokumentiert, was drin war, ein' ).
     a( iv_f = '=' iv_t = 'aenderbarer, was gerade drin ist. Im zweiten Fall steht das im Kopf.' ).
+    a( iv_f = 'B1' iv_t = 'Aenderungen zur Vorversion stellt je Objekt die Fassung dieses' ).
+    a( iv_f = '=' iv_t = 'Transports der vorigen gegenueber - gruen, rot und mit Umgebung wie' ).
+    a( iv_f = '=' iv_t = 'der Vergleich im Testlauf des Imports. Die Fassungen kommen aus der' ).
+    a( iv_f = '=' iv_t = 'Versionsverwaltung; die Vorgaengerversion ist die naechstaeltere,' ).
+    a( iv_f = '=' iv_t = 'gleich aus welchem Auftrag sie stammt.' ).
+    a( iv_f = 'B1' iv_t = 'Verglichen wird Teil fuer Teil: eine Klasse aus Definition, den drei' ).
+    a( iv_f = '=' iv_t = 'Abschnitten und je Methode einem Eintrag, eine Funktionsgruppe aus' ).
+    a( iv_f = '=' iv_t = 'ihren Bausteinen. Objektarten ohne Versionen bleiben aussen vor.' ).
+    a( iv_f = 'B1' iv_t = 'Ist der Auftrag noch nicht freigegeben, gibt es fuer ihn keine' ).
+    a( iv_f = '=' iv_t = 'Version. Dann steht der aktuelle Stand gegen die juengste vorhandene' ).
+    a( iv_f = '=' iv_t = '- also das, was der Transport bringen wird, gegen das, was zuletzt' ).
+    a( iv_f = '=' iv_t = 'transportiert wurde.' ).
 
     a( iv_f = 'AS' iv_t = 'Umfang' ).
     a( iv_f = 'B1' iv_t = 'Objekttyp und Objektname grenzen die Objektliste ein.' ).

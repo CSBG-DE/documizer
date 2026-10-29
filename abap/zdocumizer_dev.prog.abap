@@ -12530,29 +12530,47 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         ENDIF.
       ENDLOOP.
 
-      IF lv_idx > 0.
+*     Welche Fassung bringt dieser Transport? Zwei Faelle, und der
+*     Unterschied liegt in der Versionsnummer: eine Nummer groesser
+*     null ist eine abgelegte Version, die Null steht fuer den aktiven
+*     Stand im Repository - dort liegt kein eigener Inhalt, sondern
+*     das, was gerade im System ist.
+*
+*     Ist der Auftrag noch nicht freigegeben, gibt es fuer ihn gar
+*     keine Zeile. Dann ist der aktive Stand das, was er bringen wird.
+*     Beides laeuft deshalb auf dieselbe Leseart hinaus; nur der
+*     Einstiegspunkt fuer die Suche nach dem Vorgaenger unterscheidet
+*     sich.
+      DATA lv_from TYPE i.
+      IF lv_idx > 0 AND lt_vers[ lv_idx ]-versno > '00000'.
         lt_new = lcl_version=>source( iv_objtype = ls_part-objtype
                                       iv_objname = ls_part-objname
                                       iv_versno  = lt_vers[ lv_idx ]-versno ).
-        IF lv_idx >= lines( lt_vers ).
-*         Die aelteste Version ist die dieses Transports - davor war
-*         nichts.
-          CONTINUE.
-        ENDIF.
-        DATA(ls_prev) = lt_vers[ lv_idx + 1 ].
+        lv_from = lv_idx + 1.
       ELSE.
-*       Noch nicht freigegeben: aktueller Stand gegen die juengste
-*       Version.
-        lt_new = source_lines( iv_type = CONV trobjtype( iv_type )
-                               iv_name = CONV sobj_name( iv_name ) ).
-        IF ls_part-objtype <> 'REPS' OR iv_type <> 'PROG'.
-*         Nur fuer ein Programm ist der aktuelle Stand dasselbe wie der
-*         Inhalt des Versionsobjekts. Bei einer Klasse waere es die
-*         zusammengesetzte Quelle gegen einen einzelnen Abschnitt - das
-*         verglichen ergaebe Unsinn.
-          CONTINUE.
-        ENDIF.
-        ls_prev = lt_vers[ 1 ].
+        lt_new = lcl_version=>source( iv_objtype = ls_part-objtype
+                                      iv_objname = ls_part-objname
+                                      iv_versno  = '00000' ).
+        lv_from = COND i( WHEN lv_idx > 0 THEN lv_idx + 1 ELSE 1 ).
+      ENDIF.
+
+*     Der Vorgaenger muss eine abgelegte Version sein. Eine weitere
+*     Null-Zeile traegt keinen eigenen Inhalt - gegen sie zu
+*     vergleichen hiesse, den aktiven Stand gegen sich selbst zu
+*     stellen.
+      DATA ls_prev TYPE lcl_version=>ty_ver.
+      CLEAR ls_prev.
+      IF lv_from <= lines( lt_vers ).
+        LOOP AT lt_vers INTO DATA(ls_cand) FROM lv_from.
+          IF ls_cand-versno > '00000'.
+            ls_prev = ls_cand.
+            EXIT.
+          ENDIF.
+        ENDLOOP.
+      ENDIF.
+      IF ls_prev-versno IS INITIAL.
+*       Davor gab es nichts - der erste Transport dieses Teils.
+        CONTINUE.
       ENDIF.
 
       lt_old = lcl_version=>source( iv_objtype = ls_part-objtype

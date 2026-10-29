@@ -515,11 +515,19 @@ stammt, auch aus einem fremden System.
   `CINC` steht der auf dreißig Zeichen aufgefüllte Klassenname vorn, danach der Methodenname;
   darauf prüft der Report, damit `ZCL_A` nicht die Methoden von `ZCL_AB` einsammelt.
 
-**Ist der Auftrag noch nicht freigegeben**, gibt es für ihn noch keine Version. Dann steht der
-aktuelle Stand im System gegen die jüngste vorhandene Version — das, was dieser Transport
-bringen *wird*, gegen das, was zuletzt transportiert wurde. Vor einer Abnahme ist das die
-eigentliche Frage. Zusammengesetzte Objekte bleiben dabei außen vor: die Gesamtquelle einer
-Klasse gegen einen einzelnen Abschnitt zu stellen ergäbe Unsinn.
+**Die Versionsnummer trennt die beiden Fälle.** Eine Nummer größer null ist eine abgelegte
+Version mit eigenem Inhalt; die Null steht für den **aktiven Stand** im Repository — dort liegt
+nichts Eigenes, sondern das, was gerade im System ist. Gelesen wird beides über dieselbe
+Bausteinfamilie, die Null liefert den aktiven Stand.
+
+**Ist der Auftrag noch nicht freigegeben**, gibt es für ihn gar keine Zeile. Dann ist der aktive
+Stand das, was er bringen *wird*, und verglichen wird er gegen die jüngste **abgelegte** Version
+— gegen das, was zuletzt transportiert wurde. Vor einer Abnahme ist das die eigentliche Frage,
+und es ist der häufigere Fall: ein Auftrag, den man dokumentieren will, ist meist noch offen.
+
+Der Vorgänger muss dabei eine abgelegte Version sein. Gegen eine weitere Null-Zeile zu
+vergleichen hieße, den aktiven Stand gegen sich selbst zu stellen — das Ergebnis wäre immer
+*keine Änderung*.
 
 Nicht jede Objektart hat Versionen — UI5-Anwendungen und Formulare etwa nicht. Dort entfällt der
 Vergleich stillschweigend; die Zahl der verglichenen Objekte steht am Ende des Laufs.

@@ -1634,8 +1634,14 @@ CLASS lcl_version IMPLEMENTATION.
           CASE ls_v-objtype.
             WHEN 'METH'.
 *             Nur Methoden genau dieser Klasse: ZCL_A darf ZCL_AB nicht
-*             einsammeln.
-              IF ls_v-objname(30) <> |{ lv_cls WIDTH = 30 }|.
+*             einsammeln. Verglichen werden zwei Zeichenfelder gleicher
+*             Laenge - beide mit Leerzeichen aufgefuellt. Eine
+*             Zeichenkette auf der rechten Seite ginge schief: beim
+*             Vergleich eines Zeichenfelds mit einer Zeichenkette
+*             zaehlen die nachgestellten Leerzeichen nicht gleich, und
+*             dann passte nur ein Klassenname, der genau dreissig
+*             Zeichen lang ist.
+              IF ls_v-objname(30) <> lv_cls(30).
                 CONTINUE.
               ENDIF.
               APPEND VALUE ty_part(
@@ -1644,7 +1650,7 @@ CLASS lcl_version IMPLEMENTATION.
                 label   = |{ lcl_t=>t( d = 'Methode' e = 'Method' ) } | &&
                           |{ condense( CONV string( ls_v-objname+30 ) ) }| ) TO rt_parts.
             WHEN 'CINC'.
-              IF ls_v-objname(30) <> |{ lv_cls WIDTH = 30 }|.
+              IF ls_v-objname(30) <> lv_cls(30).
                 CONTINUE.
               ENDIF.
               APPEND VALUE ty_part( objtype = ls_v-objtype

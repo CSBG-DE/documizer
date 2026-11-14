@@ -20,10 +20,13 @@ REPORT zdocumizer_dev.
 *   DOCU_GET                                           object documentation
 *   DD03L, SEOCOMPO, FUPARAREF                         detail information
 *
-* Autor     Christian Gathmann, consiness GmbH & Co. KG
-*           gathmann@consiness.de
+* Author    Christian Gathmann
+*           gathmann@csbg.de
+*           Designed, specified and validated by Christian Gathmann;
+*           code generated with AI assistance.
+* Source    https://github.com/csbg-de/documizer
 *
-* Copyright 2026 consiness GmbH & Co. KG
+* Copyright 2026 C. Gathmann Computer-System-Beratung GmbH (CSBG)
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -158,6 +161,33 @@ TYPES: BEGIN OF ty_objref,
        END OF ty_objref.
 TYPES ty_objrefs TYPE STANDARD TABLE OF ty_objref WITH EMPTY KEY.
 TYPES ty_names   TYPE STANDARD TABLE OF sobj_name WITH EMPTY KEY.
+
+* Der Kopf eines Transportauftrags und alles, was darin steht, aber
+* nicht als Objekt dokumentiert wird. Gelesen wird beides von
+* lcl_transport; der Collector traegt es als erstes Kapitel ins
+* Dokument. Deshalb stehen die Typen hier oben und nicht bei der
+* Klasse - der Collector steht im Quelltext vor ihr.
+TYPES: BEGIN OF ty_trhead,
+         trkorr TYPE trkorr,
+         parent TYPE trkorr,
+         func   TYPE string,
+         status TYPE string,
+         target TYPE string,
+         owner  TYPE string,
+         date   TYPE string,
+         text   TYPE string,
+         tasks  TYPE i,
+         closed TYPE abap_bool,
+       END OF ty_trhead.
+TYPES: BEGIN OF ty_trrest,
+         kind TYPE string,
+         name TYPE string,
+         note TYPE string,
+       END OF ty_trrest.
+TYPES ty_trrests TYPE STANDARD TABLE OF ty_trrest WITH EMPTY KEY.
+* Auftrag und seine Aufgaben - daran erkennt der Versionsvergleich,
+* welche Version dieser Transport bringt.
+TYPES ty_trkorrs TYPE STANDARD TABLE OF trkorr WITH EMPTY KEY.
 
 * A line of source at a place of use. With the full-source option every
 * line is collected and HIT marks the ones the object appears in;
@@ -1493,6 +1523,243 @@ ENDCLASS.
 * vollstaendig umgeschriebenen Block wird die Gruppierung groeber,
 * nicht falsch.
 *----------------------------------------------------------------------*
+*&---------------------------------------------------------------------*
+*& CLASS lcl_version - die Versionsverwaltung von SAP
+*&---------------------------------------------------------------------*
+* Beim Freigeben eines Auftrags legt SAP je Objekt eine Version an.
+* VRSD fuehrt sie mit der Auftragsnummer, unter der sie entstanden ist.
+* Damit laesst sich zu einem Transport sagen, was sich gegenueber dem
+* vorigen geaendert hat.
+*
+* Zwei Dinge, die man dabei wissen muss:
+*
+*   - Die Versionsnummer sagt ueber das Alter nichts. ZDEMODATA_EXCEL_
+*     UPLOAD traegt 00000 vom Maerz 2018 und 00001 vom Oktober 2017 -
+*     die kleinere Nummer ist die juengere. Sortiert wird nach Datum
+*     und Uhrzeit.
+*   - Ein Objekt besteht aus mehreren Versionsobjekten: eine Klasse aus
+*     Definition, den drei Abschnitten und je Methode einem Eintrag.
+*     Verglichen wird deshalb Teil fuer Teil.
+*
+* Gelesen wird ueber die Bausteinfamilie SVRS_GET_VERSION_<TYP>_40.
+* Alle haben dieselbe Schnittstelle, deshalb genuegt ein dynamischer
+* Aufruf - und ein Typ, den es nicht gibt, bricht den Lauf nicht.
+*----------------------------------------------------------------------*
+CLASS lcl_version DEFINITION.
+  PUBLIC SECTION.
+    TYPES: BEGIN OF ty_ver,
+             objtype TYPE vrsd-objtype,
+             objname TYPE vrsd-objname,
+             versno  TYPE vrsd-versno,
+             korrnum TYPE vrsd-korrnum,
+             datum   TYPE vrsd-datum,
+             zeit    TYPE vrsd-zeit,
+             author  TYPE vrsd-author,
+           END OF ty_ver.
+    TYPES ty_vers TYPE STANDARD TABLE OF ty_ver WITH EMPTY KEY.
+*   Ein Teil eines Objekts in der Versionsverwaltung: Typ, Name und
+*   eine Bezeichnung fuer das Dokument.
+    TYPES: BEGIN OF ty_part,
+             objtype TYPE vrsd-objtype,
+             objname TYPE vrsd-objname,
+             label   TYPE string,
+           END OF ty_part.
+    TYPES ty_parts TYPE STANDARD TABLE OF ty_part WITH EMPTY KEY.
+
+*   Aus welchen Versionsobjekten besteht ein Katalogobjekt?
+    CLASS-METHODS parts
+      IMPORTING iv_type         TYPE clike
+                iv_name         TYPE clike
+      RETURNING VALUE(rt_parts) TYPE ty_parts.
+*   Alle Versionen eines Teils, die juengste zuerst.
+    CLASS-METHODS list
+      IMPORTING iv_objtype     TYPE clike
+                iv_objname     TYPE clike
+      RETURNING VALUE(rt_vers) TYPE ty_vers.
+*   Der Quelltext einer Version.
+    CLASS-METHODS source
+      IMPORTING iv_objtype    TYPE clike
+                iv_objname    TYPE clike
+                iv_versno     TYPE clike
+      RETURNING VALUE(rt_src) TYPE string_table.
+ENDCLASS.
+
+CLASS lcl_version IMPLEMENTATION.
+
+  METHOD parts.
+
+    DATA lv_cls TYPE vrsd-objname.
+    DATA lv_nam TYPE vrsd-objname.
+
+    lv_nam = iv_name.
+
+    CASE iv_type.
+
+      WHEN 'PROG'.
+        APPEND VALUE ty_part( objtype = 'REPS' objname = lv_nam ) TO rt_parts.
+
+      WHEN 'FUGR'.
+*       Eine Funktionsgruppe traegt ihre Versionen je Baustein.
+        DATA lv_pool TYPE progname.
+        lv_pool = |SAPL{ iv_name }|.
+        SELECT funcname FROM tfdir
+          WHERE pname = @lv_pool
+          INTO TABLE @DATA(lt_fb).
+        LOOP AT lt_fb INTO DATA(ls_fb).
+          APPEND VALUE ty_part( objtype = 'FUNC'
+                                objname = ls_fb-funcname
+                                label   = CONV string( ls_fb-funcname ) ) TO rt_parts.
+        ENDLOOP.
+
+      WHEN 'CLAS' OR 'INTF'.
+*       Definition und die drei Abschnitte tragen den Klassennamen,
+*       eine Methode den auf dreissig Zeichen aufgefuellten
+*       Klassennamen und dahinter ihren eigenen. Welche Teile es
+*       wirklich gibt, sagt VRSD - geraten wird nichts.
+        lv_cls = iv_name.
+*       Das Muster gehoert in eine Zeichenkette, nicht in ein Feld der
+*       Laenge 110: bei LIKE zaehlen nachgestellte Leerzeichen mit. Ein
+*       Muster aus einem CHAR-110-Feld traegt hinter dem Prozentzeichen
+*       noch achtzig Leerzeichen und passt dann nur auf Namen, die
+*       ebenso viele am Ende haben - die Definition einer Klasse also,
+*       ihre Methoden aber nicht. Genau daran fehlte der Vergleich je
+*       Methode.
+        DATA lv_like TYPE string.
+        lv_like = |{ lv_cls }%|.
+*       Nur die Teile, die Quelltext tragen. Die drei Abschnitte
+*       CPUB, CPRO und CPRI fuehren in der Versionsverwaltung keine
+*       Zeilen, sondern die Komponenten in SEO-Tabellen - Attribute,
+*       Methoden, Ereignisse. Zeilenweise vergleichen laesst sich das
+*       nicht; dafuer braeuchte es den Strukturvergleich.
+        SELECT DISTINCT objtype, objname FROM vrsd
+          WHERE objtype IN ( 'CLSD', 'CINC', 'METH' )
+            AND objname LIKE @lv_like
+          INTO TABLE @DATA(lt_v).
+        LOOP AT lt_v INTO DATA(ls_v).
+          CASE ls_v-objtype.
+            WHEN 'METH'.
+*             Nur Methoden genau dieser Klasse: ZCL_A darf ZCL_AB nicht
+*             einsammeln. Verglichen werden zwei Zeichenfelder gleicher
+*             Laenge - beide mit Leerzeichen aufgefuellt. Eine
+*             Zeichenkette auf der rechten Seite ginge schief: beim
+*             Vergleich eines Zeichenfelds mit einer Zeichenkette
+*             zaehlen die nachgestellten Leerzeichen nicht gleich, und
+*             dann passte nur ein Klassenname, der genau dreissig
+*             Zeichen lang ist.
+              IF ls_v-objname(30) <> lv_cls(30).
+                CONTINUE.
+              ENDIF.
+              APPEND VALUE ty_part(
+                objtype = ls_v-objtype
+                objname = ls_v-objname
+                label   = |{ lcl_t=>t( d = 'Methode' e = 'Method' ) } | &&
+                          |{ condense( CONV string( ls_v-objname+30 ) ) }| ) TO rt_parts.
+            WHEN 'CINC'.
+              IF ls_v-objname(30) <> lv_cls(30).
+                CONTINUE.
+              ENDIF.
+              APPEND VALUE ty_part( objtype = ls_v-objtype
+                                    objname = ls_v-objname
+                                    label   = CONV string( ls_v-objname+30 ) ) TO rt_parts.
+            WHEN OTHERS.
+              IF ls_v-objname <> lv_cls.
+                CONTINUE.
+              ENDIF.
+              APPEND VALUE ty_part(
+                objtype = ls_v-objtype
+                objname = ls_v-objname
+                label   = lcl_t=>t( d = 'Definition' e = 'Definition' ) ) TO rt_parts.
+          ENDCASE.
+        ENDLOOP.
+        SORT rt_parts BY objtype objname.
+
+    ENDCASE.
+
+  ENDMETHOD.
+
+  METHOD list.
+
+    DATA lv_t TYPE vrsd-objtype.
+    DATA lv_n TYPE vrsd-objname.
+    lv_t = iv_objtype.
+    lv_n = iv_objname.
+
+    SELECT objtype, objname, versno, korrnum, datum, zeit, author
+      FROM vrsd
+      WHERE objtype = @lv_t AND objname = @lv_n AND loekz = @space
+      INTO CORRESPONDING FIELDS OF TABLE @rt_vers.
+
+*   Nach Datum und Uhrzeit, nicht nach Versionsnummer - siehe oben.
+    SORT rt_vers BY datum DESCENDING zeit DESCENDING.
+
+  ENDMETHOD.
+
+  METHOD source.
+
+    DATA lt_txt TYPE STANDARD TABLE OF abaptxt255.
+    DATA lv_fm  TYPE rs38l_fnam.
+    DATA lv_nam TYPE vrsd-objname.
+    DATA lv_ver TYPE vrsd-versno.
+    DATA lv_tab TYPE abap_parmname.
+
+    lv_fm  = |SVRS_GET_VERSION_{ iv_objtype }_40|.
+    lv_nam = iv_objname.
+    lv_ver = iv_versno.
+
+*   Die Bausteine der Familie haben dieselbe Form, aber nicht denselben
+*   Namen fuer die Quelltexttabelle: ein Report traegt ihn in
+*   REPOS_TAB, ein Funktionsbaustein in UINCL_TAB, eine
+*   Klassendefinition in PSOURCE. Weil der Name damit erst zur Laufzeit
+*   feststeht, laeuft der Aufruf ueber eine Parametertabelle.
+    CASE iv_objtype.
+      WHEN 'FUNC'. lv_tab = 'UINCL_TAB'.
+      WHEN 'CLSD'. lv_tab = 'PSOURCE'.
+      WHEN OTHERS. lv_tab = 'REPOS_TAB'.
+    ENDCASE.
+
+    DATA lt_parm TYPE abap_func_parmbind_tab.
+    DATA ls_parm TYPE abap_func_parmbind.
+    DATA lt_exc  TYPE abap_func_excpbind_tab.
+    DATA ls_exc  TYPE abap_func_excpbind.
+
+    ls_parm-name = 'OBJECT_NAME'.
+    ls_parm-kind = abap_func_exporting.
+    GET REFERENCE OF lv_nam INTO ls_parm-value.
+    INSERT ls_parm INTO TABLE lt_parm.
+    ls_parm-name = 'VERSNO'.
+    ls_parm-kind = abap_func_exporting.
+    GET REFERENCE OF lv_ver INTO ls_parm-value.
+    INSERT ls_parm INTO TABLE lt_parm.
+    ls_parm-name = lv_tab.
+    ls_parm-kind = abap_func_tables.
+    GET REFERENCE OF lt_txt INTO ls_parm-value.
+    INSERT ls_parm INTO TABLE lt_parm.
+
+    ls_exc-name  = 'OTHERS'.
+    ls_exc-value = 4.
+    INSERT ls_exc INTO TABLE lt_exc.
+
+    TRY.
+        CALL FUNCTION lv_fm
+          PARAMETER-TABLE lt_parm
+          EXCEPTION-TABLE lt_exc.
+        IF sy-subrc <> 0.
+          RETURN.
+        ENDIF.
+      CATCH cx_root.
+*       Objektart ohne eigenen Baustein oder ohne diese Tabelle - dann
+*       gibt es hier nichts zu vergleichen.
+        RETURN.
+    ENDTRY.
+
+    LOOP AT lt_txt INTO DATA(ls_txt).
+      APPEND ls_txt-line TO rt_src.
+    ENDLOOP.
+
+  ENDMETHOD.
+
+ENDCLASS.
+
 CLASS lcl_diff DEFINITION.
   PUBLIC SECTION.
     TYPES: BEGIN OF ty_row,
@@ -5852,6 +6119,12 @@ SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE gv_blk1.
     SELECTION-SCREEN COMMENT 1(30) gv_tloc FOR FIELD p_local.
     PARAMETERS p_local AS CHECKBOX.
   SELECTION-SCREEN END OF LINE.
+* Nur beim Startpunkt TR: je Objekt die Aenderungen gegenueber der
+* Vorgaengerversion aus der Versionsverwaltung.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tvers FOR FIELD p_trver.
+    PARAMETERS p_trver AS CHECKBOX.
+  SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b1.
 
 SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE gv_blk2.
@@ -5881,27 +6154,27 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE gv_blk2.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tsrc FOR FIELD p_src.
-    PARAMETERS p_src AS CHECKBOX.
+    PARAMETERS p_src AS CHECKBOX DEFAULT 'X'.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tmaxs FOR FIELD p_maxsrc.
-    PARAMETERS p_maxsrc TYPE i DEFAULT 300.
+    PARAMETERS p_maxsrc TYPE i DEFAULT 30000.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tuse FOR FIELD p_used.
-    PARAMETERS p_used AS CHECKBOX.
+    PARAMETERS p_used AS CHECKBOX DEFAULT 'X'.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tcall FOR FIELD p_calls.
-    PARAMETERS p_calls AS CHECKBOX.
+    PARAMETERS p_calls AS CHECKBOX DEFAULT 'X'.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_trdep FOR FIELD p_rdep.
-    PARAMETERS p_rdep TYPE i DEFAULT 1.
+    PARAMETERS p_rdep TYPE i DEFAULT 3.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tnsap FOR FIELD p_nosap.
-    PARAMETERS p_nosap AS CHECKBOX.
+    PARAMETERS p_nosap AS CHECKBOX DEFAULT 'X'.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tmaxu FOR FIELD p_maxuse.
@@ -5909,7 +6182,7 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE gv_blk2.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tudep FOR FIELD p_udep.
-    PARAMETERS p_udep TYPE i DEFAULT 0.
+    PARAMETERS p_udep TYPE i DEFAULT 3.
   SELECTION-SCREEN END OF LINE.
 * Ohne dieses Kennzeichen wird der Verwendungsnachweis nur zum
 * Startobjekt gezogen. Das ist die richtige Vorgabe: ein Datenelement wie
@@ -5918,7 +6191,7 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE gv_blk2.
 * aber wissen, wer seine Segmente liest - dafuer der Schalter.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tuall FOR FIELD p_useall.
-    PARAMETERS p_useall AS CHECKBOX.
+    PARAMETERS p_useall AS CHECKBOX DEFAULT 'X'.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tmaxh FOR FIELD p_maxhit.
@@ -5926,11 +6199,11 @@ SELECTION-SCREEN BEGIN OF BLOCK b2 WITH FRAME TITLE gv_blk2.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tfsrc FOR FIELD p_fsrc.
-    PARAMETERS p_fsrc AS CHECKBOX.
+    PARAMETERS p_fsrc AS CHECKBOX DEFAULT 'X'.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tdef FOR FIELD p_def.
-    PARAMETERS p_def AS CHECKBOX DEFAULT 'X'.
+    PARAMETERS p_def AS CHECKBOX.
   SELECTION-SCREEN END OF LINE.
 SELECTION-SCREEN END OF BLOCK b2.
 
@@ -5953,7 +6226,7 @@ SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE gv_blk3.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(24) gv_tdown FOR FIELD p_down.
-    PARAMETERS p_down AS CHECKBOX.
+    PARAMETERS p_down AS CHECKBOX DEFAULT 'X'.
     SELECTION-SCREEN COMMENT 29(18) gv_tpath FOR FIELD p_path.
     PARAMETERS p_path TYPE char128 LOWER CASE DEFAULT 'C:\temp'
                       VISIBLE LENGTH 30.
@@ -6083,6 +6356,7 @@ INITIALIZATION.
     gv_tasrv = 'Fehlliste liegt auf Appl.-Server'.
     gv_trec  = 'Unterpakete rekursiv (Paket)'.
     gv_tloc  = 'lokale Pakete einbeziehen'.
+    gv_tvers = 'Aenderungen zur Vorversion'.
     gv_tlang = 'Ausgabesprache'.
     gv_tfalb = 'Ersatzsprache verwenden'.
     gv_tflng = 'Ersatzsprache'.
@@ -6144,6 +6418,7 @@ INITIALIZATION.
     gv_tasrv = 'Request list is on the app server'.
     gv_trec  = 'Include subpackages (package)'.
     gv_tloc  = 'Include local packages'.
+    gv_tvers = 'Changes vs. previous version'.
     gv_tlang = 'Output language'.
     gv_tfalb = 'Use fallback language'.
     gv_tflng = 'Fallback'.
@@ -6367,6 +6642,15 @@ CLASS lcl_renderer_html IMPLEMENTATION.
     add( 'pre.src{background:#fbfbf5;border:1px solid #ddd;padding:8px;' &&
          'font-family:Consolas,monospace;font-size:11px;overflow-x:auto;' &&
          'white-space:pre}' ).
+*   Der Versionsvergleich: neue Zeilen gruen, entfallene rot, beides
+*   mit zartem Hintergrund, damit es auch im Ausdruck ohne Farbe noch
+*   zu unterscheiden ist.
+    add( 'pre.diff{background:#fbfbf5;border:1px solid #ddd;padding:8px;' &&
+         'font-family:Consolas,monospace;font-size:11px;overflow-x:auto;' &&
+         'white-space:pre}' ).
+    add( 'pre.diff .add{color:#0a6b1f;background:#eefaf0;display:block}' ).
+    add( 'pre.diff .del{color:#a01020;background:#fdeef0;display:block}' ).
+    add( 'pre.diff .gap{color:#999;display:block}' ).
     add( 'details{margin:4px 0}' ).
     add( 'summary{color:#666;font-size:11px;cursor:pointer;' &&
          'padding:2px 0;user-select:none}' ).
@@ -6613,6 +6897,65 @@ CLASS lcl_renderer_html IMPLEMENTATION.
         CONTINUE.
       ENDIF.
 
+*     Der Versionsvergleich: Zeilennummer und Kennzeichen stehen im
+*     Namen, der Text daneben. Eingefaerbt wird nach dem letzten
+*     Zeichen des Namens - das ist das Kennzeichen, das version_diff
+*     dort hingeschrieben hat.
+      IF lo_obj->get_type( ) = 'DIFF'.
+        lv_fold = open_block( iv_label = lo_obj->get_note( )
+                              iv_count = lv_cnt
+                              iv_unit  = lcl_t=>t( d = 'Zeilen' e = 'lines' ) ).
+        add( '<pre class="diff">' ).
+        LOOP AT lo_obj->get_fields( ) INTO DATA(ls_df).
+          DATA(lv_sign) = COND string( WHEN strlen( ls_df-name ) > 0
+                                       THEN substring( val = ls_df-name
+                                                       off = strlen( ls_df-name ) - 1
+                                                       len = 1 )
+                                       ELSE ` ` ).
+          DATA(lv_cls2) = SWITCH string( lv_sign
+                            WHEN '+' THEN 'add'
+                            WHEN '-' THEN 'del'
+                            WHEN '.' THEN 'gap'
+                            ELSE          '' ).
+          IF lv_cls2 IS INITIAL.
+            add( |{ esc( ls_df-name ) } { esc( ls_df-rollname ) }| ).
+          ELSE.
+            add( |<span class="{ lv_cls2 }">{ esc( ls_df-name ) } | &&
+                 |{ esc( ls_df-rollname ) }</span>| ).
+          ENDIF.
+        ENDLOOP.
+        add( '</pre>' ).
+        close_block( lv_fold ).
+        CONTINUE.
+      ENDIF.
+
+*     Zwei Spalten statt drei: ein Merkmal und sein Wert. So stehen der
+*     Kopf eines Transportauftrags und die Liste dessen, was darin kein
+*     dokumentierbares Objekt ist, im Dokument - eine Feldliste mit
+*     Spalte "Typ / Datenelement" waere dafuer die falsche Tabelle.
+      IF lo_obj->get_type( ) = 'ATTR' OR lo_obj->get_type( ) = 'LIST'.
+        IF lv_cnt = 0.
+          CONTINUE.
+        ENDIF.
+        DATA(lv_c1) = COND string( WHEN lo_obj->get_type( ) = 'ATTR'
+                                   THEN lcl_t=>t( d = 'Merkmal' e = 'Item' )
+                                   ELSE lcl_t=>t( d = 'Eintrag' e = 'Entry' ) ).
+        DATA(lv_c2) = COND string( WHEN lo_obj->get_type( ) = 'ATTR'
+                                   THEN lcl_t=>t( d = 'Wert' e = 'Value' )
+                                   ELSE lcl_t=>t( d = 'Vermerk' e = 'Note' ) ).
+        lv_fold = open_block( iv_label = lo_obj->get_note( )
+                              iv_count = lv_cnt
+                              iv_unit  = lcl_t=>t( d = 'Einträge' e = 'entries' ) ).
+        add( |<table><tr><th>{ esc( lv_c1 ) }</th><th>{ esc( lv_c2 ) }</th></tr>| ).
+        LOOP AT lo_obj->get_fields( ) INTO DATA(ls_at).
+          add( |<tr><td>{ esc( ls_at-name ) }</td>| &&
+               |<td>{ esc( ls_at-rollname ) }</td></tr>| ).
+        ENDLOOP.
+        add( '</table>' ).
+        close_block( lv_fold ).
+        CONTINUE.
+      ENDIF.
+
       IF lv_cnt > 0.
         lv_fold = open_block( iv_label = lo_obj->get_note( )
                               iv_count = lv_cnt
@@ -6673,7 +7016,17 @@ CLASS lcl_collector_dev DEFINITION.
 *               Mehrere Startobjekte statt eines: die Fehlliste aus dem
 *               Zielsystem. Ist die Tabelle gefuellt, tritt sie an die
 *               Stelle von iv_stype/iv_sval.
-                it_start  TYPE ty_objrefs OPTIONAL.
+                it_start  TYPE ty_objrefs OPTIONAL
+*               Beim Startpunkt TR: Kopf des Auftrags und alles, was
+*               darin steht, aber kein dokumentierbares Objekt ist.
+*               Daraus entsteht das erste Kapitel.
+                is_trhead TYPE ty_trhead  OPTIONAL
+                it_trrest TYPE ty_trrests OPTIONAL
+*               Versionsvergleich: Auftrag und Aufgaben, aus denen
+*               gelesen wurde, und das Kennzeichen dazu.
+                it_trkorr TYPE ty_trkorrs OPTIONAL
+                iv_trver  TYPE abap_bool  DEFAULT abap_false.
+    METHODS get_stat_versions RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_packages RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_objects  RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_total    RETURNING VALUE(rv) TYPE i.
@@ -6722,6 +7075,24 @@ CLASS lcl_collector_dev DEFINITION.
     DATA mv_def    TYPE abap_bool.
     DATA mv_n_def  TYPE i.
     DATA mt_start  TYPE ty_objrefs.
+    DATA ms_trhead TYPE ty_trhead.
+    DATA mt_trrest TYPE ty_trrests.
+    DATA mt_trkorr TYPE ty_trkorrs.
+    DATA mv_trver  TYPE abap_bool.
+    DATA mv_n_ver  TYPE i.
+*   Was beim Versionsvergleich je Teil herauskam - auch wenn es nichts
+*   zu vergleichen gab. Ein Objekt ohne Vergleich soll nicht
+*   stillschweigend fehlen, sondern den Grund nennen.
+    DATA mt_versum TYPE ty_trrests.
+*   Haengt an das Kapitel eines Objekts die Aenderungen gegenueber der
+*   Vorgaengerversion - Teil fuer Teil.
+    METHODS version_diff
+      IMPORTING iv_type    TYPE clike
+                iv_name    TYPE clike
+                io_chapter TYPE REF TO lcl_chapter.
+*   Das Auftragskapitel als Kapitel 1 - die Startobjekte beginnen
+*   dann bei 2.
+    METHODS transport_chapter RETURNING VALUE(ro_chapter) TYPE REF TO lcl_chapter.
 
 *   Definition data for the reimport. One method per object type, all of
 *   them reading exactly the structures that the matching DDIF_*_PUT
@@ -6995,7 +7366,23 @@ CLASS lcl_collector_dev DEFINITION.
       IMPORTING it_name       TYPE ty_names
       RETURNING VALUE(rt_own) TYPE ty_names.
     METHODS drop_sap
-      CHANGING ct_ref TYPE ty_objrefs.
+      IMPORTING iv_force TYPE abap_bool DEFAULT abap_false
+      CHANGING  ct_ref   TYPE ty_objrefs.
+*   Alle Includes eines Programms, rekursiv, aus dem Quelltext. Nicht
+*   lesbare Includes kommen mit KIND = 'MISSING' zurueck.
+    METHODS prog_includes
+      IMPORTING iv_name       TYPE sobj_name
+      RETURNING VALUE(rt_ref) TYPE ty_objrefs.
+*   Haengt die Includes der Programme als Kapitel unter IO_PARENT.
+    METHODS add_includes
+      IMPORTING io_parent TYPE REF TO lcl_chapter
+                iv_id     TYPE string
+                iv_level  TYPE i
+                it_progs  TYPE ty_names
+                iv_force  TYPE abap_bool
+      EXPORTING et_inc    TYPE ty_objrefs
+      CHANGING  ct_done   TYPE ty_objrefs
+                cv_trunc  TYPE abap_bool.
     METHODS resolve_repo_object
       IMPORTING iv_name       TYPE string
       RETURNING VALUE(rs_ref) TYPE ty_objref.
@@ -7039,6 +7426,10 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     mv_flang  = iv_flang.
     mv_def    = iv_def.
     mt_start  = it_start.
+    ms_trhead = is_trhead.
+    mt_trrest = it_trrest.
+    mt_trkorr = it_trkorr.
+    mv_trver  = iv_trver.
   ENDMETHOD.
 
   METHOD build_title.
@@ -11498,7 +11889,9 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
   METHOD drop_sap.
 
-    IF mv_nosap = abap_false OR ct_ref IS INITIAL.
+*   IV_FORCE filtert auch ohne "Keine SAP-Objekte" - fuer die Includes
+*   im Paketlauf, die sonst den halben Standard nachziehen.
+    IF ( mv_nosap = abap_false AND iv_force = abap_false ) OR ct_ref IS INITIAL.
       RETURN.
     ENDIF.
 
@@ -11934,28 +12327,13 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 *   includes at all. D010INC also lists the generated units of every
 *   class the program uses, which are includes to the compiler and to
 *   nobody else. The source has neither problem.
+*   Die Erkennung selbst steht in PROG_INCLUDES. Nicht lesbare Includes
+*   gehoeren nicht in die Verweisliste - sie meldet ADD_INCLUDES.
     IF iv_type = 'PROG'.
-      DATA lv_pmain TYPE syrepid.
-      lv_pmain = iv_name.
-      DATA(lv_psrc) = report_source( lv_pmain ).
-      IF lv_psrc IS NOT INITIAL.
-*       INCLUDE TYPE and INCLUDE STRUCTURE are something else entirely -
-*       they add components to a structure definition. The optional
-*       IF FOUND and the trailing period are not part of the name.
-        FIND ALL OCCURRENCES OF REGEX
-             `^\s*INCLUDE\s+(?!TYPE\b|STRUCTURE\b)([A-Za-z][\w/]*)`
-             IN lv_psrc IGNORING CASE RESULTS DATA(lt_pinc) ##REGEX_POSIX.
-        LOOP AT lt_pinc INTO DATA(ls_pinc).
-          READ TABLE ls_pinc-submatches INTO DATA(ls_psub) INDEX 1.
-          IF sy-subrc <> 0.
-            CONTINUE.
-          ENDIF.
-          DATA(lv_pi) = to_upper( substring( val = lv_psrc
-                                             off = ls_psub-offset
-                                             len = ls_psub-length ) ).
-          APPEND VALUE #( type = 'PROG' name = lv_pi ) TO rt_ref.
-        ENDLOOP.
-      ENDIF.
+      DATA(lt_pinc) = prog_includes( iv_name ).
+      LOOP AT lt_pinc INTO DATA(ls_pinc) WHERE kind IS INITIAL.
+        APPEND ls_pinc TO rt_ref.
+      ENDLOOP.
     ENDIF.
 
     IF iv_type = 'DTEL'.
@@ -12067,6 +12445,223 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     drop_sap( CHANGING ct_ref = rt_ref ).
   ENDMETHOD.
 
+  METHOD prog_includes.
+
+*   Die Includes eines Programms, aus dem Quelltext gelesen und rekursiv
+*   aufgeloest (ein TOP-Include bindet selbst wieder Includes ein).
+*
+*   Erkannt werden alle Schreibweisen der Anweisung:
+*     INCLUDE ZX01.
+*     INCLUDE: ZX01.                 <- SAP-Standard und Kopien davon
+*     INCLUDE: ZX01, ZX02, ZX03.     <- Kettensatz
+*     INCLUDE ZX01 IF FOUND.
+*   Bewusst ohne regulaere Ausdruecke: Kommentare werden zeilenweise
+*   entfernt, der Rest an den Punkten in Anweisungen zerlegt. Das laeuft
+*   auf jedem Release gleich (7.40 bis S/4HANA).
+*
+*   INCLUDE TYPE / INCLUDE STRUCTURE sind Strukturkomponenten und keine
+*   Includes; sie werden am ersten Wort erkannt und uebergangen.
+*
+*   Nicht lesbare Includes kommen mit KIND = 'MISSING' zurueck - ausser
+*   bei IF FOUND, dort ist das Fehlen erlaubt.
+
+    DATA lt_todo TYPE ty_names.
+    DATA lt_seen TYPE ty_names.
+    DATA lt_src  TYPE string_table.
+    DATA lt_stmt TYPE string_table.
+    DATA lt_item TYPE string_table.
+    DATA lv_prog TYPE syrepid.
+    DATA lv_all  TYPE string.
+    DATA lv_list TYPE string.
+    DATA lv_word TYPE string.
+    DATA lv_rest TYPE string.
+    DATA lv_pos  TYPE i.
+    DATA lv_inc  TYPE sobj_name.
+
+    APPEND iv_name TO lt_todo.
+    APPEND iv_name TO lt_seen.
+
+    WHILE lt_todo IS NOT INITIAL.
+
+      READ TABLE lt_todo INTO DATA(lv_cur) INDEX 1.
+      DELETE lt_todo INDEX 1.
+
+*     Sicherung gegen Ausreisser: kein Programm hat tausende Includes.
+      IF lines( lt_seen ) > 2000.
+        EXIT.
+      ENDIF.
+
+      lv_prog = lv_cur.
+      CLEAR lt_src.
+      READ REPORT lv_prog INTO lt_src.
+      IF sy-subrc <> 0.
+        CONTINUE.
+      ENDIF.
+
+*     Kommentarzeilen und Zeilenendkommentare entfernen, Rest verbinden.
+      CLEAR lv_all.
+      LOOP AT lt_src INTO DATA(lv_line).
+        IF strlen( lv_line ) > 0 AND lv_line(1) = '*'.
+          CONTINUE.
+        ENDIF.
+        FIND FIRST OCCURRENCE OF '"' IN lv_line MATCH OFFSET lv_pos.
+        IF sy-subrc = 0.
+          lv_line = substring( val = lv_line len = lv_pos ).
+        ENDIF.
+        lv_all = |{ lv_all } { lv_line }|.
+      ENDLOOP.
+
+      CLEAR lt_stmt.
+      SPLIT lv_all AT '.' INTO TABLE lt_stmt.
+
+      LOOP AT lt_stmt INTO DATA(lv_stmt).
+
+        lv_stmt = to_upper( condense( lv_stmt ) ).
+        IF strlen( lv_stmt ) < 9 OR lv_stmt(7) <> 'INCLUDE'.
+          CONTINUE.
+        ENDIF.
+        IF lv_stmt+7(1) <> ` ` AND lv_stmt+7(1) <> ':'.
+          CONTINUE.
+        ENDIF.
+
+        lv_list = substring( val = lv_stmt off = 7 ).
+        SHIFT lv_list LEFT DELETING LEADING ` `.
+        IF strlen( lv_list ) > 0 AND lv_list(1) = ':'.
+          lv_list = substring( val = lv_list off = 1 ).
+        ENDIF.
+
+        CLEAR lt_item.
+        SPLIT lv_list AT ',' INTO TABLE lt_item.
+
+        LOOP AT lt_item INTO DATA(lv_item).
+
+          CONDENSE lv_item.
+          CLEAR: lv_word, lv_rest.
+          SPLIT lv_item AT ` ` INTO lv_word lv_rest.
+
+          IF lv_word = 'TYPE' OR lv_word = 'STRUCTURE'.
+            EXIT.
+          ENDIF.
+          IF lv_word IS INITIAL
+             OR strlen( lv_word ) > 40
+             OR lv_word NA 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+             OR lv_word CN 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_/'.
+            CONTINUE.
+          ENDIF.
+
+          lv_inc = lv_word.
+          READ TABLE lt_seen TRANSPORTING NO FIELDS
+               WITH KEY table_line = lv_inc.
+          IF sy-subrc = 0.
+            CONTINUE.
+          ENDIF.
+          APPEND lv_inc TO lt_seen.
+
+          SELECT SINGLE name FROM trdir WHERE name = @lv_inc
+            INTO @DATA(lv_dir).
+          IF sy-subrc = 0.
+            APPEND VALUE #( type = 'PROG' name = lv_inc ) TO rt_ref.
+            APPEND lv_inc TO lt_todo.
+          ELSEIF lv_rest NS 'IF FOUND'.
+            APPEND VALUE #( type = 'PROG' name = lv_inc kind = 'MISSING' ) TO rt_ref.
+          ENDIF.
+
+        ENDLOOP.
+
+      ENDLOOP.
+
+    ENDWHILE.
+
+  ENDMETHOD.
+
+  METHOD add_includes.
+
+*   Includes sind Bestandteil des Programms, kein Aufruf. Sie kommen
+*   deshalb immer mit - unabhaengig von "Ausgehende Aufrufe" und der
+*   Verweistiefe, und im Paketlauf auch dann, wenn sie in einem anderen
+*   Paket liegen. Ohne sie ist das Programm weder lesbar noch
+*   importierbar.
+*
+*   Was sich nicht lesen laesst, fehlt nicht stillschweigend, sondern
+*   steht als Warnung im Dokument.
+
+    DATA lt_inc  TYPE ty_objrefs.
+    DATA lt_miss TYPE ty_objrefs.
+    DATA lv_no   TYPE i.
+
+    CLEAR et_inc.
+
+    LOOP AT it_progs INTO DATA(lv_prog).
+      DATA(lt_one) = prog_includes( lv_prog ).
+      LOOP AT lt_one INTO DATA(ls_one).
+        IF ls_one-kind = 'MISSING'.
+          APPEND ls_one TO lt_miss.
+        ELSE.
+          APPEND ls_one TO lt_inc.
+        ENDIF.
+      ENDLOOP.
+    ENDLOOP.
+
+    SORT lt_inc BY name.
+    DELETE ADJACENT DUPLICATES FROM lt_inc COMPARING name.
+    SORT lt_miss BY name.
+    DELETE ADJACENT DUPLICATES FROM lt_miss COMPARING name.
+
+*   Was schon im Dokument steht, nicht doppelt.
+    LOOP AT ct_done INTO DATA(ls_done) WHERE type = 'PROG'.
+      DELETE lt_inc  WHERE name = ls_done-name.
+      DELETE lt_miss WHERE name = ls_done-name.
+    ENDLOOP.
+
+*   Die Includes eines Startprogramms gehoeren immer dazu, auch wenn es
+*   ein SAP-Programm ist und "Keine SAP-Objekte" gesetzt ist. Gefiltert
+*   wird nur im Paketlauf (IV_FORCE), wo fremde SAP-Includes sonst den
+*   halben Standard nachziehen.
+    IF iv_force = abap_true.
+      drop_sap( EXPORTING iv_force = iv_force CHANGING ct_ref = lt_inc ).
+    ENDIF.
+
+    LOOP AT lt_inc INTO DATA(ls_inc).
+
+      mv_n_tot = mv_n_tot + 1.
+      IF mv_maxobj > 0 AND mv_n_obj >= mv_maxobj.
+        cv_trunc = abap_true.
+        CONTINUE.
+      ENDIF.
+
+      lv_no    = lv_no + 1.
+      mv_n_obj = mv_n_obj + 1.
+
+      io_parent->add_child( document_object( iv_type  = 'PROG'
+                                             iv_name  = ls_inc-name
+                                             iv_id    = |{ iv_id }.{ lv_no }|
+                                             iv_level = iv_level
+                                             iv_calls = xsdbool( mv_rdep > 0 ) ) ).
+
+      APPEND VALUE #( type = 'PROG' name = ls_inc-name ) TO ct_done.
+      APPEND ls_inc TO et_inc.
+
+    ENDLOOP.
+
+    LOOP AT lt_miss INTO DATA(ls_miss).
+      lv_no = lv_no + 1.
+      DATA(lo_miss) = NEW lcl_chapter( iv_id    = |{ iv_id }.{ lv_no }|
+                                       iv_level = iv_level
+                                       iv_type  = 'OBJECT'
+                                       iv_title = CONV string( ls_miss-name ) ).
+      lo_miss->set_documentation( lcl_t=>t(
+        d = |Achtung: Das Include { ls_miss-name } wird eingebunden, | &&
+            |ist im System aber nicht lesbar (nicht vorhanden oder | &&
+            |nicht aktiv). Es fehlt in dieser Dokumentation.|
+        e = |Caution: the include { ls_miss-name } is included but | &&
+            |cannot be read in this system (missing or not active). | &&
+            |It is not part of this documentation.| ) ).
+      io_parent->add_child( lo_miss ).
+      APPEND VALUE #( type = 'PROG' name = ls_miss-name ) TO ct_done.
+    ENDLOOP.
+
+  ENDMETHOD.
+
   METHOD document_object.
 
     DATA lv_short TYPE string.
@@ -12161,6 +12756,274 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
   ENDMETHOD.
 
+  METHOD version_diff.
+
+*   Je Teil des Objekts: welche Version bringt dieser Transport, und
+*   welche war davor? Die Version dieses Transports ist die, deren
+*   Auftragsnummer zum Auftrag oder einer seiner Aufgaben gehoert.
+*
+*   Ist der Auftrag noch nicht freigegeben, gibt es fuer ihn noch keine
+*   Version. Dann wird der aktuelle Stand im System gegen die juengste
+*   vorhandene Version gestellt - also das, was dieser Transport
+*   bringen wird, gegen das, was zuletzt transportiert wurde. Vor einer
+*   Abnahme ist genau das die Frage.
+    DATA lt_old TYPE string_table.
+    DATA lt_new TYPE string_table.
+    DATA lv_ref TYPE string.
+
+    DATA(lt_parts) = lcl_version=>parts( iv_type = iv_type iv_name = iv_name ).
+    IF lt_parts IS INITIAL.
+      APPEND VALUE ty_trrest(
+        kind = CONV string( iv_type )
+        name = CONV string( iv_name )
+        note = lcl_t=>ui( d = `Objektart ohne Versionsverwaltung`
+                          e = `object type without version management` ) ) TO mt_versum.
+      RETURN.
+    ENDIF.
+
+    LOOP AT lt_parts INTO DATA(ls_part).
+
+      CLEAR: lt_old, lt_new, lv_ref.
+      DATA(lt_vers) = lcl_version=>list( iv_objtype = ls_part-objtype
+                                         iv_objname = ls_part-objname ).
+      DATA(lv_what) = condense( |{ iv_name } { ls_part-label }| ).
+      IF lt_vers IS INITIAL.
+        APPEND VALUE ty_trrest(
+          kind = CONV string( ls_part-objtype )
+          name = lv_what
+          note = lcl_t=>ui( d = `keine Versionen vorhanden`
+                            e = `no versions present` ) ) TO mt_versum.
+        CONTINUE.
+      ENDIF.
+
+      DATA(lv_idx) = 0.
+      LOOP AT lt_vers INTO DATA(ls_v).
+        READ TABLE mt_trkorr TRANSPORTING NO FIELDS
+             WITH KEY table_line = ls_v-korrnum.
+        IF sy-subrc = 0.
+          lv_idx = sy-tabix.
+          EXIT.
+        ENDIF.
+      ENDLOOP.
+
+*     Welche Fassung bringt dieser Transport? Zwei Faelle, und der
+*     Unterschied liegt in der Versionsnummer: eine Nummer groesser
+*     null ist eine abgelegte Version, die Null steht fuer den aktiven
+*     Stand im Repository - dort liegt kein eigener Inhalt, sondern
+*     das, was gerade im System ist.
+*
+*     Ist der Auftrag noch nicht freigegeben, gibt es fuer ihn gar
+*     keine Zeile. Dann ist der aktive Stand das, was er bringen wird.
+*     Beides laeuft deshalb auf dieselbe Leseart hinaus; nur der
+*     Einstiegspunkt fuer die Suche nach dem Vorgaenger unterscheidet
+*     sich.
+      DATA lv_from TYPE i.
+      IF lv_idx > 0 AND lt_vers[ lv_idx ]-versno > '00000'.
+        lt_new = lcl_version=>source( iv_objtype = ls_part-objtype
+                                      iv_objname = ls_part-objname
+                                      iv_versno  = lt_vers[ lv_idx ]-versno ).
+        lv_from = lv_idx + 1.
+      ELSE.
+        lt_new = lcl_version=>source( iv_objtype = ls_part-objtype
+                                      iv_objname = ls_part-objname
+                                      iv_versno  = '00000' ).
+        lv_from = COND i( WHEN lv_idx > 0 THEN lv_idx + 1 ELSE 1 ).
+      ENDIF.
+
+*     Der Vorgaenger muss eine abgelegte Version sein. Eine weitere
+*     Null-Zeile traegt keinen eigenen Inhalt - gegen sie zu
+*     vergleichen hiesse, den aktiven Stand gegen sich selbst zu
+*     stellen.
+      DATA ls_prev TYPE lcl_version=>ty_ver.
+      CLEAR ls_prev.
+      IF lv_from <= lines( lt_vers ).
+        LOOP AT lt_vers INTO DATA(ls_cand) FROM lv_from.
+          IF ls_cand-versno > '00000'.
+            ls_prev = ls_cand.
+            EXIT.
+          ENDIF.
+        ENDLOOP.
+      ENDIF.
+      IF ls_prev-versno IS INITIAL.
+*       Davor gab es nichts - der erste Transport dieses Teils.
+        APPEND VALUE ty_trrest(
+          kind = CONV string( ls_part-objtype )
+          name = lv_what
+          note = lcl_t=>ui( d = `keine abgelegte Vorgaengerversion`
+                            e = `no stored predecessor version` ) ) TO mt_versum.
+        CONTINUE.
+      ENDIF.
+
+      lt_old = lcl_version=>source( iv_objtype = ls_part-objtype
+                                    iv_objname = ls_part-objname
+                                    iv_versno  = ls_prev-versno ).
+      IF lt_old IS INITIAL AND lt_new IS INITIAL.
+        APPEND VALUE ty_trrest(
+          kind = CONV string( ls_part-objtype )
+          name = lv_what
+          note = lcl_t=>ui( d = `Inhalt nicht lesbar`
+                            e = `content cannot be read` ) ) TO mt_versum.
+        CONTINUE.
+      ENDIF.
+
+      DATA lt_rows TYPE lcl_diff=>ty_rows.
+      DATA lv_add  TYPE i.
+      DATA lv_del  TYPE i.
+      DATA lv_cut  TYPE abap_bool.
+      lcl_diff=>compare( EXPORTING it_old  = lt_old
+                                   it_new  = lt_new
+                         IMPORTING et_rows = lt_rows
+                                   ev_add  = lv_add
+                                   ev_del  = lv_del
+                                   ev_cut  = lv_cut ).
+      IF lv_add = 0 AND lv_del = 0.
+        APPEND VALUE ty_trrest(
+          kind = CONV string( ls_part-objtype )
+          name = lv_what
+          note = |{ lcl_t=>ui( d = `unveraendert gegenueber` e = `unchanged against` ) } | &&
+                 |{ COND string( WHEN ls_prev-korrnum IS NOT INITIAL THEN ls_prev-korrnum
+                                 ELSE lcl_t=>ui( d = `der Vorversion` e = `the previous version` ) ) }| ) TO mt_versum.
+        CONTINUE.
+      ENDIF.
+
+      lv_ref = |{ lcl_t=>t( d = 'Aenderungen gegenueber' e = 'Changes against' ) } | &&
+               |{ COND string( WHEN ls_prev-korrnum IS NOT INITIAL
+                               THEN ls_prev-korrnum
+                               ELSE lcl_t=>t( d = 'der Vorversion' e = 'the previous version' ) ) }| &&
+               | { lcl_t=>t( d = 'vom' e = 'of' ) } { ls_prev-datum DATE = ISO }| &&
+               |: +{ lv_add } / -{ lv_del } { lcl_t=>t( d = 'Zeilen' e = 'lines' ) }|.
+      IF ls_part-label IS NOT INITIAL.
+        lv_ref = |{ ls_part-label } - { lv_ref }|.
+      ENDIF.
+
+      DATA(lo_diff) = NEW lcl_object( iv_type = 'DIFF'
+                                      iv_name = CONV string( ls_part-objname ) ).
+      lo_diff->set_note( lv_ref ).
+      LOOP AT lt_rows INTO DATA(ls_d).
+        DATA(lv_no) = COND string(
+          WHEN ls_d-tag = '-' THEN |{ ls_d-old WIDTH = 6 ALIGN = RIGHT }|
+          WHEN ls_d-tag = '.' THEN `      `
+          ELSE                     |{ ls_d-new WIDTH = 6 ALIGN = RIGHT }| ).
+*       Das Kennzeichen steht im Schluesselfeld; die Ausgabe faerbt
+*       danach ein.
+        lo_diff->add_field( VALUE ty_field(
+          name     = |{ lv_no } { COND string( WHEN ls_d-tag = '=' THEN ` ` ELSE ls_d-tag ) }|
+          rollname = ls_d-text
+          keyflag  = boolc( ls_d-tag = '+' OR ls_d-tag = '-' ) ) ).
+      ENDLOOP.
+      IF lv_cut = abap_true.
+        lo_diff->set_truncated( abap_true ).
+*       Und sichtbar, nicht nur als Kennzeichen: ein Block, der nach
+*       zweihundert Zeilen endet, sieht sonst vollstaendig aus.
+        lo_diff->add_field( VALUE ty_field(
+          name     = `      .`
+          rollname = lcl_t=>t( d = `... weitere Unterschiede nicht ausgegeben`
+                               e = `... further differences not shown` ) ) ).
+      ENDIF.
+      io_chapter->add_object( lo_diff ).
+      mv_n_ver = mv_n_ver + 1.
+      APPEND VALUE ty_trrest(
+        kind = CONV string( ls_part-objtype )
+        name = lv_what
+        note = |+{ lv_add } / -{ lv_del } { lcl_t=>ui( d = `Zeilen gegenueber` e = `lines against` ) } | &&
+               |{ COND string( WHEN ls_prev-korrnum IS NOT INITIAL THEN ls_prev-korrnum
+                               ELSE lcl_t=>ui( d = `der Vorversion` e = `the previous version` ) ) }| ) TO mt_versum.
+
+    ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD transport_chapter.
+
+*   Kapitel 1 beim Startpunkt TR: der Auftrag selbst. Erst damit traegt
+*   das Dokument, woher seine Objekte stammen - Nummer, Art, Status,
+*   Kurztext, Eigentuemer, Zielsystem. Und die Liste dessen, was im
+*   Auftrag steht, aber kein dokumentierbares Objekt ist: sonst sucht
+*   sie jemand spaeter in den Kapiteln.
+*
+*   Das Kapitel traegt keine Definitionsdaten. Ein Import geht darueber
+*   hinweg - er arbeitet die Kapitel ab, die eine Definition haben.
+    DATA lv_title TYPE string.
+
+    lv_title = |{ lcl_t=>t( d = 'Transportauftrag' e = 'Transport request' ) } | &&
+               |{ ms_trhead-trkorr }|.
+    IF ms_trhead-text IS NOT INITIAL.
+      lv_title = |{ lv_title } - { ms_trhead-text }|.
+    ENDIF.
+
+    ro_chapter = NEW lcl_chapter( iv_id    = '1'
+                                  iv_level = 1
+                                  iv_type  = 'TRANSPORT'
+                                  iv_title = lv_title ).
+
+    DATA(lo_head) = NEW lcl_object( iv_type = 'ATTR'
+                                    iv_name = CONV string( ms_trhead-trkorr ) ).
+    lo_head->set_note( lcl_t=>t( d = 'Auftrag' e = 'Request' ) ).
+
+    lo_head->add_field( VALUE ty_field(
+      name     = lcl_t=>t( d = 'Auftrag / Aufgabe' e = 'Request / task' )
+      rollname = CONV string( ms_trhead-trkorr ) ) ).
+    IF ms_trhead-parent IS NOT INITIAL.
+      lo_head->add_field( VALUE ty_field(
+        name     = lcl_t=>t( d = 'Aufgabe zu Auftrag' e = 'Task of request' )
+        rollname = CONV string( ms_trhead-parent ) ) ).
+    ENDIF.
+    lo_head->add_field( VALUE ty_field(
+      name     = lcl_t=>t( d = 'Art' e = 'Kind' )
+      rollname = ms_trhead-func ) ).
+    lo_head->add_field( VALUE ty_field(
+      name     = lcl_t=>t( d = 'Status' e = 'Status' )
+      rollname = ms_trhead-status ) ).
+    IF ms_trhead-text IS NOT INITIAL.
+      lo_head->add_field( VALUE ty_field(
+        name     = lcl_t=>t( d = 'Kurztext' e = 'Short text' )
+        rollname = ms_trhead-text ) ).
+    ENDIF.
+    lo_head->add_field( VALUE ty_field(
+      name     = lcl_t=>t( d = 'Eigentuemer' e = 'Owner' )
+      rollname = ms_trhead-owner ) ).
+    lo_head->add_field( VALUE ty_field(
+      name     = lcl_t=>t( d = 'Datum' e = 'Date' )
+      rollname = ms_trhead-date ) ).
+    IF ms_trhead-target IS NOT INITIAL.
+      lo_head->add_field( VALUE ty_field(
+        name     = lcl_t=>t( d = 'Zielsystem' e = 'Target system' )
+        rollname = CONV string( ms_trhead-target ) ) ).
+    ENDIF.
+    IF ms_trhead-tasks > 0.
+      lo_head->add_field( VALUE ty_field(
+        name     = lcl_t=>t( d = 'Aufgaben darunter' e = 'Tasks below it' )
+        rollname = |{ ms_trhead-tasks }| ) ).
+    ENDIF.
+*   Ein freigegebener Auftrag dokumentiert, was drin war; ein
+*   aenderbarer, was gerade drin ist. Das gehoert ins Dokument, nicht
+*   nur in die Listausgabe des Laufs.
+    lo_head->add_field( VALUE ty_field(
+      name     = lcl_t=>t( d = 'Dokumentierter Stand' e = 'Documented state' )
+      rollname = COND string(
+        WHEN ms_trhead-closed = abap_true
+        THEN lcl_t=>t( d = 'freigegeben - Inhalt zum Zeitpunkt der Freigabe'
+                       e = 'released - content as of the release' )
+        ELSE lcl_t=>t( d = 'aenderbar - Inhalt zum Zeitpunkt dieses Laufs'
+                       e = 'modifiable - content as of this run' ) ) ) ).
+    ro_chapter->add_object( lo_head ).
+
+    IF mt_trrest IS NOT INITIAL.
+      DATA(lo_rest) = NEW lcl_object( iv_type = 'LIST'
+                                      iv_name = CONV string( ms_trhead-trkorr ) ).
+      lo_rest->set_note( lcl_t=>t( d = 'Nicht als Objekt dokumentiert'
+                                   e = 'Not documented as an object' ) ).
+      LOOP AT mt_trrest INTO DATA(ls_rest).
+        lo_rest->add_field( VALUE ty_field(
+          name     = condense( |{ ls_rest-kind } { ls_rest-name }| )
+          rollname = ls_rest-note ) ).
+      ENDLOOP.
+      lo_rest->set_row_count( lines( mt_trrest ) ).
+      ro_chapter->add_object( lo_rest ).
+    ENDIF.
+
+  ENDMETHOD.
+
   METHOD collect_single.
 
 *   Die ersten Kapitel sind die Objekte, nach denen gefragt wurde -
@@ -12186,6 +13049,16 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     DATA lv_depth TYPE i.
     DATA lv_sno   TYPE i.
 
+*   Beim Startpunkt TR steht der Auftrag selbst in Kapitel 1: ohne ihn
+*   waere das Dokument eine Liste von Objekten, der man nicht ansieht,
+*   woher sie stammt. Die Startobjekte beginnen dann bei 2.
+    DATA lo_trchap TYPE REF TO lcl_chapter.
+    IF ms_trhead-trkorr IS NOT INITIAL.
+      lo_trchap = transport_chapter( ).
+      co_document->add_chapter( lo_trchap ).
+      lv_sno = 1.
+    ENDIF.
+
     LOOP AT lt_start INTO DATA(ls_start).
 
       READ TABLE lt_done TRANSPORTING NO FIELDS
@@ -12198,14 +13071,43 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       mv_n_tot = mv_n_tot + 1.
       mv_n_obj = mv_n_obj + 1.
 
-      co_document->add_chapter( document_object( iv_type  = ls_start-type
-                                                 iv_name  = ls_start-name
-                                                 iv_id    = |{ lv_sno }|
-                                                 iv_level = 1
-                                                 iv_calls = abap_true
-                                                 iv_root  = abap_true ) ).
+      DATA(lo_schap) = document_object( iv_type  = ls_start-type
+                                        iv_name  = ls_start-name
+                                        iv_id    = |{ lv_sno }|
+                                        iv_level = 1
+                                        iv_calls = abap_true
+                                        iv_root  = abap_true ).
+*     Beim Startpunkt TR auf Wunsch: was hat sich gegenueber dem
+*     vorigen Transport geaendert?
+      IF mv_trver = abap_true AND mt_trkorr IS NOT INITIAL.
+        version_diff( iv_type    = ls_start-type
+                      iv_name    = ls_start-name
+                      io_chapter = lo_schap ).
+      ENDIF.
+      co_document->add_chapter( lo_schap ).
 
       APPEND VALUE #( type = ls_start-type name = ls_start-name ) TO lt_done.
+
+*     Die Includes eines Programms gehoeren zum Programm und stehen
+*     direkt darunter - immer, nicht erst mit "Ausgehende Aufrufe". Was
+*     in ihnen aufgerufen wird, zaehlt wie ein Aufruf des Programms.
+      IF ls_start-type = 'PROG'.
+        DATA lt_sinc TYPE ty_objrefs.
+        add_includes( EXPORTING io_parent = lo_schap
+                                iv_id     = |{ lv_sno }|
+                                iv_level  = 2
+                                it_progs  = VALUE #( ( ls_start-name ) )
+                                iv_force  = abap_false
+                      IMPORTING et_inc    = lt_sinc
+                      CHANGING  ct_done   = lt_done
+                                cv_trunc  = cv_trunc ).
+        IF mv_calls = abap_true AND mv_rdep > 0.
+          LOOP AT lt_sinc INTO DATA(ls_sinc).
+            APPEND LINES OF collect_refs( iv_type = 'PROG'
+                                          iv_name = ls_sinc-name ) TO lt_queue.
+          ENDLOOP.
+        ENDIF.
+      ENDIF.
 
 *     Breadth first, so that the direct neighbours of the start objects
 *     are documented before anything further out.
@@ -12216,7 +13118,29 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
     ENDLOOP.
 
-    IF lv_sno = 0.
+*   Der Versionsvergleich bekommt eine Uebersicht im Kapitel des
+*   Auftrags: je Teil eine Zeile, auch wenn es nichts zu vergleichen
+*   gab. Sonst sucht man einen Block, den es aus gutem Grund nicht
+*   gibt - und weiss nicht, welcher Grund das ist.
+    IF lo_trchap IS BOUND AND mt_versum IS NOT INITIAL.
+      DATA(lo_vsum) = NEW lcl_object( iv_type = 'LIST'
+                                      iv_name = CONV string( ms_trhead-trkorr ) ).
+      lo_vsum->set_note( lcl_t=>t( d = 'Vergleich mit der Vorgaengerversion'
+                                   e = 'Comparison with the previous version' ) ).
+      SORT mt_versum BY name.
+      LOOP AT mt_versum INTO DATA(ls_vs).
+        lo_vsum->add_field( VALUE ty_field( name     = ls_vs-name
+                                            rollname = ls_vs-note ) ).
+      ENDLOOP.
+      lo_vsum->set_row_count( lines( mt_versum ) ).
+      lo_trchap->add_object( lo_vsum ).
+    ENDIF.
+
+*   Ohne Startobjekt gibt es nichts zu gruppieren. Beim Startpunkt TR
+*   steht die 1 schon fuer den Auftrag - dann zaehlt erst ab 2 ein
+*   Objekt.
+    IF ( ms_trhead-trkorr IS INITIAL AND lv_sno = 0 )
+      OR ( ms_trhead-trkorr IS NOT INITIAL AND lv_sno <= 1 ).
       RETURN.
     ENDIF.
 
@@ -12488,6 +13412,9 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     DELETE ADJACENT DUPLICATES FROM lt_all.
 
     DATA lv_pno TYPE i.
+*   Programme dieses Laufs - fuer die Includes aus anderen Paketen.
+    DATA lt_pprog TYPE ty_names.
+    DATA lt_pdone TYPE ty_objrefs.
 
     LOOP AT lt_all INTO DATA(lv_pack).
 
@@ -12633,6 +13560,11 @@ CLASS lcl_collector_dev IMPLEMENTATION.
         lv_ono = lv_ono + 1.
         mv_n_obj = mv_n_obj + 1.
 
+        IF ls_tadir-object_type = 'PROG'.
+          APPEND ls_tadir-object_name TO lt_pprog.
+          APPEND VALUE #( type = 'PROG' name = ls_tadir-object_name ) TO lt_pdone.
+        ENDIF.
+
         DATA(lo_ochap) = NEW lcl_chapter(
           iv_id    = |{ lv_pno }.{ lv_tno }.{ lv_ono }|
           iv_level = 3
@@ -12702,6 +13634,33 @@ CLASS lcl_collector_dev IMPLEMENTATION.
 
     ENDLOOP.
 
+*   Includes, die Programme dieses Laufs einbinden, die aber in keinem
+*   der Pakete liegen (anderes Paket, $TMP). Ohne sie fehlte z. B. das
+*   TOP-Include mit den globalen Daten, obwohl das Programm ohne es nicht
+*   kompiliert. Eigenes Kapitel, damit die Paketfremdheit sichtbar ist;
+*   das Paket steht im Objektkopf. SAP-Includes bleiben draussen.
+    IF lt_pprog IS NOT INITIAL.
+      DATA(lv_ino) = lv_pno + 1.
+      DATA(lo_ichap) = NEW lcl_chapter(
+        iv_id    = |{ lv_ino }|
+        iv_level = 1
+        iv_type  = 'GROUP'
+        iv_title = lcl_t=>t( d = `Eingebundene Includes aus anderen Paketen`
+                             e = `Included includes from other packages` ) ).
+      DATA lt_pinc TYPE ty_objrefs.
+      add_includes( EXPORTING io_parent = lo_ichap
+                              iv_id     = |{ lv_ino }|
+                              iv_level  = 2
+                              it_progs  = lt_pprog
+                              iv_force  = abap_true
+                    IMPORTING et_inc    = lt_pinc
+                    CHANGING  ct_done   = lt_pdone
+                              cv_trunc  = lv_trunc ).
+      IF lines( lo_ichap->get_children( ) ) > 0.
+        ro_document->add_chapter( lo_ichap ).
+      ENDIF.
+    ENDIF.
+
     ro_document->set_meta( VALUE ty_meta(
       version    = gc_version
       doc_type   = 'DEV'
@@ -12716,6 +13675,10 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       src_trunc  = mv_src_trunc
       src_limit  = mv_maxsrc ) ).
 
+  ENDMETHOD.
+
+  METHOD get_stat_versions.
+    rv = mv_n_ver.
   ENDMETHOD.
 
   METHOD get_stat_packages.
@@ -12780,6 +13743,10 @@ FORM stype_list CHANGING ct_list TYPE ty_stypes.
       ( code = 'SF' text = 'Smart Form' )
       ( code = 'AF' text = 'Adobe Form (Formular)' )
       ( code = 'AI' text = 'Adobe Form (Schnittstelle)' )
+*     Auch kein einzelnes Objekt: die Objektliste eines
+*     Transportauftrags oder einer Aufgabe. Im Namensfeld steht die
+*     Auftragsnummer.
+      ( code = 'TR' text = 'Transportauftrag / Aufgabe' )
 *     Kein Objekt, sondern eine Liste davon: die Fehlliste, die der
 *     IMG-Report im Zielsystem geschrieben hat. Der Startpunkt steht
 *     dann in der Datei, nicht im Namensfeld.
@@ -12806,6 +13773,7 @@ FORM stype_list CHANGING ct_list TYPE ty_stypes.
       ( code = 'SF' text = 'Smart Form' )
       ( code = 'AF' text = 'Adobe Form' )
       ( code = 'AI' text = 'Adobe Form interface' )
+      ( code = 'TR' text = 'Transport request / task' )
       ( code = 'AL' text = 'Work list from request list' ) ).
   ENDIF.
 
@@ -12905,6 +13873,20 @@ FORM f4_sval.
         INTO CORRESPONDING FIELDS OF TABLE @lt_hit
         UP TO 300 ROWS.
 
+    WHEN 'TR'.
+*     Die eigenen Auftraege und Aufgaben, die neuesten zuerst - wer
+*     einen Transport dokumentieren will, meint fast immer einen der
+*     letzten. Fremde stehen nicht drin; wer eine Nummer kennt, kann
+*     sie eintippen.
+      SELECT e~trkorr AS name, t~as4text AS text
+        FROM e070 AS e
+        LEFT OUTER JOIN e07t AS t
+          ON t~trkorr = e~trkorr AND t~langu = @sy-langu
+        WHERE e~trkorr LIKE @lv_like AND e~as4user = @sy-uname
+        ORDER BY e~trkorr DESCENDING
+        INTO CORRESPONDING FIELDS OF TABLE @lt_hit
+        UP TO 300 ROWS.
+
     WHEN OTHERS.
       CASE p_stype.
         WHEN 'P'.  lv_obj = 'PROG'.
@@ -12968,6 +13950,16 @@ FORM screen_mode.
 
   LOOP AT SCREEN.
     CASE screen-name.
+*     Der Versionsvergleich ergibt nur bei einem Transport einen Sinn -
+*     sonst gibt es keinen Vorgaenger, gegen den sich vergleichen
+*     liesse. Statt ihn grau zu zeigen, kommt er ganz weg.
+      WHEN 'P_TRVER' OR 'GV_TVERS'.
+        IF p_imp = abap_false AND p_stype = 'TR'.
+          screen-active = 1.
+        ELSE.
+          screen-active = 0.
+        ENDIF.
+        MODIFY SCREEN.
       WHEN 'P_STYPE' OR 'P_SVAL'.
 *       Only greyed out, never marked required. A required flag is
 *       enforced by the runtime on the next round trip, and the next
@@ -13467,8 +14459,12 @@ FORM ren_apply CHANGING cv_xml TYPE string.
 
   LOOP AT gt_ren INTO DATA(ls).
     CHECK ls-newname <> ls-oldname.
-    REPLACE ALL OCCURRENCES OF PCRE |\\b{ ls-oldname }\\b|
-      IN cv_xml WITH ls-newname IGNORING CASE.
+"    REPLACE ALL OCCURRENCES OF PCRE |\\b{ ls-oldname }\\b|        CGA 2026-11-09
+"      IN cv_xml WITH ls-newname IGNORING CASE.
+    DATA(lv_pat) = `\b` && escape( val    = ls-oldname
+                                   format = cl_abap_format=>e_regex ) && `\b`.
+    REPLACE ALL OCCURRENCES OF REGEX lv_pat
+      IN cv_xml WITH ls-newname IGNORING CASE ##REGEX_POSIX.
   ENDLOOP.
 
 ENDFORM.
@@ -13793,6 +14789,223 @@ CLASS lcl_request IMPLEMENTATION.
 ENDCLASS.
 
 *----------------------------------------------------------------------*
+* lcl_transport - die Objektliste eines Transportauftrags
+*----------------------------------------------------------------------*
+* Ein Auftrag ist nichts anderes als eine Liste aus Objekttyp und Name -
+* genau das, was der Startpunkt "Arbeitsliste" schon verarbeitet. Diese
+* Klasse holt sie aus dem Korrektursystem, statt aus einer Datei.
+*
+* Drei Dinge machen die Arbeit aus:
+*
+*   - Die Objekte haengen bei einem Auftrag an seinen Aufgaben, nicht am
+*     Auftrag selbst. Gelesen werden deshalb beide Ebenen.
+*   - E071 mischt ganze Objekte (R3TR) mit Teilen davon (LIMU): eine
+*     Methode, ein Include, eine Tabellendefinition. Dokumentiert wird
+*     das Objekt, zu dem der Teil gehoert, und jedes nur einmal.
+*   - Customizing-Eintraege sind Tabellenschluessel, keine
+*     Repository-Objekte. Sie gehoeren in den IMG-Report; hier werden
+*     sie nur genannt, damit niemand sie im Dokument sucht.
+*
+* Gelesen wird ausschliesslich. TR_CHECK_TYPE uebersetzt nur den
+* Schluessel - trotz seines Kurztexts legt es nichts an.
+*----------------------------------------------------------------------*
+CLASS lcl_transport DEFINITION.
+  PUBLIC SECTION.
+*   Kopf und Nicht-Objekte stehen als ty_trhead / ty_trrests oben bei
+*   den globalen Typen - der Collector braucht sie ebenfalls.
+    CLASS-METHODS read
+      IMPORTING iv_trkorr  TYPE clike
+      EXPORTING es_head    TYPE ty_trhead
+                et_objs    TYPE ty_objrefs
+                et_rest    TYPE ty_trrests
+*               Auftrag und Aufgaben, aus denen gelesen wurde
+                et_trkorr  TYPE ty_trkorrs
+                ev_error   TYPE string.
+
+  PRIVATE SECTION.
+    CLASS-METHODS func_text
+      IMPORTING iv_func        TYPE clike
+      RETURNING VALUE(rv_text) TYPE string.
+    CLASS-METHODS stat_text
+      IMPORTING iv_stat        TYPE clike
+      RETURNING VALUE(rv_text) TYPE string.
+ENDCLASS.
+
+CLASS lcl_transport IMPLEMENTATION.
+
+  METHOD func_text.
+    CASE iv_func.
+      WHEN 'K'. rv_text = lcl_t=>ui( d = `Workbench-Auftrag` e = `workbench request` ).
+      WHEN 'W'. rv_text = lcl_t=>ui( d = `Customizing-Auftrag` e = `customizing request` ).
+      WHEN 'T'. rv_text = lcl_t=>ui( d = `Transport of Copies` e = `transport of copies` ).
+      WHEN 'C'. rv_text = lcl_t=>ui( d = `Umzugsauftrag` e = `relocation request` ).
+      WHEN 'S'. rv_text = lcl_t=>ui( d = `Entwicklungsaufgabe` e = `development task` ).
+      WHEN 'R'. rv_text = lcl_t=>ui( d = `Reparaturaufgabe` e = `repair task` ).
+      WHEN 'Q'. rv_text = lcl_t=>ui( d = `Customizing-Aufgabe` e = `customizing task` ).
+      WHEN 'X'. rv_text = lcl_t=>ui( d = `Unklassifizierte Aufgabe` e = `unclassified task` ).
+      WHEN OTHERS. rv_text = |{ iv_func }|.
+    ENDCASE.
+  ENDMETHOD.
+
+  METHOD stat_text.
+    CASE iv_stat.
+      WHEN 'D'. rv_text = lcl_t=>ui( d = `aenderbar` e = `modifiable` ).
+      WHEN 'L'. rv_text = lcl_t=>ui( d = `aenderbar, geschuetzt` e = `modifiable, protected` ).
+      WHEN 'O'. rv_text = lcl_t=>ui( d = `Freigabe gestartet` e = `release started` ).
+      WHEN 'R'. rv_text = lcl_t=>ui( d = `freigegeben` e = `released` ).
+      WHEN 'N'. rv_text = lcl_t=>ui( d = `freigegeben, Importfehler` e = `released, import error` ).
+      WHEN OTHERS. rv_text = |{ iv_stat }|.
+    ENDCASE.
+  ENDMETHOD.
+
+  METHOD read.
+
+    DATA lv_tr   TYPE trkorr.
+    DATA lt_tr   TYPE STANDARD TABLE OF trkorr WITH EMPTY KEY.
+    DATA ls_e071 TYPE e071.
+    DATA ls_tadir TYPE tadir.
+    DATA lv_res  TYPE trpari-s_checked.
+    DATA lv_kind TYPE string.
+
+    CLEAR: es_head, et_objs, et_rest, et_trkorr, ev_error.
+    lv_tr = to_upper( condense( CONV string( iv_trkorr ) ) ).
+
+    SELECT SINGLE trkorr, trfunction, trstatus, tarsystem, as4user, as4date, strkorr
+      FROM e070 WHERE trkorr = @lv_tr
+      INTO @DATA(ls_e070).
+    IF sy-subrc <> 0.
+      ev_error = |{ lcl_t=>ui( d = `Auftrag oder Aufgabe nicht gefunden:`
+                               e = `Request or task not found:` ) } { lv_tr }|.
+      RETURN.
+    ENDIF.
+
+    es_head-trkorr = ls_e070-trkorr.
+    es_head-parent = ls_e070-strkorr.
+    es_head-func   = func_text( ls_e070-trfunction ).
+    es_head-status = stat_text( ls_e070-trstatus ).
+    es_head-target = ls_e070-tarsystem.
+    es_head-owner  = ls_e070-as4user.
+    es_head-date   = |{ ls_e070-as4date DATE = ISO }|.
+    es_head-closed = boolc( ls_e070-trstatus = 'R' OR ls_e070-trstatus = 'N' ).
+
+    SELECT SINGLE as4text FROM e07t
+      WHERE trkorr = @lv_tr AND langu = @sy-langu
+      INTO @DATA(lv_text).
+    IF sy-subrc <> 0.
+      SELECT SINGLE as4text FROM e07t WHERE trkorr = @lv_tr INTO @lv_text.
+    ENDIF.
+    es_head-text = lv_text.
+
+    APPEND lv_tr TO lt_tr.
+    SELECT trkorr FROM e070 WHERE strkorr = @lv_tr
+      INTO TABLE @DATA(lt_task).
+    LOOP AT lt_task INTO DATA(ls_task).
+      APPEND ls_task-trkorr TO lt_tr.
+    ENDLOOP.
+    es_head-tasks = lines( lt_task ).
+    et_trkorr = lt_tr.
+
+    SELECT trkorr, pgmid, object, obj_name, objfunc
+      FROM e071
+      FOR ALL ENTRIES IN @lt_tr
+      WHERE trkorr = @lt_tr-table_line
+      INTO TABLE @DATA(lt_e071).
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+    SORT lt_e071 BY pgmid object obj_name.
+
+    LOOP AT lt_e071 INTO DATA(ls_e).
+
+      lv_kind = condense( |{ ls_e-pgmid } { ls_e-object }| ).
+
+*     Eine Loeschzeile dokumentiert nichts - das Objekt soll im
+*     Zielsystem gerade verschwinden. Nur 'D' heisst geloescht: 'K'
+*     steht laut Domaene fuer "Objektschluessel gemaess Eintraegen in
+*     der Schluesselliste" und ist der Normalfall jedes
+*     Customizing-Eintrags, 'M' fuer "Loeschen und Neuanlegen auf der
+*     Datenbank" - das Objekt reist also mit.
+      IF ls_e-objfunc = 'D'.
+        APPEND VALUE ty_trrest( kind = lv_kind
+                              name = ls_e-obj_name
+                              note = lcl_t=>ui( d = `Loeschung`
+                                                e = `deletion` ) ) TO et_rest.
+        CONTINUE.
+      ENDIF.
+
+*     Customizing: Tabellenschluessel, kein Repository-Objekt.
+      IF ls_e-object = 'TABU' OR ls_e-object = 'CDAT' OR ls_e-object = 'TDAT'
+        OR ls_e-object = 'VDAT' OR ls_e-object = 'TLOGO'.
+*       Die Schluessel stehen in E071K unter dem Tabellennamen. Bei
+*       einem Sammeleintrag wie CDAT ist das nicht der Name aus E071 -
+*       dort tragen die Schluesselzeilen die einzelnen Tabellen und
+*       verweisen ueber MASTERNAME auf den Sammeleintrag. Ohne die
+*       zweite Bedingung meldete APPL_LOG null Schluessel und haette
+*       doch vier.
+        SELECT COUNT(*) FROM e071k
+          WHERE trkorr = @ls_e-trkorr
+            AND ( objname = @ls_e-obj_name OR mastername = @ls_e-obj_name ).
+        APPEND VALUE ty_trrest(
+          kind = lv_kind
+          name = ls_e-obj_name
+          note = |{ lcl_t=>ui( d = `Customizing, ` e = `customizing, ` ) }| &&
+                 |{ sy-dbcnt } { lcl_t=>ui( d = `Schluessel - siehe IMG-Report`
+                                            e = `keys - see the IMG report` ) }| ) TO et_rest.
+        CONTINUE.
+      ENDIF.
+
+*     LIMU-Zeilen zeigen auf einen Teil eines Objekts. TR_CHECK_TYPE
+*     liefert den Katalogschluessel des Ganzen - dieselbe Uebersetzung,
+*     die das Korrektursystem selbst benutzt.
+      CLEAR: ls_e071, ls_tadir, lv_res.
+      ls_e071-pgmid    = ls_e-pgmid.
+      ls_e071-object   = ls_e-object.
+      ls_e071-obj_name = ls_e-obj_name.
+      CALL FUNCTION 'TR_CHECK_TYPE'
+        EXPORTING wi_e071   = ls_e071
+        IMPORTING pe_result = lv_res
+                  we_tadir  = ls_tadir.
+
+      IF ls_tadir-object IS INITIAL OR ls_tadir-obj_name IS INITIAL.
+        APPEND VALUE ty_trrest( kind = lv_kind
+                              name = ls_e-obj_name
+                              note = lcl_t=>ui( d = `kein Katalogobjekt`
+                                                e = `no catalog object` ) ) TO et_rest.
+        CONTINUE.
+      ENDIF.
+
+*     Ein Eintrag kann auf ein Objekt zeigen, das es nicht mehr gibt -
+*     geloescht, oder nie angelegt, weil der Auftrag aus einem anderen
+*     System stammt. Das gehoert vermerkt, nicht uebergangen.
+      SELECT COUNT(*) FROM tadir
+        WHERE pgmid = 'R3TR' AND object = @ls_tadir-object
+          AND obj_name = @ls_tadir-obj_name AND delflag = @abap_false.
+      IF sy-subrc <> 0.
+        APPEND VALUE ty_trrest(
+          kind = condense( |R3TR { ls_tadir-object }| )
+          name = ls_tadir-obj_name
+          note = lcl_t=>ui( d = `im System nicht vorhanden`
+                            e = `not present in this system` ) ) TO et_rest.
+        CONTINUE.
+      ENDIF.
+
+      READ TABLE et_objs TRANSPORTING NO FIELDS
+           WITH KEY type = ls_tadir-object name = ls_tadir-obj_name.
+      IF sy-subrc <> 0.
+        APPEND VALUE ty_objref( type = ls_tadir-object
+                                name = ls_tadir-obj_name ) TO et_objs.
+      ENDIF.
+
+    ENDLOOP.
+
+    SORT et_rest BY kind name note.
+    DELETE ADJACENT DUPLICATES FROM et_rest COMPARING kind name note.
+
+  ENDMETHOD.
+
+ENDCLASS.
+
+*----------------------------------------------------------------------*
 * Fehlliste einlesen
 *----------------------------------------------------------------------*
 FORM read_request CHANGING ct_objs   TYPE ty_objrefs
@@ -13902,6 +15115,67 @@ START-OF-SELECTION.
     SKIP.
   ENDIF.
 
+* Beim Startpunkt-Typ TR kommen die Objekte aus dem Korrektursystem.
+* Was im Auftrag steht, aber kein dokumentierbares Objekt ist, wird
+* vorweg genannt - sonst sucht es jemand spaeter im Dokument.
+  DATA ls_trhead TYPE ty_trhead.
+  DATA lt_trrest TYPE ty_trrests.
+  DATA lt_trkorr TYPE ty_trkorrs.
+  IF p_stype = 'TR'.
+    DATA lv_trerr TYPE string.
+    lcl_transport=>read( EXPORTING iv_trkorr = p_sval
+                         IMPORTING es_head   = ls_trhead
+                                   et_objs   = lt_start
+                                   et_rest   = lt_trrest
+                                   et_trkorr = lt_trkorr
+                                   ev_error  = lv_trerr ).
+    WRITE: / lcl_t=>ui( d = `Documizer - Entwicklerdokumentation` e = `Documizer - developer documentation` ).
+    ULINE.
+    IF lv_trerr IS NOT INITIAL.
+      WRITE: / lv_trerr.
+      RETURN.
+    ENDIF.
+    WRITE: / lcl_t=>ui( d = `Auftrag                          :` e = `Request                          :` ),
+             ls_trhead-trkorr, ls_trhead-func, '/', ls_trhead-status.
+    IF ls_trhead-parent IS NOT INITIAL.
+      WRITE: / lcl_t=>ui( d = `Aufgabe zu Auftrag               :` e = `Task of request                  :` ), ls_trhead-parent.
+    ENDIF.
+    IF ls_trhead-text IS NOT INITIAL.
+      WRITE: / lcl_t=>ui( d = `Kurztext                         :` e = `Short text                       :` ), ls_trhead-text.
+    ENDIF.
+    WRITE: / lcl_t=>ui( d = `Eigentuemer, Datum               :` e = `Owner, date                      :` ),
+             ls_trhead-owner, ls_trhead-date.
+    IF ls_trhead-target IS NOT INITIAL.
+      WRITE: / lcl_t=>ui( d = `Zielsystem                       :` e = `Target system                    :` ), ls_trhead-target.
+    ENDIF.
+    IF ls_trhead-tasks > 0.
+      WRITE: / lcl_t=>ui( d = `Aufgaben darunter                :` e = `Tasks below it                   :` ), ls_trhead-tasks.
+    ENDIF.
+*   Ein freigegebener Auftrag dokumentiert, was drin war; ein
+*   aenderbarer, was gerade drin ist. Beides liest sich sonst gleich.
+    IF ls_trhead-closed = abap_false.
+      WRITE: / lcl_t=>ui(
+        d = `Der Auftrag ist noch aenderbar - dokumentiert wird sein Stand von jetzt.`
+        e = `The request is still modifiable - this documents its content as of now.` ).
+    ENDIF.
+    WRITE: / lcl_t=>ui( d = `Objekte im Auftrag               :` e = `Objects in the request           :` ), lines( lt_start ).
+    IF lt_trrest IS NOT INITIAL.
+      SKIP.
+      WRITE: / lcl_t=>ui( d = `Nicht als Objekt dokumentiert:`
+                          e = `Not documented as an object:` ).
+      LOOP AT lt_trrest INTO DATA(ls_rest).
+        WRITE: /4 ls_rest-kind, ls_rest-name, ls_rest-note.
+      ENDLOOP.
+    ENDIF.
+    IF lt_start IS INITIAL.
+      SKIP.
+      WRITE: / lcl_t=>ui( d = `Keine dokumentierbaren Objekte im Auftrag.`
+                          e = `No documentable objects in the request.` ).
+      RETURN.
+    ENDIF.
+    SKIP.
+  ENDIF.
+
   DATA(lo_collector) = NEW lcl_collector_dev( iv_stype  = p_stype
                                               iv_sval   = CONV string( p_sval )
                                               iv_rdep   = p_rdep
@@ -13924,7 +15198,11 @@ START-OF-SELECTION.
                                               iv_fsrc   = p_fsrc
                                               iv_udep   = p_udep
                                               iv_def    = p_def
-                                              it_start  = lt_start ).
+                                              it_start  = lt_start
+                                              is_trhead = ls_trhead
+                                              it_trrest = lt_trrest
+                                              it_trkorr = lt_trkorr
+                                              iv_trver  = p_trver ).
 
   DATA lo_coll TYPE REF TO lif_docu_collector.
   lo_coll = lo_collector.
@@ -13941,7 +15219,7 @@ START-OF-SELECTION.
 
   DATA(ls_docmeta) = lo_doc->get_meta( ).
 
-  IF p_stype <> 'AL'.
+  IF p_stype <> 'AL' AND p_stype <> 'TR'.
     WRITE: / lcl_t=>ui( d = `Documizer - Entwicklerdokumentation` e = `Documizer - developer documentation` ).
     ULINE.
   ENDIF.
@@ -13958,6 +15236,9 @@ START-OF-SELECTION.
   ENDIF.
   IF p_used = abap_true.
     WRITE: / lcl_t=>ui( d = `mit Verwendungsnachweis          :` e = `with where-used list             :` ), lo_collector->get_stat_usage( ).
+  ENDIF.
+  IF p_stype = 'TR' AND p_trver = abap_true.
+    WRITE: / lcl_t=>ui( d = `mit Versionsvergleich            :` e = `with version comparison          :` ), lo_collector->get_stat_versions( ).
   ENDIF.
   IF p_calls = abap_true.
     WRITE: / lcl_t=>ui( d = `mit ausgehenden Aufrufen         :` e = `with outgoing references         :` ), lo_collector->get_stat_calls( ).

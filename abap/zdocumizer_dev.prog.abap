@@ -1987,6 +1987,15 @@ CLASS lcl_importer DEFINITION.
 *   je Objekt - sonst steht das Protokoll voll mit derselben Zeile.
     DATA mt_said  TYPE STANDARD TABLE OF string WITH EMPTY KEY.
     DATA mt_log  TYPE ty_implog.
+*   Die Arbeitsliste des Laufs - fuer die Vorpruefung der Bausteine.
+    DATA mt_work TYPE ty_impwork.
+*   Was tatsaechlich geschrieben wurde (angelegt, geaendert, ergaenzt) -
+*   die Grundlage der Auftragskontrolle am Ende.
+    TYPES: BEGIN OF ty_done,
+             kind TYPE string,
+             name TYPE string,
+           END OF ty_done.
+    DATA mt_done TYPE STANDARD TABLE OF ty_done WITH EMPTY KEY.
 
     METHODS set_pack IMPORTING io_chapter TYPE REF TO lcl_chapter.
     METHODS warn_no_order IMPORTING iv_pack TYPE devclass.
@@ -2024,7 +2033,29 @@ CLASS lcl_importer DEFINITION.
     METHODS tadir
       IMPORTING iv_object      TYPE trobjtype
                 iv_name        TYPE sobj_name
+                iv_corr        TYPE abap_bool DEFAULT abap_true
       RETURNING VALUE(rv_ok)   TYPE abap_bool.
+*   Traegt ein Objekt mit Sperre in die Aufgabe unter MV_TR ein - der
+*   Eintrag in E071, den TR_TADIR_INTERFACE nicht schreibt. Fuer eine
+*   einzelne Nachricht (LIMU MESS) ist IV_NAME Klasse (20) + Nummer.
+    METHODS corr_insert
+      IMPORTING iv_object TYPE trobjtype
+                iv_name   TYPE csequence.
+*   Kontrolle nach dem Lauf: steht jedes geschriebene Objekt eines
+*   transportfaehigen Pakets im Auftrag oder einer seiner Aufgaben?
+    METHODS check_request IMPORTING it_work TYPE ty_impwork.
+    TYPES ty_trkorrs TYPE RANGE OF trkorr.
+    METHODS in_request
+      IMPORTING it_tr          TYPE ty_trkorrs
+                iv_kind        TYPE string
+                iv_name        TYPE string
+      RETURNING VALUE(rv_flag) TYPE abap_bool.
+*   Bausteine, die weder im Dokument noch aktiv im Zielsystem stehen.
+*   Leer, wenn alles da ist.
+    METHODS missing_parts
+      IMPORTING iv_kind        TYPE string
+                it_names       TYPE string_table
+      RETURNING VALUE(rv_text) TYPE string.
     METHODS put_doma IMPORTING io_chapter TYPE REF TO lcl_chapter
                                iv_name    TYPE string.
     METHODS put_dtel IMPORTING io_chapter TYPE REF TO lcl_chapter
@@ -2135,6 +2166,11 @@ CLASS lcl_importer IMPLEMENTATION.
 *   sy-subrc 0. Auf S4H nachgemessen. Es kommt also kein Dialog - aber
 *   auch kein Auftragseintrag. Die Objekte stehen dann im Paket und in
 *   keinem Auftrag, und das faellt erst beim Transportieren auf.
+*
+*   Einen Auftragseintrag erzeugt TR_TADIR_INTERFACE auch MIT KORRNUM
+*   nicht: es setzt nur das Feld TADIR-KORRNUM, schreibt aber weder E071
+*   noch eine Sperre. Den Eintrag macht CORR_INSERT - und der braucht
+*   einen Auftrag. Fehlt er, warnt diese Methode.
     IF mv_tr IS NOT INITIAL.
       RETURN.
     ENDIF.
@@ -2360,6 +2396,17 @@ CLASS lcl_importer IMPLEMENTATION.
                                 action = iv_action
                                 text   = iv_text
                                 tag    = iv_tag ) TO mt_log.
+
+*   Jede Zeile "angelegt", "geaendert" oder "ergaenzt" heisst: hier wurde
+*   geschrieben. Daran haengt die Auftragskontrolle am Ende - an einer
+*   Stelle statt in jeder put-Methode.
+    IF mv_test = abap_false AND iv_tag IS INITIAL AND iv_kind IS NOT INITIAL
+       AND ( iv_action = lcl_t=>ui( d = `angelegt` e = `created` )
+          OR iv_action = lcl_t=>ui( d = `angelegt, inaktiv` e = `created, inactive` )
+          OR iv_action = lcl_t=>ui( d = `geaendert` e = `changed` )
+          OR iv_action = lcl_t=>ui( d = `ergaenzt` e = `extended` ) ).
+      APPEND VALUE ty_done( kind = iv_kind name = iv_name ) TO mt_done.
+    ENDIF.
   ENDMETHOD.
 
   METHOD src_now.
@@ -2592,6 +2639,7 @@ CLASS lcl_importer IMPLEMENTATION.
 
 *   Domains before data elements before tables before programs.
     SORT lt_work BY seq name.
+    mt_work = lt_work.
 
 *   Im Testlauf steht vor jedem Objekt, was sich am Quelltext aendern
 *   wuerde. Wurde beim Export die Zeilengrenze erreicht, ist der
@@ -2663,6 +2711,7 @@ CLASS lcl_importer IMPLEMENTATION.
 *   A test run wrote nothing, so there is nothing to check.
     IF mv_test = abap_false.
       verify( lt_work ).
+      check_request( lt_work ).
     ENDIF.
 
   ENDMETHOD.
@@ -3177,6 +3226,10 @@ CLASS lcl_importer IMPLEMENTATION.
 
 *   $TMP and the other local packages carry no transport, and asking the
 *   correction system for one there ends in a dialog nobody sees.
+*
+*   KORRNUM landet nur im Katalog (TADIR-KORRNUM). Ein Eintrag in E071
+*   und die Sperre entstehen hier nicht - das macht CORR_INSERT am Ende
+*   dieser Methode.
     IF mv_pack NP '$*'.
       lv_corr = mv_tr.
     ENDIF.
@@ -3222,6 +3275,267 @@ CLASS lcl_importer IMPLEMENTATION.
     IF sy-subrc = 0.
       rv_ok = abap_true.
     ENDIF.
+
+*   Der Katalogeintrag allein bringt das Objekt in keinen Auftrag - siehe
+*   CORR_INSERT. Eine Nachrichtenklasse, die nur ergaenzt wurde, traegt
+*   PUT_MSAG selbst je Nachricht ein (IV_CORR = abap_false).
+    IF iv_corr = abap_true.
+      corr_insert( iv_object = iv_object iv_name = iv_name ).
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD corr_insert.
+
+*   Ohne diesen Aufruf landet ein Objekt in keinem Auftrag. INSERT REPORT,
+*   INSERT TEXTPOOL, DDIF_*_PUT und das direkte Schreiben in T100 haben
+*   keinen Korrekturanschluss, und TR_TADIR_INTERFACE setzt nur das Feld
+*   TADIR-KORRNUM - ohne Eintrag in E071 und ohne Sperre. Im Import-Test
+*   B4D -> PAD vom 19.11.2026 stand so kein einziges Objekt im Auftrag,
+*   obwohl das Protokoll Auftrag und Aufgabe nannte (Finding 1).
+*
+*   RS_CORR_INSERT ist der Weg, den die Workbench selbst geht: Eintrag in
+*   die Aufgabe des Anmeldebenutzers unter MV_TR, Sperre im Auftrag.
+*   DDIC-Objekte laufen ueber die Objektklasse DICT mit dem Typ vor dem
+*   Namen, alles andere ueber das R3TR- bzw. LIMU-Kuerzel selbst.
+*
+*   Ohne Dialog: gehoert der Auftrag einem anderen oder ist er
+*   freigegeben, kommt eine Ausnahme statt eines Popups, und das
+*   Protokoll sagt es.
+    DATA lv_class TYPE string.
+    DATA lv_obj   TYPE string.
+
+    IF mv_test = abap_true OR mv_pack CP '$*' OR mv_tr IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    CASE iv_object.
+      WHEN 'DOMA' OR 'DTEL' OR 'TABL' OR 'VIEW' OR 'TTYP' OR 'SHLP' OR 'ENQU'.
+        lv_class = 'DICT'.
+        lv_obj   = |{ iv_object }{ iv_name }|.
+      WHEN OTHERS.
+        lv_class = iv_object.
+        lv_obj   = iv_name.
+    ENDCASE.
+
+    CALL FUNCTION 'RS_CORR_INSERT'
+      EXPORTING  object                   = lv_obj
+                 object_class             = lv_class
+                 devclass                 = mv_pack
+                 korrnum                  = mv_tr
+                 use_korrnum_immediatedly = abap_true
+                 master_language          = sy-langu
+                 global_lock              = abap_true
+                 mode                     = 'I'
+                 suppress_dialog          = abap_true
+      EXCEPTIONS cancelled                = 1
+                 permission_failure       = 2
+                 unknown_objectclass      = 3
+                 OTHERS                   = 4.
+    IF sy-subrc <> 0.
+      DATA(lv_rc) = sy-subrc.
+      DATA(lv_msg) = last_message( ).
+      log( iv_kind   = CONV string( iv_object )
+           iv_name   = CONV string( iv_name )
+           iv_action = lcl_t=>ui( d = `ohne Auftrag` e = `without request` )
+           iv_text   = |RS_CORR_INSERT subrc { lv_rc } { lv_msg }| ).
+    ENDIF.
+
+  ENDMETHOD.
+
+  METHOD check_request.
+
+*   Die Kontrolle, die den Fehler aus Finding 1 sofort sichtbar gemacht
+*   haette: steht jedes geschriebene Objekt eines transportfaehigen
+*   Pakets im Auftrag oder in einer seiner Aufgaben? Gelesen wird nach
+*   dem COMMIT WORK in RUN - vorher sind die Eintraege nicht da.
+    DATA lt_tr  TYPE ty_trkorrs.
+    DATA lv_req TYPE trkorr.
+    DATA lv_dev TYPE devclass.
+    DATA lv_obj TYPE sobj_name.
+    DATA lv_n   TYPE i.
+    DATA lv_ok  TYPE i.
+
+    IF mv_test = abap_true OR mv_tr0 IS INITIAL OR mt_done IS INITIAL.
+      RETURN.
+    ENDIF.
+
+    SELECT SINGLE strkorr FROM e070 WHERE trkorr = @mv_tr0 INTO @DATA(lv_parent).
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+    lv_req = COND #( WHEN lv_parent IS INITIAL THEN mv_tr0 ELSE lv_parent ).
+
+    APPEND VALUE #( sign = 'I' option = 'EQ' low = lv_req ) TO lt_tr.
+    SELECT trkorr FROM e070 WHERE strkorr = @lv_req INTO TABLE @DATA(lt_sub).
+    LOOP AT lt_sub INTO DATA(ls_sub).
+      APPEND VALUE #( sign = 'I' option = 'EQ' low = ls_sub-trkorr ) TO lt_tr.
+    ENDLOOP.
+
+    DATA(lt_done) = mt_done.
+    SORT lt_done BY kind name.
+    DELETE ADJACENT DUPLICATES FROM lt_done COMPARING kind name.
+
+    LOOP AT lt_done INTO DATA(ls_done).
+*     Nur die Objekte der Arbeitsliste - Teilobjekte wie TEXT oder INDX
+*     haengen am Hauptobjekt und stehen mit ihm im Auftrag.
+      READ TABLE it_work TRANSPORTING NO FIELDS
+           WITH KEY kind = ls_done-kind name = ls_done-name.
+      IF sy-subrc <> 0.
+        CONTINUE.
+      ENDIF.
+      CLEAR lv_dev.
+      lv_obj = ls_done-name.
+      SELECT SINGLE devclass FROM tadir
+        WHERE pgmid = 'R3TR' AND object = @ls_done-kind AND obj_name = @lv_obj
+        INTO @lv_dev.
+      IF lv_dev IS INITIAL OR lv_dev CP '$*'.
+        CONTINUE.
+      ENDIF.
+      lv_n = lv_n + 1.
+      IF in_request( it_tr = lt_tr iv_kind = ls_done-kind iv_name = ls_done-name ) = abap_true.
+        lv_ok = lv_ok + 1.
+      ELSE.
+        log( iv_kind   = ls_done-kind
+             iv_name   = ls_done-name
+             iv_action = lcl_t=>ui( d = `nicht im Auftrag` e = `not in request` )
+             iv_text   = |{ lcl_t=>ui( d = `fehlt in` e = `missing from` ) } { lv_req }| ).
+      ENDIF.
+    ENDLOOP.
+
+    IF lv_n = 0.
+      RETURN.
+    ENDIF.
+    log( iv_kind   = 'TRKO'
+         iv_name   = CONV string( lv_req )
+         iv_action = lcl_t=>ui( d = `Auftragskontrolle` e = `request check` )
+         iv_text   = |{ lv_ok } { lcl_t=>ui( d = `von` e = `of` ) } { lv_n } | &&
+                     |{ lcl_t=>ui( d = `Objekten im Auftrag erfasst` e = `objects recorded in the request` ) }| ).
+
+  ENDMETHOD.
+
+  METHOD in_request.
+
+*   Ein Objekt kann als Ganzes (R3TR) oder in Teilen (LIMU) im Auftrag
+*   stehen. Beides zaehlt - wer nur Nachrichten ergaenzt oder nur eine
+*   Methode aendert, hat keinen R3TR-Eintrag.
+    DATA lv_obj  TYPE e071-obj_name.
+    DATA lv_like TYPE e071-obj_name.
+    DATA lv_limu TYPE e071-object.
+
+    lv_obj = iv_name.
+    SELECT COUNT(*) FROM e071
+      WHERE trkorr IN @it_tr AND object = @iv_kind AND obj_name = @lv_obj.
+    IF sy-subrc = 0.
+      rv_flag = abap_true.
+      RETURN.
+    ENDIF.
+
+    CASE iv_kind.
+
+      WHEN 'MSAG'.
+*       LIMU MESS: Klasse auf 20 Stellen, dahinter die Nummer. LIKE allein
+*       traefe auch ZBSD_X bei ZBSD - die ersten 20 Stellen entscheiden.
+        lv_like = |{ iv_name }%|.
+        SELECT obj_name FROM e071
+          WHERE trkorr IN @it_tr AND object = 'MESS' AND obj_name LIKE @lv_like
+          INTO TABLE @DATA(lt_mess).
+        LOOP AT lt_mess INTO DATA(ls_mess).
+          IF ls_mess-obj_name(20) = iv_name.
+            rv_flag = abap_true.
+            RETURN.
+          ENDIF.
+        ENDLOOP.
+
+      WHEN 'CLAS' OR 'INTF'.
+        lv_like = |{ iv_name }%|.
+        SELECT obj_name FROM e071
+          WHERE trkorr IN @it_tr
+            AND object IN ( 'CLSD', 'CPUB', 'CPRO', 'CPRI', 'INTD', 'METH' )
+            AND obj_name LIKE @lv_like
+          INTO TABLE @DATA(lt_cls).
+        LOOP AT lt_cls INTO DATA(ls_cls).
+          IF ls_cls-obj_name = iv_name OR ls_cls-obj_name(30) = iv_name.
+            rv_flag = abap_true.
+            RETURN.
+          ENDIF.
+        ENDLOOP.
+
+      WHEN 'FUGR'.
+        DATA lv_pname TYPE tfdir-pname.
+        lv_pname = |SAPL{ iv_name }|.
+        SELECT funcname FROM tfdir WHERE pname = @lv_pname INTO TABLE @DATA(lt_fm).
+        LOOP AT lt_fm INTO DATA(ls_fm).
+          lv_obj = ls_fm-funcname.
+          SELECT COUNT(*) FROM e071
+            WHERE trkorr IN @it_tr AND object = 'FUNC' AND obj_name = @lv_obj.
+          IF sy-subrc = 0.
+            rv_flag = abap_true.
+            RETURN.
+          ENDIF.
+        ENDLOOP.
+
+      WHEN OTHERS.
+        lv_limu = SWITCH #( iv_kind WHEN 'PROG' THEN 'REPS'
+                                    WHEN 'DOMA' THEN 'DOMD'
+                                    WHEN 'DTEL' THEN 'DTED'
+                                    WHEN 'TABL' THEN 'TABD'
+                                    WHEN 'VIEW' THEN 'VIED'
+                                    WHEN 'TTYP' THEN 'TTYD' ).
+        IF lv_limu IS NOT INITIAL.
+          SELECT COUNT(*) FROM e071
+            WHERE trkorr IN @it_tr AND object = @lv_limu AND obj_name = @lv_obj.
+          IF sy-subrc = 0.
+            rv_flag = abap_true.
+          ENDIF.
+        ENDIF.
+
+    ENDCASE.
+
+  ENDMETHOD.
+
+  METHOD missing_parts.
+
+*   Ein Objekt, dessen Bausteine fehlen, wird inaktiv angelegt und bleibt
+*   als Leiche im Paket (Finding 4: eine Struktur ohne ihre drei
+*   Datenelemente). Ein Baustein gilt als vorhanden, wenn er im Dokument
+*   steht - dann kommt er in diesem Lauf vorher dran - oder aktiv im
+*   Zielsystem. Drei Namen genuegen; wer drei fehlende sieht, weiss
+*   Bescheid.
+    DATA lv_dd  TYPE ddobjname.
+    DATA lv_cnt TYPE i.
+
+    LOOP AT it_names INTO DATA(lv_name).
+      IF lv_name IS INITIAL.
+        CONTINUE.
+      ENDIF.
+      READ TABLE mt_work TRANSPORTING NO FIELDS
+           WITH KEY kind = iv_kind name = lv_name.
+      IF sy-subrc = 0.
+        CONTINUE.
+      ENDIF.
+      lv_dd = lv_name.
+      CASE iv_kind.
+        WHEN 'DTEL'.
+          SELECT COUNT(*) FROM dd04l WHERE rollname = @lv_dd AND as4local = 'A'.
+        WHEN 'DOMA'.
+          SELECT COUNT(*) FROM dd01l WHERE domname = @lv_dd AND as4local = 'A'.
+        WHEN 'TABL'.
+          SELECT COUNT(*) FROM dd02l WHERE tabname = @lv_dd AND as4local = 'A'.
+        WHEN OTHERS.
+          CONTINUE.
+      ENDCASE.
+      IF sy-subrc = 0.
+        CONTINUE.
+      ENDIF.
+      lv_cnt = lv_cnt + 1.
+      IF lv_cnt > 3.
+        rv_text = |{ rv_text } ...|.
+        EXIT.
+      ENDIF.
+      rv_text = COND #( WHEN rv_text IS INITIAL THEN |{ iv_kind } { lv_name }|
+                        ELSE |{ rv_text }, { iv_kind } { lv_name }| ).
+    ENDLOOP.
 
   ENDMETHOD.
 
@@ -3322,6 +3636,19 @@ CLASS lcl_importer IMPLEMENTATION.
 
     lcl_attr=>to_struct( EXPORTING it_attrs = io_chapter->get_defhead( )
                          CHANGING  cs_data  = ls_dd04v ).
+
+*   Ohne Domaene wird das Datenelement nur inaktiv angelegt (Finding 4).
+    IF ls_dd04v-domname IS NOT INITIAL.
+      DATA(lv_miss_dtel) = missing_parts(
+        iv_kind  = 'DOMA'
+        it_names = VALUE #( ( CONV string( ls_dd04v-domname ) ) ) ).
+      IF lv_miss_dtel IS NOT INITIAL.
+        log( iv_kind = 'DTEL' iv_name = iv_name
+             iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+             iv_text   = |{ lcl_t=>ui( d = `fehlt:` e = `missing:` ) } { lv_miss_dtel }| ).
+        RETURN.
+      ENDIF.
+    ENDIF.
 
     IF mv_test = abap_true.
       log( iv_kind = 'DTEL' iv_name = iv_name
@@ -3442,6 +3769,33 @@ CLASS lcl_importer IMPLEMENTATION.
 
     DATA(lv_nidx) = REDUCE i( INIT n = 0 FOR r IN io_chapter->get_defrows( )
                               NEXT n = COND #( WHEN r-tag = 'DD12V' THEN n + 1 ELSE n ) ).
+
+*   Fehlen Datenelemente oder eingebundene Strukturen, wird die Tabelle
+*   nur inaktiv angelegt und bleibt als Leiche im Paket (Finding 4).
+*   Dann lieber gar nicht - auch im Testlauf schon sichtbar.
+    DATA lt_need_dtel TYPE string_table.
+    DATA lt_need_tabl TYPE string_table.
+    LOOP AT lt_dd03p INTO DATA(ls_need).
+      IF ls_need-rollname IS NOT INITIAL AND ls_need-fieldname(1) <> '.'.
+        APPEND CONV string( ls_need-rollname ) TO lt_need_dtel.
+      ELSEIF ls_need-fieldname = '.INCLUDE' AND ls_need-precfield IS NOT INITIAL.
+        APPEND CONV string( ls_need-precfield ) TO lt_need_tabl.
+      ENDIF.
+    ENDLOOP.
+    SORT lt_need_dtel.
+    DELETE ADJACENT DUPLICATES FROM lt_need_dtel.
+    DATA(lv_miss_tabl) = missing_parts( iv_kind = 'DTEL' it_names = lt_need_dtel ).
+    DATA(lv_miss_incl) = missing_parts( iv_kind = 'TABL' it_names = lt_need_tabl ).
+    IF lv_miss_incl IS NOT INITIAL.
+      lv_miss_tabl = COND #( WHEN lv_miss_tabl IS INITIAL THEN lv_miss_incl
+                             ELSE |{ lv_miss_tabl }, { lv_miss_incl }| ).
+    ENDIF.
+    IF lv_miss_tabl IS NOT INITIAL.
+      log( iv_kind = 'TABL' iv_name = iv_name
+           iv_action = lcl_t=>ui( d = `uebersprungen` e = `skipped` )
+           iv_text   = |{ lcl_t=>ui( d = `fehlt:` e = `missing:` ) } { lv_miss_tabl }| ).
+      RETURN.
+    ENDIF.
 
     IF mv_test = abap_true.
       log( iv_kind = 'TABL' iv_name = iv_name
@@ -4733,6 +5087,7 @@ CLASS lcl_importer IMPLEMENTATION.
 *   corrected them here, and a documentation tool has no business
 *   overwriting that; missing numbers and missing languages are added.
     DATA lv_add TYPE i.
+    DATA lt_new TYPE STANDARD TABLE OF msgnr WITH EMPTY KEY.
     LOOP AT lt_t100 INTO ls_t100.
       SELECT COUNT(*) FROM t100 WHERE sprsl = @ls_t100-sprsl AND arbgb = @ls_t100-arbgb AND msgnr = @ls_t100-msgnr.
       DATA(lv_there) = COND abap_bool( WHEN sy-subrc = 0 THEN abap_true ELSE abap_false ).
@@ -4742,10 +5097,28 @@ CLASS lcl_importer IMPLEMENTATION.
       INSERT t100 FROM ls_t100.
       IF sy-subrc = 0.
         lv_add = lv_add + 1.
+        APPEND ls_t100-msgnr TO lt_new.
       ENDIF.
     ENDLOOP.
 
-    tadir( iv_object = 'MSAG' iv_name = CONV sobj_name( iv_name ) ).
+*   Eine neue Klasse kommt als Ganzes in den Auftrag (R3TR MSAG). Eine
+*   bestehende, die nur ergaenzt wurde, nicht: R3TR MSAG transportiert
+*   die ganze Klasse und ueberschriebe im Zielsystem alles, was dort
+*   inzwischen dazugekommen ist. Dann je neue Nummer ein Eintrag LIMU
+*   MESS - Klasse auf 20 Stellen, dahinter die Nummer.
+    tadir( iv_object = 'MSAG'
+           iv_name   = CONV sobj_name( iv_name )
+           iv_corr   = xsdbool( lv_ex = abap_false ) ).
+    IF lv_ex = abap_true.
+      SORT lt_new.
+      DELETE ADJACENT DUPLICATES FROM lt_new.
+      DATA lv_mess TYPE c LENGTH 23.
+      LOOP AT lt_new INTO DATA(lv_nr).
+        lv_mess = iv_name.
+        lv_mess+20(3) = lv_nr.
+        corr_insert( iv_object = 'MESS' iv_name = lv_mess ).
+      ENDLOOP.
+    ENDIF.
 
     log( iv_kind = 'MSAG' iv_name = iv_name
          iv_action = COND #( WHEN lv_ex = abap_true
@@ -5688,6 +6061,12 @@ CLASS lcl_importer IMPLEMENTATION.
              iv_text   = lx->get_text( ) ).
         RETURN.
     ENDTRY.
+
+*   SEO_*_CREATE_COMPLETE traegt eine neue Klasse mit CORRNR ein. Eine
+*   bestehende, deren Quelltext nur ueberschrieben wurde, steht damit
+*   noch nicht im Auftrag. RS_CORR_INSERT ist doppelt harmlos: steht das
+*   Objekt schon in der Aufgabe, bleibt es bei dem einen Eintrag.
+    corr_insert( iv_object = lv_obj iv_name = CONV sobj_name( iv_name ) ).
 
     IF mv_act = abap_true AND activate( iv_object = lv_obj iv_name = iv_name ) = abap_false.
       log( iv_kind = iv_kind iv_name = iv_name
@@ -7349,6 +7728,14 @@ CLASS lcl_collector_dev DEFINITION.
       IMPORTING iv_type          TYPE trobjtype
                 iv_name          TYPE sobj_name
       RETURNING VALUE(rv_prefix) TYPE string.
+*   Welche Includes in WBCROSSGT zu einem Objekt gehoeren: genau ein Name
+*   (EV_EXACT) oder ein Muster (EV_LIKE). Beides leer heisst: das Objekt
+*   hat keinen eigenen ABAP-Quelltext, WBCROSSGT ist nicht zu fragen.
+    METHODS cross_scope
+      IMPORTING iv_type  TYPE trobjtype
+                iv_name  TYPE sobj_name
+      EXPORTING ev_exact TYPE wbcrossgt-include
+                ev_like  TYPE string.
     METHODS start_object
       RETURNING VALUE(rs_obj) TYPE ty_objref.
     METHODS collect_refs
@@ -9935,6 +10322,37 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     ENDCASE.
   ENDMETHOD.
 
+  METHOD cross_scope.
+
+*   Frueher hiess es fuer jeden Typ include LIKE '<name>%'. Fuer eine
+*   Nachrichtenklasse ZBSD kamen so die Typverwendungen jedes Programms
+*   und jeder Klasse mit ZBSD am Anfang - im Test B4D -> PAD vom
+*   19.11.2026 sieben fremde Objekte aus ZBSD_MD_CM, die im Ziel
+*   inaktiv liegen blieben (Finding 2). Dasselbe bei jedem Namen, der
+*   Praefix eines anderen ist: PROG ZFOO traf ZFOO_BAR, CLAS ZCL_X traf
+*   ZCL_X_Y.
+*
+*   Darum je Typ:
+*     PROG       der Name exakt - Includes laufen ueber PROG_INCLUDES
+*     CLAS/INTF  der Name mit '=' auf 30 Stellen, dann % - so heissen
+*                die Klassen-Includes (ZCL_X=====...CU), ZCL_X_Y passt
+*                nicht mehr
+*     FUNC/FUGR  wie bisher ueber CROSS_PREFIX
+*     alle anderen (MSAG, DOMA, DTEL, TABL, VIEW, TTYP, SHLP, ...) haben
+*     keine Includes. Ihre Bausteine kommen aus der Zusammensetzung
+*     (DD03L, DD04L, ...), nicht aus WBCROSSGT.
+    CLEAR: ev_exact, ev_like.
+    CASE iv_type.
+      WHEN 'PROG'.
+        ev_exact = iv_name.
+      WHEN 'CLAS' OR 'INTF'.
+        ev_like = |{ iv_name WIDTH = 30 PAD = '=' }%|.
+      WHEN 'FUNC' OR 'FUGR'.
+        ev_like = |{ cross_prefix( iv_type = iv_type iv_name = iv_name ) }%|.
+    ENDCASE.
+
+  ENDMETHOD.
+
   METHOD add_calls.
 
     " Outgoing references - the counterpart to the where-used list. Neither
@@ -10005,13 +10423,27 @@ CLASS lcl_collector_dev IMPLEMENTATION.
     DATA lt_one  TYPE STANDARD TABLE OF wbcrossgt.
     DATA lv_ot   TYPE wbcrossgt-otype.
 
-    lv_like = |{ cross_prefix( iv_type = iv_type iv_name = iv_name ) }%|.
+*   Welche Includes dazugehoeren, entscheidet CROSS_SCOPE - derselbe
+*   Praefix-Fehler wie in COLLECT_REFS (Finding 2) traf auch hier.
+    DATA lv_exact TYPE wbcrossgt-include.
+    cross_scope( EXPORTING iv_type  = iv_type
+                           iv_name  = iv_name
+                 IMPORTING ev_exact = lv_exact
+                           ev_like  = lv_like ).
     LOOP AT VALUE string_table( ( `ME` ) ( `TY` ) ( `DA` ) ) INTO DATA(lv_type).
       lv_ot = lv_type.
-      SELECT * FROM wbcrossgt
-        WHERE otype = @lv_ot AND include LIKE @lv_like
-        INTO TABLE @lt_one
-        UP TO @lv_max ROWS.
+      CLEAR lt_one.
+      IF lv_exact IS NOT INITIAL.
+        SELECT * FROM wbcrossgt
+          WHERE otype = @lv_ot AND include = @lv_exact
+          INTO TABLE @lt_one
+          UP TO @lv_max ROWS.
+      ELSEIF lv_like IS NOT INITIAL.
+        SELECT * FROM wbcrossgt
+          WHERE otype = @lv_ot AND include LIKE @lv_like
+          INTO TABLE @lt_one
+          UP TO @lv_max ROWS.
+      ENDIF.
       APPEND LINES OF lt_one TO lt_gt.
     ENDLOOP.
 
@@ -12233,13 +12665,28 @@ CLASS lcl_collector_dev IMPLEMENTATION.
       lv_max = 1000.
     ENDIF.
 
-    DATA(lv_like) = |{ cross_prefix( iv_type = iv_type iv_name = iv_name ) }%|.
-    IF lv_like <> '%'.
+*   Welche Includes in WBCROSSGT zu diesem Objekt gehoeren, entscheidet
+*   CROSS_SCOPE. Ein blosses LIKE '<name>%' zog bei MSAG ZBSD die Typen
+*   aller ZBSD*-Programme mit (Finding 2).
+    DATA lv_exact TYPE wbcrossgt-include.
+    DATA lv_like  TYPE string.
+    cross_scope( EXPORTING iv_type  = iv_type
+                           iv_name  = iv_name
+                 IMPORTING ev_exact = lv_exact
+                           ev_like  = lv_like ).
+    IF lv_exact IS NOT INITIAL OR lv_like IS NOT INITIAL.
       DATA lt_one TYPE STANDARD TABLE OF wbcrossgt.
-      SELECT * FROM wbcrossgt
-        WHERE otype IN ( 'ME', 'TY' ) AND include LIKE @lv_like
-        INTO TABLE @lt_one
-        UP TO @lv_max ROWS.
+      IF lv_exact IS NOT INITIAL.
+        SELECT * FROM wbcrossgt
+          WHERE otype IN ( 'ME', 'TY' ) AND include = @lv_exact
+          INTO TABLE @lt_one
+          UP TO @lv_max ROWS.
+      ELSE.
+        SELECT * FROM wbcrossgt
+          WHERE otype IN ( 'ME', 'TY' ) AND include LIKE @lv_like
+          INTO TABLE @lt_one
+          UP TO @lv_max ROWS.
+      ENDIF.
 
 *     The catalog is asked once for all names at a time. One SELECT SINGLE
 *     per reference would be several hundred round trips per object.
@@ -14084,10 +14531,24 @@ FORM ensure_task.
     RETURN.
   ENDIF.
 
-* Wer eine Aufgabe statt eines Auftrags eingetragen hat, ist schon fertig.
+* Wer eine Aufgabe statt eines Auftrags eingetragen hat, ist schon fertig
+* - solange es seine eigene ist. Eine fremde Aufgabe nimmt nichts auf:
+* RS_CORR_INSERT lehnt ohne Dialog ab, und das Protokoll meldet jedes
+* Objekt "ohne Auftrag". Besser, man sieht es schon hier (Finding 3).
   IF ls_e070-strkorr IS NOT INITIAL.
+    WRITE: / lcl_t=>ui( d = `Aufgabe                          :`
+                        e = `Task                             :` ), p_itr,
+             lcl_t=>ui( d = `Besitzer` e = `owner` ), ls_e070-as4user.
+    IF ls_e070-as4user <> sy-uname.
+      WRITE: / lcl_t=>ui(
+        d = `ACHTUNG: die Aufgabe gehoert einem anderen Benutzer - die Objekte kommen nicht in den Auftrag.`
+        e = `CAUTION: the task belongs to another user - the objects will not get into the request.` ).
+    ENDIF.
     RETURN.
   ENDIF.
+
+  WRITE: / lcl_t=>ui( d = `Auftrag, Besitzer                :`
+                      e = `Request, owner                   :` ), ls_e070-as4user.
 
 * D und L sind die aenderbaren Zustaende; alles andere ist freigegeben
 * oder unterwegs.
@@ -14096,8 +14557,9 @@ FORM ensure_task.
       AND ( trstatus = 'D' OR trstatus = 'L' )
     INTO @DATA(lv_task).
   IF sy-subrc = 0.
-    WRITE: / lcl_t=>ui( d = `Aufgabe                          :`
-                        e = `Task                             :` ), lv_task.
+    WRITE: / lcl_t=>ui( d = `Aufgabe (vorhanden)              :`
+                        e = `Task (existing)                  :` ), lv_task,
+             lcl_t=>ui( d = `Besitzer` e = `owner` ), sy-uname.
     RETURN.
   ENDIF.
 
@@ -14121,7 +14583,8 @@ FORM ensure_task.
   READ TABLE lt_user INTO DATA(ls_user) INDEX 1.
   IF lv_exc IS INITIAL AND ls_user-correction IS NOT INITIAL.
     WRITE: / lcl_t=>ui( d = `Aufgabe angelegt                 :`
-                        e = `Task created                     :` ), ls_user-correction.
+                        e = `Task created                     :` ), ls_user-correction,
+             lcl_t=>ui( d = `Besitzer` e = `owner` ), sy-uname.
   ELSE.
     WRITE: / lcl_t=>ui( d = `Aufgabe nicht anlegbar           :`
                         e = `Task could not be created        :` ), lv_exc.

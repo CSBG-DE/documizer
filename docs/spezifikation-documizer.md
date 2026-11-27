@@ -172,6 +172,7 @@ prompt „Documizer - IMG-Dokumentation" mit. Eine abgeleitete Überschrift kann
 | Parameter | Bedeutung |
 |---|---|
 | `P_TREE` | Struktur-ID (GUID), Wertehilfe über die Wurzelknoten mit Text |
+| `P_NODE` | Startknoten innerhalb der Struktur. F4 zeigt den IMG-Baum wie in SPRO (`STREE_EXTERNAL_SELECT_NODES`), ohne `P_TREE` ab dem SAP-Referenz-IMG. Ein Verweisknoten liest seine Teilstruktur, jeder andere Knoten wird auf seinen Teilbaum zugeschnitten; Tiefe und Kapitelnummern zählen ab dem Startknoten |
 | `P_SRCH` | oder Suchbegriff für die Wurzel — listet passende Strukturen mit GUID auf |
 | `P_PROJ` | Projekt (Status/Memo), Wertehilfe über `TPROJECT` |
 | `P_ONLYPR` | nur Projektknoten |

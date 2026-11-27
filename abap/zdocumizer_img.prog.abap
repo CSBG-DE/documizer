@@ -24,10 +24,13 @@ REPORT zdocumizer_img.
 * The node reference sits in HIER_REF with REF_TYPE = 'COBJ';
 * REF_OBJECT is the IMG activity.
 *
-* Autor     Christian Gathmann, consiness GmbH & Co. KG
-*           gathmann@consiness.de
+* Author    Christian Gathmann
+*           gathmann@csbg.de
+*           Designed, specified and validated by Christian Gathmann;
+*           code generated with AI assistance.
+* Source    https://github.com/csbg-de/documizer
 *
-* Copyright 2026 consiness GmbH & Co. KG
+* Copyright 2026 C. Gathmann Computer-System-Beratung GmbH (CSBG)
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -138,6 +141,7 @@ TYPES ty_names TYPE STANDARD TABLE OF sobj_name WITH EMPTY KEY.
 
 TYPES: BEGIN OF ty_meta,
          version    TYPE string,
+         program    TYPE string,
          doc_type   TYPE string,
          system     TYPE string,
          client     TYPE string,
@@ -152,7 +156,14 @@ TYPES: BEGIN OF ty_meta,
 TYPES ty_chapters TYPE STANDARD TABLE OF REF TO lcl_chapter WITH EMPTY KEY.
 TYPES ty_objects  TYPE STANDARD TABLE OF REF TO lcl_object  WITH EMPTY KEY.
 
-CONSTANTS gc_version  TYPE string VALUE '1.0'.
+* gc_version ist die Version des XML-Formats, nicht des Programms. Sie
+* wird nur hochgezaehlt, wenn sich Elemente/Attribute des Exports aendern.
+* gc_prog_version ist der Programmstand; er wird zusaetzlich im Export
+* (meta/program) mitgeschrieben, damit beim Import erkennbar ist, mit
+* welchem Stand eine Datei erzeugt wurde. Aeltere Leser ignorieren das
+* unbekannte Element, das Format bleibt deshalb 1.0.
+CONSTANTS gc_version      TYPE string VALUE '1.0'.
+CONSTANTS gc_prog_version TYPE string VALUE '1.1'.
 CONSTANTS gc_docuclas TYPE dokhl-id VALUE 'HY'.
 CONSTANTS gc_reftype  TYPE string VALUE 'COBJ'.
 
@@ -485,6 +496,7 @@ CLASS lcl_renderer_xml IMPLEMENTATION.
     write_text_element( iv_name = 'created_by' iv_value = ls_meta-created_by ).
     write_text_element( iv_name = 'created_at' iv_value = ls_meta-created_at ).
     write_text_element( iv_name = 'language'   iv_value = ls_meta-language ).
+    write_text_element( iv_name = 'program'    iv_value = ls_meta-program ).
     IF ls_meta-truncated = abap_true.
       write_text_element( iv_name = 'truncated' iv_value = 'true' ).
     ELSE.
@@ -680,7 +692,7 @@ CLASS lcl_parser_xml IMPLEMENTATION.
               ENDLOOP.
 
             WHEN 'system' OR 'client' OR 'created_by' OR 'created_at'
-              OR 'language' OR 'truncated' OR 'node_limit' OR 'node_total'.
+              OR 'language' OR 'program' OR 'truncated' OR 'node_limit' OR 'node_total'.
               lv_target = lv_name.
 
             WHEN 'chapter'.
@@ -854,6 +866,7 @@ CLASS lcl_parser_xml IMPLEMENTATION.
               WHEN 'created_by'. ls_meta-created_by = lv_value.
               WHEN 'created_at'. ls_meta-created_at = lv_value.
               WHEN 'language'.   ls_meta-language   = lv_value.
+              WHEN 'program'.    ls_meta-program    = lv_value.
               WHEN 'cell'.       ls_cell-value      = lv_value.
               WHEN 'node_limit'. ls_meta-node_limit = CONV i( lv_value ).
               WHEN 'node_total'. ls_meta-node_total = CONV i( lv_value ).
@@ -940,6 +953,14 @@ SELECTION-SCREEN BEGIN OF BLOCK b1 WITH FRAME TITLE gv_blk1.
     SELECTION-SCREEN COMMENT 1(30) gv_ttree FOR FIELD p_tree.
     PARAMETERS p_tree TYPE ttree-id.
   SELECTION-SCREEN END OF LINE.
+* Startknoten innerhalb der Struktur. Die F4-Hilfe zeigt den Baum wie
+* in SPRO; ist keine Struktur angegeben, startet sie im SAP-Referenz-IMG.
+* Der Text des gewaehlten Knotens steht in der Zeile darunter.
+  SELECTION-SCREEN BEGIN OF LINE.
+    SELECTION-SCREEN COMMENT 1(30) gv_tnode FOR FIELD p_node.
+    PARAMETERS p_node TYPE tnodeimg-node_id.
+  SELECTION-SCREEN END OF LINE.
+  SELECTION-SCREEN COMMENT /33(50) gv_nodtx.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(30) gv_tsrch FOR FIELD p_srch.
     PARAMETERS p_srch TYPE tnodeimgt-text.
@@ -1038,7 +1059,7 @@ SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE gv_blk3.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(24) gv_tdown FOR FIELD p_down.
-    PARAMETERS p_down AS CHECKBOX.
+    PARAMETERS p_down AS CHECKBOX DEFAULT 'X'.
     SELECTION-SCREEN COMMENT 29(18) gv_tpath FOR FIELD p_path.
     PARAMETERS p_path TYPE char128 LOWER CASE DEFAULT 'C:\temp'
                       VISIBLE LENGTH 30.
@@ -1115,6 +1136,7 @@ INITIALIZATION.
     gv_blk2  = 'Umfang'.
     gv_blk3  = 'Ausgabe'.
     gv_ttree = 'Struktur-ID (GUID)'.
+    gv_tnode = 'Startknoten (F4 = IMG-Baum)'.
     gv_tsrch = 'oder Suchbegriff Wurzel'.
     gv_tproj = 'Projekt (Status/Memo)'.
     gv_tonly = 'nur Projektknoten'.
@@ -1159,6 +1181,7 @@ INITIALIZATION.
     gv_blk2  = 'Scope'.
     gv_blk3  = 'Output'.
     gv_ttree = 'Structure ID (GUID)'.
+    gv_tnode = 'Start node (F4 = IMG tree)'.
     gv_tsrch = 'or search term for root'.
     gv_tproj = 'Project (status/memo)'.
     gv_tonly = 'Project nodes only'.
@@ -1201,6 +1224,17 @@ INITIALIZATION.
   ENDIF.
 
 AT SELECTION-SCREEN OUTPUT.
+* Struktur-ID und Suchbegriff sind ausgeblendet: Der Einstieg laeuft
+* ueber den Startknoten aus dem IMG-Baum. Ueber eine Variante gesetzt
+* wirken beide weiterhin.
+  LOOP AT SCREEN.
+    IF screen-name = 'P_TREE' OR screen-name = 'GV_TTREE'
+       OR screen-name = 'P_SRCH' OR screen-name = 'GV_TSRCH'.
+      screen-active = '0'.
+      MODIFY SCREEN.
+    ENDIF.
+  ENDLOOP.
+  PERFORM node_text.
   PERFORM suggest_fname.
 
 AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_path.
@@ -1215,6 +1249,9 @@ AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_proj.
 * filtered by the search term in the second field.
 AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_tree.
   PERFORM f4_struktur.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_node.
+  PERFORM f4_knoten.
 
 *----------------------------------------------------------------------*
 * lcl_cust - resolving and reading the customizing (step 4)
@@ -1642,6 +1679,7 @@ CLASS lcl_collector_img DEFINITION.
     INTERFACES lif_docu_collector.
     METHODS constructor
       IMPORTING iv_tree_id TYPE ttree-id
+                iv_node    TYPE tnodeimg-node_id OPTIONAL
                 iv_langu   TYPE sy-langu
                 iv_depth   TYPE i
                 iv_maxnod  TYPE i
@@ -1664,8 +1702,11 @@ CLASS lcl_collector_img DEFINITION.
     METHODS get_stat_project    RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_fallback   RETURNING VALUE(rv) TYPE i.
     METHODS get_stat_calls      RETURNING VALUE(rv) TYPE i.
+    METHODS get_node_lost       RETURNING VALUE(rv) TYPE abap_bool.
   PRIVATE SECTION.
     DATA mv_tree_id TYPE ttree-id.
+    DATA mv_node    TYPE tnodeimg-node_id.
+    DATA mv_node_lost TYPE abap_bool.
     DATA mv_langu   TYPE sy-langu.
     DATA mv_depth   TYPE i.
     DATA mv_maxnod  TYPE i.
@@ -1722,6 +1763,10 @@ CLASS lcl_collector_img DEFINITION.
       IMPORTING iv_docu_id     TYPE string
                 iv_langu       TYPE sy-langu
       RETURNING VALUE(rv_text) TYPE string.
+    METHODS eval_switch
+      IMPORTING iv_cond  TYPE string
+      EXPORTING ev_known TYPE abap_bool
+                ev_true  TYPE abap_bool.
     METHODS load_project.
     METHODS prune
       IMPORTING io_chapter     TYPE REF TO lcl_chapter
@@ -1732,6 +1777,7 @@ CLASS lcl_collector_img IMPLEMENTATION.
 
   METHOD constructor.
     mv_tree_id = iv_tree_id.
+    mv_node    = iv_node.
     mv_langu   = iv_langu.
     mv_depth   = iv_depth.
     mv_maxnod  = iv_maxnod.
@@ -1773,7 +1819,26 @@ CLASS lcl_collector_img IMPLEMENTATION.
 
     lv_subs = mv_subs.
 
-    IF mv_onlypr = abap_true AND mv_proj IS NOT INITIAL AND mt_pmap IS NOT INITIAL.
+    " Ein Startknoten bestimmt den Einstieg selbst. Ein Verweisknoten
+    " (Typ REF) steht fuer eine ganze Teilstruktur - dann wird genau diese
+    " gelesen, ohne den Rest der Struktur drumherum. Jeder andere Knoten
+    " wird in seiner eigenen Struktur gesucht und der Baum anschliessend
+    " auf seinen Teilbaum zugeschnitten.
+    DATA lv_start TYPE tnodeimg-node_id.
+    IF mv_node IS NOT INITIAL.
+      SELECT SINGLE tree_id, node_type, reftree_id FROM tnodeimg
+        WHERE node_id = @mv_node
+        INTO @DATA(ls_start).
+      IF sy-subrc <> 0.
+        mv_node_lost = abap_true.
+      ELSEIF ls_start-node_type = 'REF' AND ls_start-reftree_id IS NOT INITIAL.
+        APPEND ls_start-reftree_id TO lt_trees.
+      ELSE.
+        APPEND ls_start-tree_id TO lt_trees.
+        lv_start = mv_node.
+      ENDIF.
+
+    ELSEIF mv_onlypr = abap_true AND mv_proj IS NOT INITIAL AND mt_pmap IS NOT INITIAL.
       SELECT DISTINCT tree_id FROM tnodeimg
         FOR ALL ENTRIES IN @mt_pmap
         WHERE node_id = @mt_pmap-node_id
@@ -1787,7 +1852,7 @@ CLASS lcl_collector_img IMPLEMENTATION.
       lv_subs = abap_false.
     ENDIF.
 
-    IF lt_trees IS INITIAL.
+    IF lt_trees IS INITIAL AND mv_node_lost = abap_false.
       APPEND mv_tree_id TO lt_trees.
     ENDIF.
 
@@ -1830,6 +1895,41 @@ CLASS lcl_collector_img IMPLEMENTATION.
           list_of_nodes      = lt_nodes
           list_of_texts      = lt_texts
           list_of_references = lt_refs.
+    ENDIF.
+
+    " Auf den Teilbaum des Startknotens zuschneiden. Die Knotenliste kommt
+    " in Baumreihenfolge: der Teilbaum ist der Startknoten und alle direkt
+    " folgenden Knoten mit groesserer Stufe. Die Stufen werden danach so
+    " verschoben, dass der Startknoten Kapitel 1 ist - damit gelten auch
+    " Max. Tiefe und Kapitelnummern ab dem Startknoten.
+    IF lv_start IS NOT INITIAL.
+      READ TABLE lt_nodes WITH KEY node_id = lv_start TRANSPORTING NO FIELDS.
+      IF sy-subrc <> 0.
+        mv_node_lost = abap_true.
+        CLEAR lt_nodes.
+      ELSE.
+        DATA(lv_from) = sy-tabix.
+        DATA(lv_base) = CONV i( lt_nodes[ lv_from ]-node_level ).
+        DATA(lv_to)   = lv_from.
+        DATA(lv_next) = lv_from + 1.
+        LOOP AT lt_nodes INTO DATA(ls_sub) FROM lv_next.
+          IF ls_sub-node_level <= lv_base.
+            EXIT.
+          ENDIF.
+          lv_to = sy-tabix.
+        ENDLOOP.
+        IF lv_to < lines( lt_nodes ).
+          lv_next = lv_to + 1.
+          DELETE lt_nodes FROM lv_next.
+        ENDIF.
+        IF lv_from > 1.
+          DATA(lv_prev) = lv_from - 1.
+          DELETE lt_nodes TO lv_prev.
+        ENDIF.
+        LOOP AT lt_nodes ASSIGNING FIELD-SYMBOL(<ls_sub>).
+          <ls_sub>-node_level = <ls_sub>-node_level - lv_base + 1.
+        ENDLOOP.
+      ENDIF.
     ENDIF.
 
     " Prepare references and texts for direct access.
@@ -1977,6 +2077,7 @@ CLASS lcl_collector_img IMPLEMENTATION.
 
     ro_document->set_meta( VALUE ty_meta(
       version    = gc_version
+      program    = gc_prog_version
       doc_type   = 'IMG'
       system     = sy-sysid
       client     = sy-mandt
@@ -2471,13 +2572,124 @@ CLASS lcl_collector_img IMPLEMENTATION.
     " The ITF format keys are not evaluated here yet; the lines are only
     " joined together. Converting them to HTML or Markdown belongs to
     " step 6.
+    "
+    " Ausnahme: Bedingungen auf Schalter des Switch Frameworks. SAP pflegt
+    " Texte fuer Cloud und On-Premise in einem Dokument und waehlt ueber
+    " /: IF &[SWITCH]S4H_DOCU_ON_PREMISE& = 'X'. aus. Diese Bedingungen
+    " werden hier wie in der Anzeige ausgewertet - nur der zutreffende
+    " Zweig bleibt, die Steuerzeilen entfallen. Alle anderen Bedingungen
+    " bleiben samt Steuerzeilen unveraendert stehen.
+    TYPES: BEGIN OF ty_cond,
+             outer  TYPE abap_bool,
+             known  TYPE abap_bool,
+             active TYPE abap_bool,
+             taken  TYPE abap_bool,
+           END OF ty_cond.
+    DATA lt_cond  TYPE STANDARD TABLE OF ty_cond WITH EMPTY KEY.
+    DATA ls_cond  TYPE ty_cond.
+    DATA lv_emit  TYPE abap_bool VALUE abap_true.
+    DATA lv_cmd   TYPE string.
+    DATA lv_known TYPE abap_bool.
+    DATA lv_true  TYPE abap_bool.
+    DATA lv_out   TYPE abap_bool.
+
     LOOP AT lt_line INTO DATA(ls_line).
+
+      lv_out = lv_emit.
+
+      IF ls_line-tdformat = '/:'.
+        lv_cmd = to_upper( condense( val = ls_line-tdline ) ).
+
+        IF lv_cmd CP 'IF *'.
+          eval_switch( EXPORTING iv_cond  = substring( val = lv_cmd off = 3 )
+                       IMPORTING ev_known = lv_known
+                                 ev_true  = lv_true ).
+          ls_cond = VALUE #( outer = lv_emit known = lv_known
+                             active = lv_true taken = lv_true ).
+          APPEND ls_cond TO lt_cond.
+          lv_out = xsdbool( lv_emit = abap_true AND lv_known = abap_false ).
+
+        ELSEIF lt_cond IS NOT INITIAL
+           AND ( lv_cmd CP 'ELSEIF *' OR lv_cmd CP 'ELSE*' OR lv_cmd CP 'ENDIF*' ).
+          ls_cond = lt_cond[ lines( lt_cond ) ].
+          lv_out = xsdbool( ls_cond-outer = abap_true AND ls_cond-known = abap_false ).
+          IF ls_cond-known = abap_true.
+            IF lv_cmd CP 'ELSEIF *'.
+              IF ls_cond-taken = abap_true.
+                ls_cond-active = abap_false.
+              ELSE.
+                eval_switch( EXPORTING iv_cond  = substring( val = lv_cmd off = 7 )
+                             IMPORTING ev_known = lv_known
+                                       ev_true  = lv_true ).
+                IF lv_known = abap_true.
+                  ls_cond-active = lv_true.
+                  ls_cond-taken  = lv_true.
+                ELSE.
+                  " Unbekannte Bedingung im ELSEIF - ab hier unveraendert lassen
+                  ls_cond-known  = abap_false.
+                  ls_cond-active = abap_true.
+                  lv_out = ls_cond-outer.
+                ENDIF.
+              ENDIF.
+            ELSEIF lv_cmd CP 'ELSE*' AND NOT lv_cmd CP 'ENDIF*'.
+              ls_cond-active = xsdbool( ls_cond-taken = abap_false ).
+              ls_cond-taken  = abap_true.
+            ENDIF.
+          ENDIF.
+          IF lv_cmd CP 'ENDIF*'.
+            DELETE lt_cond INDEX lines( lt_cond ).
+            lv_emit = ls_cond-outer.
+          ELSE.
+            lt_cond[ lines( lt_cond ) ] = ls_cond.
+          ENDIF.
+        ENDIF.
+
+        IF lt_cond IS NOT INITIAL.
+          ls_cond = lt_cond[ lines( lt_cond ) ].
+          lv_emit = xsdbool( ls_cond-outer = abap_true
+                             AND ( ls_cond-known = abap_false OR ls_cond-active = abap_true ) ).
+        ENDIF.
+      ENDIF.
+
+      IF lv_out = abap_false.
+        CONTINUE.
+      ENDIF.
+
       IF rv_text IS INITIAL.
         rv_text = ls_line-tdline.
       ELSE.
         rv_text = |{ rv_text }{ cl_abap_char_utilities=>newline }{ ls_line-tdline }|.
       ENDIF.
     ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD eval_switch.
+
+    " Erkannt wird nur die einfache Form &[SWITCH]NAME& = 'X' (auch EQ,
+    " <>, NE und ' '). Alles andere gilt als unbekannt.
+    DATA lv_name TYPE string.
+    DATA lv_op   TYPE string.
+    DATA lv_val  TYPE string.
+
+    CLEAR: ev_known, ev_true.
+
+    FIND REGEX `^&\[SWITCH\]([A-Z0-9_/]+)&\s*(=|EQ|<>|NE)\s*'([X ]?)'\s*\.?\s*$`
+      IN iv_cond SUBMATCHES lv_name lv_op lv_val.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_on) = xsdbool( cl_abap_switch=>get_switch_state(
+                             p_switch_id = CONV sfw_switch_id( lv_name ) )
+                           = cl_abap_switch=>c_on ).
+
+    ev_true = xsdbool( ( lv_val = 'X' AND lv_on = abap_true )
+                    OR ( lv_val <> 'X' AND lv_on = abap_false ) ).
+    IF lv_op = '<>' OR lv_op = 'NE'.
+      ev_true = xsdbool( ev_true = abap_false ).
+    ENDIF.
+    ev_known = abap_true.
 
   ENDMETHOD.
 
@@ -2563,6 +2775,9 @@ CLASS lcl_collector_img IMPLEMENTATION.
     rv = mv_n_call.
   ENDMETHOD.
 
+  METHOD get_node_lost.
+    rv = mv_node_lost.
+  ENDMETHOD.
   METHOD get_stat_nodes.
     rv = mv_n_nodes.
   ENDMETHOD.
@@ -2814,6 +3029,10 @@ CLASS lcl_renderer_html IMPLEMENTATION.
     add( |<tr><th>{ lcl_t=>t( d = 'Sprache' e = 'Language' ) }</th>| &&
          |<td>{ esc( ls_meta-language ) }</td></tr>| ).
     add( |<tr><th>Format</th><td>Version { esc( ls_meta-version ) }</td></tr>| ).
+*   Dateien vor 1.1 enthalten keinen Programmstand - dann keine Zeile.
+    IF ls_meta-program IS NOT INITIAL.
+      add( |<tr><th>Documizer</th><td>Version { esc( ls_meta-program ) }</td></tr>| ).
+    ENDIF.
 
     DATA lv_limit TYPE string.
     IF ls_meta-node_limit = 0.
@@ -3634,6 +3853,9 @@ CLASS lcl_request IMPLEMENTATION.
     lo_w->open_element( name = 'created_at' ).
     lo_w->write_value( |{ sy-datum DATE = ISO } { sy-uzeit TIME = ISO }| ).
     lo_w->close_element( ).
+    lo_w->open_element( name = 'program' ).
+    lo_w->write_value( gc_prog_version ).
+    lo_w->close_element( ).
 *   Woher das Dokument kam, das die Luecke gezeigt hat. Wer den Auftrag
 *   spaeter in die Hand nimmt, soll das Quellsystem nicht raten muessen.
     lo_w->open_element( name = 'source' ).
@@ -4019,6 +4241,178 @@ FORM f4_struktur.
 ENDFORM.
 
 *----------------------------------------------------------------------*
+* Wertehilfe fuer den Startknoten - der IMG-Baum wie in SPRO
+*
+* STREE_EXTERNAL_SELECT_NODES zeigt die Struktur im selben Baum-Control
+* wie die Transaktion SPRO und laesst genau einen Knoten markieren.
+* Einstieg ist die Struktur aus P_TREE, ohne sie der SAP-Referenz-IMG.
+* Weil ein F4 keinen PAI ausloest, stehen die aktuellen Bildwerte noch
+* nicht in den Parametern - sie werden mit DYNP_VALUES_READ geholt.
+*----------------------------------------------------------------------*
+FORM f4_knoten.
+
+  DATA lt_dyn   TYPE STANDARD TABLE OF dynpread.
+  DATA lt_sel   TYPE STANDARD TABLE OF hier_iface.
+  DATA lt_txt   TYPE STANDARD TABLE OF hier_texts.
+  DATA ls_msg   TYPE hier_mess.
+  DATA lv_tree  TYPE ttree-id.
+  DATA lv_node  TYPE hier_iface-node_id.
+  DATA lv_langu TYPE sy-langu.
+  DATA lv_text  TYPE string.
+
+  lt_dyn = VALUE #( ( fieldname = 'P_TREE' )
+                    ( fieldname = 'P_NODE' )
+                    ( fieldname = 'P_LANGU' ) ).
+  CALL FUNCTION 'DYNP_VALUES_READ'
+    EXPORTING
+      dyname     = sy-repid
+      dynumb     = sy-dynnr
+    TABLES
+      dynpfields = lt_dyn
+    EXCEPTIONS
+      OTHERS     = 1.
+  IF sy-subrc <> 0.
+    CLEAR lt_dyn.
+  ENDIF.
+
+  lv_tree = to_upper( VALUE string( lt_dyn[ fieldname = 'P_TREE' ]-fieldvalue OPTIONAL ) ).
+  lv_node = to_upper( VALUE string( lt_dyn[ fieldname = 'P_NODE' ]-fieldvalue OPTIONAL ) ).
+
+  " Auf dem Bild steht die Sprache im ISO-Format (DE), intern einstellig
+  DATA(lv_lext) = VALUE string( lt_dyn[ fieldname = 'P_LANGU' ]-fieldvalue OPTIONAL ).
+  IF lv_lext IS NOT INITIAL.
+    CALL FUNCTION 'CONVERSION_EXIT_ISOLA_INPUT'
+      EXPORTING
+        input            = lv_lext
+      IMPORTING
+        output           = lv_langu
+      EXCEPTIONS
+        unknown_language = 1
+        OTHERS           = 2.
+    IF sy-subrc <> 0.
+      CLEAR lv_langu.
+    ENDIF.
+  ENDIF.
+  IF lv_langu IS INITIAL.
+    lv_langu = sy-langu.
+  ENDIF.
+
+  IF lv_tree IS INITIAL.
+    CALL FUNCTION 'S_CUS_IMG_GET_REFERENCE_IMG_ID'
+      IMPORTING
+        reference_img_id = lv_tree.
+  ENDIF.
+  IF lv_tree IS INITIAL.
+    lv_text = lcl_t=>ui( d = `SAP-Referenz-IMG nicht gefunden - bitte Struktur angeben.`
+                         e = `SAP Reference IMG not found - please enter a structure.` ).
+    MESSAGE lv_text TYPE 'S' DISPLAY LIKE 'E'.
+    RETURN.
+  ENDIF.
+
+  CALL FUNCTION 'STREE_EXTERNAL_SELECT_NODES'
+    EXPORTING
+      structure_id            = lv_tree
+      language                = lv_langu
+      mark_only_one_node      = abap_true
+      mark_node_with_subnodes = space
+      position_on_node        = lv_node
+    IMPORTING
+      message                 = ls_msg
+    TABLES
+      selected_nodes          = lt_sel
+      selected_texts          = lt_txt.
+
+  IF lt_sel IS INITIAL.
+    " Abbruch durch den Benutzer oder Fehler beim Lesen der Struktur
+    IF ls_msg-msgty = 'E' OR ls_msg-msgty = 'A'.
+      MESSAGE ls_msg-msgtxt TYPE 'S' DISPLAY LIKE 'E'.
+    ENDIF.
+    RETURN.
+  ENDIF.
+
+  " Markiert ist genau ein Knoten. Kommen dennoch Unterknoten mit, ist
+  " der markierte derjenige mit der kleinsten Stufe.
+  SORT lt_sel BY node_level.
+  lv_node = lt_sel[ 1 ]-node_id.
+  " Die Texte kommen in mehreren Sprachen - nur die Ausgabesprache zaehlt
+  lv_text = VALUE #( lt_txt[ node_id = lv_node spras = lv_langu ]-text OPTIONAL ).
+  IF lv_text IS INITIAL.
+    p_node  = lv_node.
+    p_langu = lv_langu.
+    PERFORM node_text.
+    lv_text = gv_nodtx.
+  ENDIF.
+
+  lt_dyn = VALUE #( ( fieldname = 'P_NODE'   fieldvalue = lv_node )
+                    ( fieldname = 'GV_NODTX' fieldvalue = lv_text ) ).
+  CALL FUNCTION 'DYNP_VALUES_UPDATE'
+    EXPORTING
+      dyname     = sy-repid
+      dynumb     = sy-dynnr
+    TABLES
+      dynpfields = lt_dyn
+    EXCEPTIONS
+      OTHERS     = 1.
+  IF sy-subrc <> 0.
+    p_node = lv_node.
+  ENDIF.
+
+ENDFORM.
+
+*----------------------------------------------------------------------*
+* Text des Startknotens fuer die Zeile unter P_NODE
+*----------------------------------------------------------------------*
+FORM node_text.
+
+  DATA lv_text TYPE tnodeimgt-text.
+
+  CLEAR gv_nodtx.
+  IF p_node IS INITIAL.
+    RETURN.
+  ENDIF.
+
+  SELECT SINGLE text FROM tnodeimgt
+    WHERE node_id = @p_node
+      AND spras   = @p_langu
+    INTO @lv_text.
+  IF sy-subrc <> 0.
+    SELECT SINGLE text FROM tnodeimgt
+      WHERE node_id = @p_node
+        AND spras   = @p_flang
+      INTO @lv_text.
+  ENDIF.
+
+  " Ein Verweisknoten hat oft keinen eigenen Text - dann gilt der Text
+  " der Wurzel der Teilstruktur, auf die er zeigt.
+  IF lv_text IS INITIAL.
+    SELECT SINGLE t~text
+      FROM tnodeimg AS n
+      INNER JOIN tnodeimg AS r
+        ON r~tree_id = n~reftree_id
+      INNER JOIN tnodeimgt AS t
+        ON t~tree_id = r~tree_id AND t~node_id = r~node_id
+      WHERE n~node_id   = @p_node
+        AND r~parent_id = @space
+        AND t~spras     = @p_langu
+      INTO @lv_text.
+  ENDIF.
+
+  IF lv_text IS NOT INITIAL.
+    gv_nodtx = lv_text.
+  ELSE.
+    SELECT SINGLE @abap_true FROM tnodeimg
+      WHERE node_id = @p_node
+      INTO @DATA(lv_exists).
+    IF lv_exists = abap_true.
+      gv_nodtx = lcl_t=>ui( d = `(ohne Text)` e = `(no text)` ).
+    ELSE.
+      gv_nodtx = lcl_t=>ui( d = `Knoten nicht gefunden` e = `Node not found` ).
+    ENDIF.
+  ENDIF.
+
+ENDFORM.
+
+*----------------------------------------------------------------------*
 * Value help for the project
 *----------------------------------------------------------------------*
 FORM f4_projekt.
@@ -4123,7 +4517,9 @@ FORM fname_object CHANGING cv_part TYPE string.
   DATA lv_name TYPE string.
 
   CLEAR cv_part.
-  IF p_tree IS NOT INITIAL.
+  IF p_node IS NOT INITIAL.
+    lv_name = to_lower( CONV string( p_node ) ).
+  ELSEIF p_tree IS NOT INITIAL.
     lv_name = to_lower( CONV string( p_tree ) ).
   ELSEIF p_proj IS NOT INITIAL.
     lv_name = to_lower( CONV string( p_proj ) ).
@@ -4274,7 +4670,7 @@ FORM search_structures.
   DATA lv_pattern TYPE string.
 
   IF p_srch IS INITIAL.
-    WRITE: / lcl_t=>ui( d = `Bitte Struktur-GUID (P_TREE) oder Suchbegriff (P_SRCH) angeben.` e = `Please specify a structure GUID (P_TREE) or a search term (P_SRCH).` ).
+    WRITE: / lcl_t=>ui( d = `Bitte Startknoten angeben (F4 = IMG-Baum).` e = `Please specify a start node (F4 = IMG tree).` ).
     RETURN.
   ENDIF.
 
@@ -4318,12 +4714,15 @@ START-OF-SELECTION.
     RETURN.
   ENDIF.
 
-  IF p_tree IS INITIAL.
+  IF p_tree IS INITIAL AND p_node IS INITIAL.
     PERFORM search_structures.
     RETURN.
   ENDIF.
 
+  PERFORM node_text.
+
   DATA(lo_collector) = NEW lcl_collector_img( iv_tree_id = p_tree
+                                              iv_node    = p_node
                                               iv_langu   = p_langu
                                               iv_depth   = p_depth
                                               iv_maxnod  = p_maxnod
@@ -4363,6 +4762,13 @@ START-OF-SELECTION.
   WRITE: / lcl_t=>ui( d = `Documizer - IMG-Collector (ohne Dateninhalte)` e = `Documizer - IMG collector` ).
   ULINE.
   WRITE: / lcl_t=>ui( d = `Struktur                         :` e = `Structure                        :` ), p_tree.
+  IF p_node IS NOT INITIAL.
+    WRITE: / lcl_t=>ui( d = `Startknoten                      :` e = `Start node                       :` ), p_node, gv_nodtx.
+    IF lo_collector->get_node_lost( ) = abap_true.
+      WRITE: / lcl_t=>ui( d = `Startknoten nicht in der Struktur gefunden - Dokument ist leer.`
+                          e = `Start node not found in the structure - document is empty.` ) COLOR COL_NEGATIVE.
+    ENDIF.
+  ENDIF.
   DATA(ls_docmeta) = lo_doc->get_meta( ).
 
   WRITE: / lcl_t=>ui( d = `Kapitel erzeugt                  :` e = `Chapters created                 :` ), lo_collector->get_stat_nodes( ).

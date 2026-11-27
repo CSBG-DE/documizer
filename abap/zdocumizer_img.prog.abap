@@ -1059,7 +1059,7 @@ SELECTION-SCREEN BEGIN OF BLOCK b3 WITH FRAME TITLE gv_blk3.
   SELECTION-SCREEN END OF LINE.
   SELECTION-SCREEN BEGIN OF LINE.
     SELECTION-SCREEN COMMENT 1(24) gv_tdown FOR FIELD p_down.
-    PARAMETERS p_down AS CHECKBOX.
+    PARAMETERS p_down AS CHECKBOX DEFAULT 'X'.
     SELECTION-SCREEN COMMENT 29(18) gv_tpath FOR FIELD p_path.
     PARAMETERS p_path TYPE char128 LOWER CASE DEFAULT 'C:\temp'
                       VISIBLE LENGTH 30.
@@ -4209,7 +4209,8 @@ FORM f4_knoten.
   " der markierte derjenige mit der kleinsten Stufe.
   SORT lt_sel BY node_level.
   lv_node = lt_sel[ 1 ]-node_id.
-  lv_text = VALUE #( lt_txt[ node_id = lv_node ]-text OPTIONAL ).
+  " Die Texte kommen in mehreren Sprachen - nur die Ausgabesprache zaehlt
+  lv_text = VALUE #( lt_txt[ node_id = lv_node spras = lv_langu ]-text OPTIONAL ).
   IF lv_text IS INITIAL.
     p_node  = lv_node.
     p_langu = lv_langu.

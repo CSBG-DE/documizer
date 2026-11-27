@@ -615,6 +615,7 @@ XML file (PC | app server) ▶ parser ▶ model with &lt;definition&gt; ▶ impo
               <thead><tr><th>Label</th><th>Parameter</th><th>Effect</th></tr></thead>
               <tbody>
                 <tr><td>Structure ID (GUID)</td><td class="p">P_TREE</td><td>Entry structure. F4 lists root nodes with text, node count, structure type, software component and change date.</td></tr>
+                <tr><td>Start node (F4 = IMG tree)</td><td class="p">P_NODE</td><td>Optional. F4 opens the IMG tree as in SPRO &ndash; starting from the SAP Reference IMG when no structure ID is given. Only the subtree below the chosen node is documented; max. depth and chapter numbers count from there. The node text is shown below the field.</td></tr>
                 <tr><td>or search term for root</td><td class="p">P_SRCH</td><td>Without a GUID the report runs in search mode and lists matching structures with their GUID. Also filters the F4 help.</td></tr>
                 <tr><td>Project (status/memo)</td><td class="p">P_PROJ</td><td>Overlays the tree with status, progress and memo from an IMG project.</td></tr>
                 <tr><td>Project nodes only</td><td class="p">P_ONLYPR</td><td>Cuts the tree down to the nodes worked on in the project. See <a href="#project">project mode</a>.</td></tr>

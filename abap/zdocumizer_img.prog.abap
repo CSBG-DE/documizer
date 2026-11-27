@@ -1224,11 +1224,12 @@ INITIALIZATION.
   ENDIF.
 
 AT SELECTION-SCREEN OUTPUT.
-* Die Struktur-ID ist ausgeblendet: Der Einstieg laeuft ueber den
-* Startknoten aus dem IMG-Baum. Ueber eine Variante gesetzt wirkt sie
-* weiterhin.
+* Struktur-ID und Suchbegriff sind ausgeblendet: Der Einstieg laeuft
+* ueber den Startknoten aus dem IMG-Baum. Ueber eine Variante gesetzt
+* wirken beide weiterhin.
   LOOP AT SCREEN.
-    IF screen-name = 'P_TREE' OR screen-name = 'GV_TTREE'.
+    IF screen-name = 'P_TREE' OR screen-name = 'GV_TTREE'
+       OR screen-name = 'P_SRCH' OR screen-name = 'GV_TSRCH'.
       screen-active = '0'.
       MODIFY SCREEN.
     ENDIF.
@@ -4669,7 +4670,7 @@ FORM search_structures.
   DATA lv_pattern TYPE string.
 
   IF p_srch IS INITIAL.
-    WRITE: / lcl_t=>ui( d = `Bitte Struktur-GUID (P_TREE) oder Suchbegriff (P_SRCH) angeben.` e = `Please specify a structure GUID (P_TREE) or a search term (P_SRCH).` ).
+    WRITE: / lcl_t=>ui( d = `Bitte Startknoten angeben (F4 = IMG-Baum).` e = `Please specify a start node (F4 = IMG tree).` ).
     RETURN.
   ENDIF.
 

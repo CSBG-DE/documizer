@@ -1224,6 +1224,15 @@ INITIALIZATION.
   ENDIF.
 
 AT SELECTION-SCREEN OUTPUT.
+* Die Struktur-ID ist ausgeblendet: Der Einstieg laeuft ueber den
+* Startknoten aus dem IMG-Baum. Ueber eine Variante gesetzt wirkt sie
+* weiterhin.
+  LOOP AT SCREEN.
+    IF screen-name = 'P_TREE' OR screen-name = 'GV_TTREE'.
+      screen-active = '0'.
+      MODIFY SCREEN.
+    ENDIF.
+  ENDLOOP.
   PERFORM node_text.
   PERFORM suggest_fname.
 
@@ -1753,6 +1762,10 @@ CLASS lcl_collector_img DEFINITION.
       IMPORTING iv_docu_id     TYPE string
                 iv_langu       TYPE sy-langu
       RETURNING VALUE(rv_text) TYPE string.
+    METHODS eval_switch
+      IMPORTING iv_cond  TYPE string
+      EXPORTING ev_known TYPE abap_bool
+                ev_true  TYPE abap_bool.
     METHODS load_project.
     METHODS prune
       IMPORTING io_chapter     TYPE REF TO lcl_chapter
@@ -2558,13 +2571,124 @@ CLASS lcl_collector_img IMPLEMENTATION.
     " The ITF format keys are not evaluated here yet; the lines are only
     " joined together. Converting them to HTML or Markdown belongs to
     " step 6.
+    "
+    " Ausnahme: Bedingungen auf Schalter des Switch Frameworks. SAP pflegt
+    " Texte fuer Cloud und On-Premise in einem Dokument und waehlt ueber
+    " /: IF &[SWITCH]S4H_DOCU_ON_PREMISE& = 'X'. aus. Diese Bedingungen
+    " werden hier wie in der Anzeige ausgewertet - nur der zutreffende
+    " Zweig bleibt, die Steuerzeilen entfallen. Alle anderen Bedingungen
+    " bleiben samt Steuerzeilen unveraendert stehen.
+    TYPES: BEGIN OF ty_cond,
+             outer  TYPE abap_bool,
+             known  TYPE abap_bool,
+             active TYPE abap_bool,
+             taken  TYPE abap_bool,
+           END OF ty_cond.
+    DATA lt_cond  TYPE STANDARD TABLE OF ty_cond WITH EMPTY KEY.
+    DATA ls_cond  TYPE ty_cond.
+    DATA lv_emit  TYPE abap_bool VALUE abap_true.
+    DATA lv_cmd   TYPE string.
+    DATA lv_known TYPE abap_bool.
+    DATA lv_true  TYPE abap_bool.
+    DATA lv_out   TYPE abap_bool.
+
     LOOP AT lt_line INTO DATA(ls_line).
+
+      lv_out = lv_emit.
+
+      IF ls_line-tdformat = '/:'.
+        lv_cmd = to_upper( condense( val = ls_line-tdline ) ).
+
+        IF lv_cmd CP 'IF *'.
+          eval_switch( EXPORTING iv_cond  = substring( val = lv_cmd off = 3 )
+                       IMPORTING ev_known = lv_known
+                                 ev_true  = lv_true ).
+          ls_cond = VALUE #( outer = lv_emit known = lv_known
+                             active = lv_true taken = lv_true ).
+          APPEND ls_cond TO lt_cond.
+          lv_out = xsdbool( lv_emit = abap_true AND lv_known = abap_false ).
+
+        ELSEIF lt_cond IS NOT INITIAL
+           AND ( lv_cmd CP 'ELSEIF *' OR lv_cmd CP 'ELSE*' OR lv_cmd CP 'ENDIF*' ).
+          ls_cond = lt_cond[ lines( lt_cond ) ].
+          lv_out = xsdbool( ls_cond-outer = abap_true AND ls_cond-known = abap_false ).
+          IF ls_cond-known = abap_true.
+            IF lv_cmd CP 'ELSEIF *'.
+              IF ls_cond-taken = abap_true.
+                ls_cond-active = abap_false.
+              ELSE.
+                eval_switch( EXPORTING iv_cond  = substring( val = lv_cmd off = 7 )
+                             IMPORTING ev_known = lv_known
+                                       ev_true  = lv_true ).
+                IF lv_known = abap_true.
+                  ls_cond-active = lv_true.
+                  ls_cond-taken  = lv_true.
+                ELSE.
+                  " Unbekannte Bedingung im ELSEIF - ab hier unveraendert lassen
+                  ls_cond-known  = abap_false.
+                  ls_cond-active = abap_true.
+                  lv_out = ls_cond-outer.
+                ENDIF.
+              ENDIF.
+            ELSEIF lv_cmd CP 'ELSE*' AND NOT lv_cmd CP 'ENDIF*'.
+              ls_cond-active = xsdbool( ls_cond-taken = abap_false ).
+              ls_cond-taken  = abap_true.
+            ENDIF.
+          ENDIF.
+          IF lv_cmd CP 'ENDIF*'.
+            DELETE lt_cond INDEX lines( lt_cond ).
+            lv_emit = ls_cond-outer.
+          ELSE.
+            lt_cond[ lines( lt_cond ) ] = ls_cond.
+          ENDIF.
+        ENDIF.
+
+        IF lt_cond IS NOT INITIAL.
+          ls_cond = lt_cond[ lines( lt_cond ) ].
+          lv_emit = xsdbool( ls_cond-outer = abap_true
+                             AND ( ls_cond-known = abap_false OR ls_cond-active = abap_true ) ).
+        ENDIF.
+      ENDIF.
+
+      IF lv_out = abap_false.
+        CONTINUE.
+      ENDIF.
+
       IF rv_text IS INITIAL.
         rv_text = ls_line-tdline.
       ELSE.
         rv_text = |{ rv_text }{ cl_abap_char_utilities=>newline }{ ls_line-tdline }|.
       ENDIF.
     ENDLOOP.
+
+  ENDMETHOD.
+
+  METHOD eval_switch.
+
+    " Erkannt wird nur die einfache Form &[SWITCH]NAME& = 'X' (auch EQ,
+    " <>, NE und ' '). Alles andere gilt als unbekannt.
+    DATA lv_name TYPE string.
+    DATA lv_op   TYPE string.
+    DATA lv_val  TYPE string.
+
+    CLEAR: ev_known, ev_true.
+
+    FIND REGEX `^&\[SWITCH\]([A-Z0-9_/]+)&\s*(=|EQ|<>|NE)\s*'([X ]?)'\s*\.?\s*$`
+      IN iv_cond SUBMATCHES lv_name lv_op lv_val.
+    IF sy-subrc <> 0.
+      RETURN.
+    ENDIF.
+
+    DATA(lv_on) = xsdbool( cl_abap_switch=>get_switch_state(
+                             p_switch_id = CONV sfw_switch_id( lv_name ) )
+                           = cl_abap_switch=>c_on ).
+
+    ev_true = xsdbool( ( lv_val = 'X' AND lv_on = abap_true )
+                    OR ( lv_val <> 'X' AND lv_on = abap_false ) ).
+    IF lv_op = '<>' OR lv_op = 'NE'.
+      ev_true = xsdbool( ev_true = abap_false ).
+    ENDIF.
+    ev_known = abap_true.
 
   ENDMETHOD.
 
